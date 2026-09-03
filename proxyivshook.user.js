@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.5
+// @name         Twitch HLS Proxy v1.0.6
 // @namespace    twitch-proxy-ivs
-// @version      1.0.5
+// @version      1.0.6
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -41,7 +41,7 @@
             id: 'luminous-eu3',
             name: 'Luminous EU 3',
             url: 'https://eu3.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
 		{
             id: 'luminous-as',
@@ -65,43 +65,43 @@
             id: 'perfprod-eu',
             name: 'Perfprod EU',
             url: 'https://lb-eu.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-eu2',
             name: 'Perfprod EU 2',
             url: 'https://lb-eu2.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-eu3',
             name: 'Perfprod EU 3',
             url: 'https://lb-eu3.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-eu4',
             name: 'Perfprod EU 4',
             url: 'https://lb-eu4.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-na',
             name: 'Perfprod NA',
             url: 'https://lb-na.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-as',
             name: 'Perfprod Asia',
             url: 'https://lb-as.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
         {
             id: 'perfprod-sa',
             name: 'Perfprod SA',
             url: 'https://lb-sa.cdn-perfprod.com/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         }
     ];
 
