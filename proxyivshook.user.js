@@ -22,7 +22,7 @@
     var CHANNEL_CACHE_KEY = 'twitchProxyLastChannelV1';
 
     var DEFAULT_TIMEOUT = 4000;
-    var DEFAULT_CACHE_DELAY = 10;
+    var DEFAULT_CACHE_DELAY = 5;
 
     var DEFAULT_PROXIES = [
         {
