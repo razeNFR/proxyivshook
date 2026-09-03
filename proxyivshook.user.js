@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.3
+// @name         Twitch HLS Proxy v1.0.4
 // @namespace    twitch-proxy-ivs
-// @version      1.0.3
+// @version      1.0.4
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -36,6 +36,18 @@
             url: 'https://eu2.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
             enabled: true
         },
+		{
+            id: 'luminous-eu3',
+            name: 'Luminous EU 3',
+            url: 'https://eu3.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
+            enabled: false
+        },
+		{
+            id: 'luminous-as',
+            name: 'Luminous AS',
+            url: 'https://as.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
+            enabled: true
+        },
         {
             id: 'perfprod-eu5',
             name: 'Perfprod EU 5',
@@ -47,12 +59,6 @@
             name: 'Nadeko',
             url: 'https://twitch-al.nadeko.net/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
             enabled: true
-        },
-        {
-            id: 'luminous-eu3',
-            name: 'Luminous EU 3',
-            url: 'https://eu3.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
         },
         {
             id: 'perfprod-eu',
