@@ -6,6 +6,8 @@
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
+// @downloadURL  https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
 // ==/UserScript==
 
 (function () {
