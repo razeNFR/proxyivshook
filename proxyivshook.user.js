@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.4
+// @name         Twitch HLS Proxy v1.0.5
 // @namespace    twitch-proxy-ivs
-// @version      1.0.4
+// @version      1.0.5
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -22,6 +22,7 @@
     var CHANNEL_CACHE_KEY = 'twitchProxyLastChannelV1';
 
     var DEFAULT_TIMEOUT = 4000;
+    var DEFAULT_CACHE_DELAY = 10;
 
     var DEFAULT_PROXIES = [
         {
@@ -40,7 +41,7 @@
             id: 'luminous-eu3',
             name: 'Luminous EU 3',
             url: 'https://eu3.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: true
+            enabled: false
         },
 		{
             id: 'luminous-as',
@@ -162,7 +163,8 @@
                 createDefaultProxy
             ),
             fallback: true,
-            timeout: DEFAULT_TIMEOUT
+            timeout: DEFAULT_TIMEOUT,
+            cacheDelay: DEFAULT_CACHE_DELAY
         };
 
         try {
@@ -333,6 +335,18 @@
 
                     config.timeout =
                         parsed.timeout;
+
+                }
+
+                if (
+                    typeof parsed.cacheDelay ===
+                    'number' &&
+                    parsed.cacheDelay >= 1 &&
+                    parsed.cacheDelay <= 180
+                ) {
+
+                    config.cacheDelay =
+                        parsed.cacheDelay;
 
                 }
 
@@ -535,6 +549,46 @@
 
                 </div>
 
+                <div class="tp9-timeout">
+
+                    <label>
+
+                        Re-test auto
+
+                        <select
+                            class="tp9-cache-select"
+                        >
+
+                            <option value="5">
+                                5 min
+                            </option>
+
+                            <option value="10">
+                                10 min
+                            </option>
+
+                            <option value="20">
+                                20 min
+                            </option>
+
+                            <option value="30">
+                                30 min
+                            </option>
+
+                            <option value="60">
+                                1 heure
+                            </option>
+
+                            <option value="180">
+                                3 heures
+                            </option>
+
+                        </select>
+
+                    </label>
+
+                </div>
+
 
                 <div class="tp9-actions">
 
@@ -649,6 +703,25 @@ document.addEventListener(
                 }
             );
 
+        dashboard
+            .querySelector('.tp9-cache-select')
+            .addEventListener(
+                'change',
+                function (event) {
+
+                    pageConfig.cacheDelay =
+                        parseInt(
+                            event.target.value,
+                            10
+                        );
+
+                    saveConfig(pageConfig);
+
+                    broadcastConfig();
+
+                }
+            );
+
 
         dashboard
             .querySelector('.tp9-test')
@@ -688,7 +761,10 @@ document.addEventListener(
                         fallback: true,
 
                         timeout:
-                            DEFAULT_TIMEOUT
+                            DEFAULT_TIMEOUT,
+
+                        cacheDelay:
+                            DEFAULT_CACHE_DELAY
 
                     };
 
@@ -1023,8 +1099,20 @@ document.addEventListener(
                 pageConfig.timeout
             );
 
+        dashboard
+            .querySelector(
+                '.tp9-cache-select'
+            )
+            .value =
+            String(
+                pageConfig.cacheDelay ||
+                DEFAULT_CACHE_DELAY
+            );
+
 
         updateCurrentTestInfo();
+
+        updateAutoTestStatus();
 
     }
 
@@ -1111,6 +1199,49 @@ document.addEventListener(
             ' proxy(s) OK · ' +
             tested.length +
             ' testé(s)';
+
+    }
+	
+    function updateAutoTestStatus() {
+
+        if (!dashboard) {
+            return;
+        }
+
+        var current = dashboard.querySelector('.tp9-current');
+
+        if (!current) {
+            return;
+        }
+
+        var channel = getTestChannel();
+
+        if (!channel) {
+            return;
+        }
+
+        var tested = pageConfig.proxies.filter(function (p) {
+            return p.lastTest && p.lastTest.channel === channel;
+        });
+
+        if (!tested.length) {
+            current.textContent = 'Auto-test en cours…';
+            return;
+        }
+
+        var ok = tested.filter(function (p) {
+            return p.lastTest.ok;
+        });
+
+        var best = ok.length ? ok[0] : null;
+
+        if (best) {
+            current.textContent =
+                '✅ ' + ok.length + ' OK · meilleur : ' +
+                best.name + ' (' + best.lastTest.latency + ' ms)';
+        } else {
+            current.textContent = '❌ Aucun proxy fonctionnel pour : ' + channel;
+        }
 
     }
 
@@ -3879,6 +4010,101 @@ dashboardButton.style.visibility =
     // INITIALISATION UI
     // ============================================================
 
+    // ============================================================
+    // TRI AUTOMATIQUE DES PROXYS PAR PING
+    // ============================================================
+
+    function autoSortProxies() {
+
+        var tested = pageConfig.proxies.filter(function (p) {
+            return p.lastTest && p.lastTest.ok;
+        });
+
+        var failed = pageConfig.proxies.filter(function (p) {
+            return !p.lastTest || !p.lastTest.ok;
+        });
+
+        tested.sort(function (a, b) {
+            return a.lastTest.latency - b.lastTest.latency;
+        });
+
+        pageConfig.proxies = tested.concat(failed);
+
+        saveConfig(pageConfig);
+
+        broadcastConfig();
+
+        renderDashboard();
+
+        console.log('[TwitchProxy] Proxys re-triés par ping');
+
+    }
+
+
+    // ============================================================
+    // TEST AUTO AU DÉMARRAGE
+    // ============================================================
+
+    async function autoTestOnLoad() {
+
+        var channel = getTestChannel();
+
+        if (!channel) {
+            console.log('[TwitchProxy] Auto-test ignoré : pas de chaîne détectée');
+            return;
+        }
+
+        var delay =
+            (pageConfig.cacheDelay || DEFAULT_CACHE_DELAY) * 60 * 1000;
+        var now = Date.now();
+
+        var recentTest = pageConfig.proxies.some(function (p) {
+            return (
+                p.lastTest &&
+                p.lastTest.timestamp &&
+                (now - p.lastTest.timestamp) < delay
+            );
+        });
+
+        if (recentTest) {
+            console.log('[TwitchProxy] Auto-test ignoré : résultats récents');
+            autoSortProxies();
+            return;
+        }
+
+        var enabled = pageConfig.proxies.filter(function (p) {
+            return p.enabled;
+        });
+
+        if (!enabled.length) {
+            return;
+        }
+
+        console.log('[TwitchProxy] ===== AUTO-TEST DÉMARRAGE =====');
+
+        for (var i = 0; i < enabled.length; i++) {
+
+            var proxy = enabled[i];
+
+            var result = await testProxy(proxy, channel);
+
+            proxy.lastTest = {
+                ok: result.ok,
+                status: result.ok ? 'OK' : result.status,
+                latency: result.latency,
+                timestamp: Date.now(),
+                channel: channel
+            };
+
+        }
+
+        autoSortProxies();
+
+        console.log('[TwitchProxy] ===== AUTO-TEST TERMINÉ =====');
+
+    }
+
+
     function initUI() {
 
         if (!document.body) {
@@ -3894,6 +4120,12 @@ dashboardButton.style.visibility =
 
 
         createPlayerButton();
+
+        // Lancement du test auto après 3 secondes
+        // (laisse le temps à la page de charger)
+        setTimeout(function () {
+            autoTestOnLoad();
+        }, 3000);
 
 
         var observer =
