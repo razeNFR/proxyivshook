@@ -2,6 +2,8 @@
 // @name         Twitch Proxy Hooker v1.0
 // @namespace    twitch-proxy-ivs
 // @version      1.0
+// @updateURL    https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
+// @downloadURL  https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
@@ -556,8 +558,35 @@
 
 
         document.body.appendChild(
-            dashboard
-        );
+    dashboard
+);
+
+
+document.addEventListener(
+    'click',
+    function (event) {
+
+        if (
+            !dashboardVisible
+        ) {
+            return;
+        }
+
+        if (
+            dashboard.contains(
+                event.target
+            ) ||
+            dashboardButton.contains(
+                event.target
+            )
+        ) {
+            return;
+        }
+
+        hideDashboard();
+
+    }
+);
 
 
         injectDashboardCSS();
@@ -1565,7 +1594,10 @@ function showAddProxyForm() {
 
 
         dashboardButton.title =
-            'Twitch Proxy Manager';
+    'Twitch Proxy Manager';
+
+dashboardButton.style.visibility =
+    'hidden';
 
 
         dashboardButton.addEventListener(
@@ -1758,40 +1790,43 @@ function showAddProxyForm() {
 
     function positionPlayerUI() {
 
-        if (!dashboardButton) {
-            return;
-        }
+    if (!dashboardButton) {
+        return;
+    }
 
 
-        var followButton =
-            findFollowButton();
+    var followButton =
+        findFollowButton();
 
 
-        if (followButton) {
+    if (followButton) {
 
-            var followRect =
-                followButton.getBoundingClientRect();
+        dashboardButton.style.visibility =
+            'visible';
+
+        var followRect =
+            followButton.getBoundingClientRect();
 
 
-            dashboardButton.style.position =
-                'fixed';
+        dashboardButton.style.position =
+            'fixed';
 
 
-            dashboardButton.style.left =
+        dashboardButton.style.left =
+            (
+                followRect.left -
+                44
+            ) + 'px';
+
+
+        dashboardButton.style.top =
+            (
+                followRect.top +
                 (
-                    followRect.left -
-                    44
-                ) + 'px';
-
-
-            dashboardButton.style.top =
-                (
-                    followRect.top +
-                    (
-                        followRect.height -
-                        32
-                    ) / 2
-                ) + 'px';
+                    followRect.height -
+                    32
+                ) / 2
+            ) + 'px';
 
 
             if (dashboardVisible) {
@@ -1821,27 +1856,30 @@ function showAddProxyForm() {
         }
 
 
-        var player =
-            findPlayer();
+            dashboardButton.style.visibility =
+        'hidden';
+
+    var player =
+        findPlayer();
 
 
-        if (!player) {
+    if (!player) {
 
-            dashboardButton.style.position =
-                'fixed';
-
-
-            dashboardButton.style.left =
-                '20px';
+        dashboardButton.style.position =
+            'fixed';
 
 
-            dashboardButton.style.bottom =
-                '20px';
+        dashboardButton.style.left =
+            '20px';
 
 
-            return;
+        dashboardButton.style.bottom =
+            '20px';
 
-        }
+
+        return;
+
+    }
 
 
         var rect =
