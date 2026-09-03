@@ -2,6 +2,7 @@
 // @name         Twitch Proxy Hooker v1.0.1
 // @namespace    twitch-proxy-ivs
 // @version      1.0.1
+// @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
