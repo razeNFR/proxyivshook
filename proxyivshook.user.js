@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Twitch Proxy Hooker v1.0.1
+// @name         Twitch HLS Proxy v1.0.1
 // @namespace    twitch-proxy-ivs
 // @version      1.0.1
 // @author       razeNFR
