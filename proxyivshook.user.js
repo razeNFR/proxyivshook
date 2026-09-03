@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.6
+// @name         Twitch HLS Proxy v1.0.7
 // @namespace    twitch-proxy-ivs
-// @version      1.0.6
+// @version      1.0.7
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
