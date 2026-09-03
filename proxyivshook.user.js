@@ -1,9 +1,7 @@
 // ==UserScript==
-// @name         Twitch Proxy Hooker v1.0
+// @name         Twitch Proxy Hooker v1.0.1
 // @namespace    twitch-proxy-ivs
-// @version      1.0
-// @updateURL    https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
-// @downloadURL  https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
+// @version      1.0.1
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
 // @run-at       document-start
@@ -573,11 +571,11 @@ document.addEventListener(
         }
 
         if (
-            dashboard.contains(
-                event.target
+            event.target.closest(
+                '#tp9-dashboard'
             ) ||
-            dashboardButton.contains(
-                event.target
+            event.target.closest(
+                '#tp9-player-button'
             )
         ) {
             return;
@@ -939,7 +937,9 @@ document.addEventListener(
                     )
                     .addEventListener(
                         'click',
-                        function () {
+                        function (event) {
+
+                            event.stopPropagation();
 
                             moveProxy(
                                 index,
@@ -956,7 +956,9 @@ document.addEventListener(
                     )
                     .addEventListener(
                         'click',
-                        function () {
+                        function (event) {
+
+                            event.stopPropagation();
 
                             moveProxy(
                                 index,
