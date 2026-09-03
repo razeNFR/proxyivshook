@@ -1806,6 +1806,23 @@ dashboardButton.style.visibility =
 
     if (followButton) {
 
+        var video =
+            document.querySelector(
+                'video'
+            );
+
+        if (
+            !video ||
+            video.readyState === 0
+        ) {
+
+            dashboardButton.style.visibility =
+                'hidden';
+
+            return;
+
+        }
+
         dashboardButton.style.visibility =
             'visible';
 
