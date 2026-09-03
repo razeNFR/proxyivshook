@@ -40,7 +40,7 @@
             id: 'luminous-eu3',
             name: 'Luminous EU 3',
             url: 'https://eu3.luminous.dev/live/{channel}?allow_source=true&allow_audio_only=true&fast_bread=true',
-            enabled: false
+            enabled: true
         },
 		{
             id: 'luminous-as',
