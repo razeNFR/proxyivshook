@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.2
+// @name         Twitch HLS Proxy v1.0.3
 // @namespace    twitch-proxy-ivs
-// @version      1.0.2
+// @version      1.0.3
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -1798,12 +1798,6 @@ dashboardButton.style.visibility =
         if (!dashboardButton) {
             return;
         }
-
-
-        if (dashboardVisible) {
-            return;
-        }
-
 
     var followButton =
         findFollowButton();
