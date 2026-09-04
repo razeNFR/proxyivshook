@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.8
+// @name         Twitch HLS Proxy v1.1.3
 // @namespace    twitch-proxy-ivs
-// @version      1.0.8
+// @version      1.1.3
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -156,7 +156,11 @@
     }
 
 
-    function loadConfig() {
+    // Construit un objet config valide (proxys fusionnés avec les
+    // défauts, champs validés) à partir d'un objet arbitraire —
+    // utilisé à la fois pour charger depuis localStorage et pour
+    // l'import d'un fichier JSON exporté.
+    function buildConfigFromParsed(parsed) {
 
         var config = {
             proxies: DEFAULT_PROXIES.map(
@@ -164,8 +168,200 @@
             ),
             fallback: true,
             timeout: DEFAULT_TIMEOUT,
-            cacheDelay: DEFAULT_CACHE_DELAY
+            cacheDelay: DEFAULT_CACHE_DELAY,
+            keepQualityInBackground: false
         };
+
+        if (!parsed || typeof parsed !== 'object') {
+            return config;
+        }
+
+        if (
+            Array.isArray(parsed.proxies)
+        ) {
+
+            var ordered = [];
+
+            parsed.proxies.forEach(
+                function (savedProxy) {
+
+                    if (
+                        !savedProxy ||
+                        !savedProxy.id
+                    ) {
+                        return;
+                    }
+
+
+                    var original =
+                        DEFAULT_PROXIES.find(
+                            function (p) {
+                                return (
+                                    p.id ===
+                                    savedProxy.id
+                                );
+                            }
+                        );
+
+
+                    // ------------------------------------------------
+                    // Proxy par défaut
+                    // ------------------------------------------------
+
+                    if (original) {
+
+                        ordered.push({
+
+                            id: original.id,
+
+                            name: original.name,
+
+                            url: original.url,
+
+                            enabled:
+                                !!savedProxy.enabled,
+
+                            lastTest:
+                                savedProxy.lastTest ||
+                                null
+
+                        });
+
+                        return;
+
+                    }
+
+
+                    // ------------------------------------------------
+                    // Proxy personnalisé
+                    // ------------------------------------------------
+
+                    if (
+                        savedProxy.name &&
+                        savedProxy.url &&
+                        savedProxy.url.indexOf(
+                            '{channel}'
+                        ) >= 0
+                    ) {
+
+                        ordered.push({
+
+                            id:
+                                savedProxy.id,
+
+                            name:
+                                savedProxy.name,
+
+                            url:
+                                savedProxy.url,
+
+                            enabled:
+                                savedProxy.enabled !== false,
+
+                            custom:
+                                true,
+
+                            lastTest:
+                                savedProxy.lastTest ||
+                                null
+
+                        });
+
+                    }
+
+                }
+            );
+
+
+            // ------------------------------------------------
+            // Ajoute les nouveaux proxys par défaut absents
+            // ------------------------------------------------
+
+            DEFAULT_PROXIES.forEach(
+                function (original) {
+
+                    var exists =
+                        ordered.some(
+                            function (p) {
+                                return (
+                                    p.id ===
+                                    original.id
+                                );
+                            }
+                        );
+
+
+                    if (!exists) {
+
+                        ordered.push(
+                            createDefaultProxy(
+                                original
+                            )
+                        );
+
+                    }
+
+                }
+            );
+
+
+            config.proxies =
+                ordered;
+
+        }
+
+
+        if (
+            typeof parsed.fallback ===
+            'boolean'
+        ) {
+
+            config.fallback =
+                parsed.fallback;
+
+        }
+
+
+        if (
+            typeof parsed.timeout ===
+            'number' &&
+            parsed.timeout >= 1000 &&
+            parsed.timeout <= 30000
+        ) {
+
+            config.timeout =
+                parsed.timeout;
+
+        }
+
+        if (
+            typeof parsed.cacheDelay ===
+            'number' &&
+            parsed.cacheDelay >= 1 &&
+            parsed.cacheDelay <= 180
+        ) {
+
+            config.cacheDelay =
+                parsed.cacheDelay;
+
+        }
+
+        if (
+            typeof parsed.keepQualityInBackground ===
+            'boolean'
+        ) {
+
+            config.keepQualityInBackground =
+                parsed.keepQualityInBackground;
+
+        }
+
+        return config;
+
+    }
+
+
+    function loadConfig() {
 
         try {
 
@@ -176,179 +372,9 @@
 
             if (saved) {
 
-                var parsed =
-                    JSON.parse(saved);
-
-                if (
-                    parsed &&
-                    Array.isArray(parsed.proxies)
-                ) {
-
-                    var ordered = [];
-
-                    parsed.proxies.forEach(
-                        function (savedProxy) {
-
-                            if (
-                                !savedProxy ||
-                                !savedProxy.id
-                            ) {
-                                return;
-                            }
-
-
-                            var original =
-                                DEFAULT_PROXIES.find(
-                                    function (p) {
-                                        return (
-                                            p.id ===
-                                            savedProxy.id
-                                        );
-                                    }
-                                );
-
-
-                            // ------------------------------------------------
-                            // Proxy par défaut
-                            // ------------------------------------------------
-
-                            if (original) {
-
-                                ordered.push({
-
-                                    id: original.id,
-
-                                    name: original.name,
-
-                                    url: original.url,
-
-                                    enabled:
-                                        !!savedProxy.enabled,
-
-                                    lastTest:
-                                        savedProxy.lastTest ||
-                                        null
-
-                                });
-
-                                return;
-
-                            }
-
-
-                            // ------------------------------------------------
-                            // Proxy personnalisé
-                            // ------------------------------------------------
-
-                            if (
-                                savedProxy.name &&
-                                savedProxy.url &&
-                                savedProxy.url.indexOf(
-                                    '{channel}'
-                                ) >= 0
-                            ) {
-
-                                ordered.push({
-
-                                    id:
-                                        savedProxy.id,
-
-                                    name:
-                                        savedProxy.name,
-
-                                    url:
-                                        savedProxy.url,
-
-                                    enabled:
-                                        savedProxy.enabled !== false,
-
-                                    custom:
-                                        true,
-
-                                    lastTest:
-                                        savedProxy.lastTest ||
-                                        null
-
-                                });
-
-                            }
-
-                        }
-                    );
-
-
-                    // ------------------------------------------------
-                    // Ajoute les nouveaux proxys par défaut absents
-                    // ------------------------------------------------
-
-                    DEFAULT_PROXIES.forEach(
-                        function (original) {
-
-                            var exists =
-                                ordered.some(
-                                    function (p) {
-                                        return (
-                                            p.id ===
-                                            original.id
-                                        );
-                                    }
-                                );
-
-
-                            if (!exists) {
-
-                                ordered.push(
-                                    createDefaultProxy(
-                                        original
-                                    )
-                                );
-
-                            }
-
-                        }
-                    );
-
-
-                    config.proxies =
-                        ordered;
-
-                }
-
-
-                if (
-                    typeof parsed.fallback ===
-                    'boolean'
-                ) {
-
-                    config.fallback =
-                        parsed.fallback;
-
-                }
-
-
-                if (
-                    typeof parsed.timeout ===
-                    'number' &&
-                    parsed.timeout >= 1000 &&
-                    parsed.timeout <= 30000
-                ) {
-
-                    config.timeout =
-                        parsed.timeout;
-
-                }
-
-                if (
-                    typeof parsed.cacheDelay ===
-                    'number' &&
-                    parsed.cacheDelay >= 1 &&
-                    parsed.cacheDelay <= 180
-                ) {
-
-                    config.cacheDelay =
-                        parsed.cacheDelay;
-
-                }
+                return buildConfigFromParsed(
+                    JSON.parse(saved)
+                );
 
             }
 
@@ -361,7 +387,9 @@
 
         }
 
-        return config;
+        return buildConfigFromParsed(
+            null
+        );
 
     }
 
@@ -387,8 +415,266 @@
     }
 
 
+    // ============================================================
+    // EXPORT / IMPORT DE LA CONFIGURATION
+    // ============================================================
+
+    function exportConfig() {
+
+        try {
+
+            // On exporte une config "propre" : ni les résultats de
+            // test (lastTest), ni rien de lié au réseau/à la chaîne
+            // regardée au moment de l'export — juste la structure
+            // des proxys et les réglages, réutilisable tel quel.
+            var cleanConfig = {
+
+                proxies:
+                    pageConfig.proxies.map(
+                        function (proxy) {
+
+                            var clean = {
+                                id: proxy.id,
+                                name: proxy.name,
+                                url: proxy.url,
+                                enabled: proxy.enabled
+                            };
+
+                            if (proxy.custom) {
+                                clean.custom = true;
+                            }
+
+                            return clean;
+
+                        }
+                    ),
+
+                fallback:
+                    pageConfig.fallback,
+
+                timeout:
+                    pageConfig.timeout,
+
+                cacheDelay:
+                    pageConfig.cacheDelay,
+
+                keepQualityInBackground:
+                    pageConfig.keepQualityInBackground
+
+            };
+
+            var json =
+                JSON.stringify(
+                    cleanConfig,
+                    null,
+                    2
+                );
+
+            var blob =
+                new Blob(
+                    [json],
+                    { type: 'application/json' }
+                );
+
+            var url =
+                URL.createObjectURL(
+                    blob
+                );
+
+            var link =
+                document.createElement(
+                    'a'
+                );
+
+            link.href = url;
+
+            link.download =
+                'twitch-proxy-config.json';
+
+            document.body.appendChild(
+                link
+            );
+
+            link.click();
+
+            document.body.removeChild(
+                link
+            );
+
+            setTimeout(
+                function () {
+
+                    URL.revokeObjectURL(
+                        url
+                    );
+
+                },
+                1000
+            );
+
+        } catch (e) {
+
+            console.warn(
+                '[TwitchProxy] Export impossible:',
+                e
+            );
+
+            alert(
+                "Impossible d'exporter la configuration."
+            );
+
+        }
+
+    }
+
+
+    function importConfigFromFile(file) {
+
+        var reader =
+            new FileReader();
+
+        reader.onload =
+            function () {
+
+                try {
+
+                    var parsed =
+                        JSON.parse(
+                            reader.result
+                        );
+
+                    pageConfig =
+                        buildConfigFromParsed(
+                            parsed
+                        );
+
+                    saveConfig(
+                        pageConfig
+                    );
+
+                    broadcastConfig();
+
+                    renderDashboard();
+
+                    alert(
+                        'Configuration importée avec succès.'
+                    );
+
+                } catch (e) {
+
+                    console.warn(
+                        '[TwitchProxy] Import impossible:',
+                        e
+                    );
+
+                    alert(
+                        "Fichier invalide : impossible d'importer cette configuration."
+                    );
+
+                }
+
+            };
+
+        reader.onerror =
+            function () {
+
+                alert(
+                    'Erreur de lecture du fichier.'
+                );
+
+            };
+
+        reader.readAsText(
+            file
+        );
+
+    }
+
+
     var pageConfig =
         loadConfig();
+
+
+    // ============================================================
+    // GARDER LA QUALITÉ QUAND L'ONGLET EST EN ARRIÈRE-PLAN
+    // ============================================================
+
+    (function setupBackgroundQualitySpoof() {
+
+        try {
+
+            var hiddenDescriptor =
+                Object.getOwnPropertyDescriptor(
+                    Document.prototype,
+                    'hidden'
+                );
+
+            var visibilityStateDescriptor =
+                Object.getOwnPropertyDescriptor(
+                    Document.prototype,
+                    'visibilityState'
+                );
+
+            if (
+                !hiddenDescriptor ||
+                !hiddenDescriptor.get ||
+                !visibilityStateDescriptor ||
+                !visibilityStateDescriptor.get
+            ) {
+                return;
+            }
+
+            Object.defineProperty(document, 'hidden', {
+                configurable: true,
+                get: function () {
+
+                    if (pageConfig.keepQualityInBackground) {
+                        return false;
+                    }
+
+                    return hiddenDescriptor.get.call(document);
+
+                }
+            });
+
+            Object.defineProperty(document, 'visibilityState', {
+                configurable: true,
+                get: function () {
+
+                    if (pageConfig.keepQualityInBackground) {
+                        return 'visible';
+                    }
+
+                    return visibilityStateDescriptor.get.call(document);
+
+                }
+            });
+
+            // Enregistré au tout début (document-start) : bloque
+            // les listeners "visibilitychange" enregistrés plus
+            // tard par Twitch quand l'option est activée.
+            document.addEventListener(
+                'visibilitychange',
+                function (event) {
+
+                    if (pageConfig.keepQualityInBackground) {
+                        event.stopImmediatePropagation();
+                    }
+
+                },
+                true
+            );
+
+        } catch (e) {
+
+            console.warn(
+                '[TwitchProxy] Spoof visibilité impossible:',
+                e
+            );
+
+        }
+
+    })();
 
 
     // ============================================================
@@ -427,6 +713,38 @@
             });
 
         } catch (e) {}
+
+    }
+
+
+    // Info sur le proxy réellement utilisé pour la lecture en
+    // cours, remontée par le Worker via le même BroadcastChannel.
+    var activeProxyInfo = null;
+
+    if (configChannel) {
+
+        configChannel.addEventListener(
+            'message',
+            function (event) {
+
+                try {
+
+                    if (
+                        event.data &&
+                        event.data.type === 'activeProxy'
+                    ) {
+
+                        activeProxyInfo =
+                            event.data;
+
+                        renderDashboard();
+
+                    }
+
+                } catch (e) {}
+
+            }
+        );
 
     }
 
@@ -475,6 +793,8 @@
 
             <div class="tp9-content">
 
+<div class="tp9-active-proxy"></div>
+
 <div class="tp9-section-title">
     PROXYS
 </div>
@@ -503,6 +823,22 @@
                         >
 
                         Fallback automatique
+
+                    </label>
+
+                </div>
+
+
+                <div class="tp9-option">
+
+                    <label>
+
+                        <input
+                            type="checkbox"
+                            class="tp9-keep-quality"
+                        >
+
+                        Garder la qualité en arrière-plan
 
                     </label>
 
@@ -609,6 +945,32 @@
                 </div>
 
 
+                <div class="tp9-actions tp9-actions-secondary">
+
+                    <button
+                        class="tp9-export"
+                        type="button"
+                    >
+                        ⬇ Export
+                    </button>
+
+                    <button
+                        class="tp9-import"
+                        type="button"
+                    >
+                        ⬆ Import
+                    </button>
+
+                </div>
+
+                <input
+                    type="file"
+                    class="tp9-import-file"
+                    accept="application/json"
+                    style="display:none;"
+                >
+
+
                 <div class="tp9-current">
                     Aucun proxy testé
                 </div>
@@ -677,6 +1039,23 @@ document.addEventListener(
                     saveConfig(pageConfig);
 
                     broadcastConfig();
+
+                    renderDashboard();
+
+                }
+            );
+
+
+        dashboard
+            .querySelector('.tp9-keep-quality')
+            .addEventListener(
+                'change',
+                function (event) {
+
+                    pageConfig.keepQualityInBackground =
+                        event.target.checked;
+
+                    saveConfig(pageConfig);
 
                     renderDashboard();
 
@@ -764,7 +1143,10 @@ document.addEventListener(
                             DEFAULT_TIMEOUT,
 
                         cacheDelay:
-                            DEFAULT_CACHE_DELAY
+                            DEFAULT_CACHE_DELAY,
+
+                        keepQualityInBackground:
+                            false
 
                     };
 
@@ -776,6 +1158,69 @@ document.addEventListener(
                     broadcastConfig();
 
                     renderDashboard();
+
+                }
+            );
+
+
+        dashboard
+            .querySelector('.tp9-export')
+            .addEventListener(
+                'click',
+                function () {
+
+                    exportConfig();
+
+                }
+            );
+
+
+        dashboard
+            .querySelector('.tp9-import')
+            .addEventListener(
+                'click',
+                function () {
+
+                    dashboard
+                        .querySelector(
+                            '.tp9-import-file'
+                        )
+                        .click();
+
+                }
+            );
+
+
+        dashboard
+            .querySelector('.tp9-import-file')
+            .addEventListener(
+                'change',
+                function (event) {
+
+                    var file =
+                        event.target.files &&
+                        event.target.files[0];
+
+                    if (!file) {
+                        return;
+                    }
+
+                    if (
+                        !confirm(
+                            'Importer cette configuration ?\n\n' +
+                            'Elle remplacera entièrement la configuration actuelle.'
+                        )
+                    ) {
+
+                        event.target.value = '';
+
+                        return;
+
+                    }
+
+                    importConfigFromFile(file);
+
+                    event.target.value = '';
 
                 }
             );
@@ -1092,6 +1537,14 @@ document.addEventListener(
 
         dashboard
             .querySelector(
+                '.tp9-keep-quality'
+            )
+            .checked =
+            !!pageConfig.keepQualityInBackground;
+
+
+        dashboard
+            .querySelector(
                 '.tp9-timeout-select'
             )
             .value =
@@ -1113,6 +1566,8 @@ document.addEventListener(
         updateCurrentTestInfo();
 
         updateAutoTestStatus();
+
+        updateActiveProxyDisplay();
 
     }
 
@@ -1201,7 +1656,7 @@ document.addEventListener(
             ' testé(s)';
 
     }
-	
+
     function updateAutoTestStatus() {
 
         if (!dashboard) {
@@ -1241,6 +1696,55 @@ document.addEventListener(
                 best.name + ' (' + best.lastTest.latency + ' ms)';
         } else {
             current.textContent = '❌ Aucun proxy fonctionnel pour : ' + channel;
+        }
+
+    }
+
+
+    // Affiche le proxy réellement utilisé par le Worker pour la
+    // lecture en cours (remonté via BroadcastChannel), à ne pas
+    // confondre avec les résultats de l'auto-test ci-dessus.
+    function updateActiveProxyDisplay() {
+
+        if (!dashboard) {
+            return;
+        }
+
+        var el =
+            dashboard.querySelector(
+                '.tp9-active-proxy'
+            );
+
+        if (!el) {
+            return;
+        }
+
+        var channel =
+            getTestChannel();
+
+        if (
+            !activeProxyInfo ||
+            !channel ||
+            activeProxyInfo.channel !== channel
+        ) {
+
+            el.textContent = '';
+
+            return;
+
+        }
+
+        if (activeProxyInfo.direct) {
+
+            el.textContent =
+                '📡 Lecture actuelle : Twitch (direct, aucun proxy)';
+
+        } else {
+
+            el.textContent =
+                '📡 Lecture actuelle : ' +
+                activeProxyInfo.proxyName;
+
         }
 
     }
@@ -1930,11 +2434,74 @@ dashboardButton.style.visibility =
     }
 
 
+    // Le mini-player Twitch (lecteur flottant qui persiste quand
+    // on navigue ailleurs sur le site, ou qu'on scroll sur la page
+    // de la chaîne) est toujours affiché en "position: fixed" et
+    // dans un format nettement plus petit que le lecteur principal.
+    function isMiniPlayerVideo(video) {
+
+        try {
+
+            var rect =
+                video.getBoundingClientRect();
+
+            if (rect.width < 500) {
+
+                var element = video;
+
+                while (
+                    element &&
+                    element !== document.body
+                ) {
+
+                    var computed =
+                        window.getComputedStyle(
+                            element
+                        );
+
+                    if (
+                        computed &&
+                        computed.position === 'fixed'
+                    ) {
+
+                        return true;
+
+                    }
+
+                    element =
+                        element.parentElement;
+
+                }
+
+            }
+
+        } catch (e) {}
+
+        return false;
+
+    }
+
+
     function positionPlayerUI() {
 
         if (!dashboardButton) {
             return;
         }
+
+
+        // On ne veut le bouton QUE sur la page de la chaîne en
+        // cours de visionnage, jamais accroché à un follow button
+        // qui traînerait ailleurs sur le site (accueil, grille de
+        // chaînes recommandées, etc.).
+        if (!getTestChannel()) {
+
+            dashboardButton.style.visibility =
+                'hidden';
+
+            return;
+
+        }
+
 
     var followButton =
         findFollowButton();
@@ -1951,6 +2518,15 @@ dashboardButton.style.visibility =
             !video ||
             video.readyState === 0
         ) {
+
+            dashboardButton.style.visibility =
+                'hidden';
+
+            return;
+
+        }
+
+        if (isMiniPlayerVideo(video)) {
 
             dashboardButton.style.visibility =
                 'hidden';
@@ -2701,6 +3277,40 @@ dashboardButton.style.visibility =
             }
 
 
+            .tp9-active-proxy {
+
+                margin-bottom: 10px;
+
+                padding: 7px 8px;
+
+                border-radius: 6px;
+
+                background:
+                    rgba(145,71,255,.12);
+
+                color: #bf94ff;
+
+                font-size: 11px;
+
+                font-weight: 600;
+
+            }
+
+
+            .tp9-active-proxy:empty {
+
+                display: none;
+
+            }
+
+
+            .tp9-actions-secondary {
+
+                margin-top: 7px;
+
+            }
+
+
             /* =====================================================
                FORMULAIRE AJOUT
             ===================================================== */
@@ -2823,6 +3433,33 @@ dashboardButton.style.visibility =
     // TEST DES PROXYS
     // ============================================================
 
+    // Empêche testAllProxies() et autoTestOnLoad() de tourner
+    // en même temps et de se marcher dessus sur pageConfig.proxies
+    var testInProgress = false;
+
+
+    var NON_CHANNEL_PATHS = [
+        'directory',
+        'search',
+        'downloads',
+        'videos',
+        'moderator',
+        'subscriptions',
+        'settings',
+        'wallet',
+        'drops',
+        'inventory',
+        'friends',
+        'p',
+        'payments',
+        'popout',
+        'jobs',
+        'turbo',
+        'prime',
+        'store'
+    ];
+
+
     function getTestChannel() {
 
         try {
@@ -2836,9 +3473,9 @@ dashboardButton.style.visibility =
             if (
                 path.length &&
                 path[0] &&
-                path[0] !== 'directory' &&
-                path[0] !== 'search' &&
-                path[0] !== 'downloads'
+                NON_CHANNEL_PATHS.indexOf(
+                    path[0].toLowerCase()
+                ) === -1
             ) {
 
                 return path[0].toLowerCase();
@@ -2982,6 +3619,17 @@ dashboardButton.style.visibility =
 
     async function testAllProxies() {
 
+        if (testInProgress) {
+
+            alert(
+                'Un test est déjà en cours, merci de patienter.'
+            );
+
+            return;
+
+        }
+
+
         var channel =
             getTestChannel();
 
@@ -3016,104 +3664,114 @@ dashboardButton.style.visibility =
         }
 
 
-        console.log(
-            '[TwitchProxy] ===== TEST PROXYS ====='
-        );
+        testInProgress = true;
 
+        try {
 
-        for (
-            var i = 0;
-            i < enabled.length;
-            i++
-        ) {
-
-            var proxy =
-                enabled[i];
-
-
-            updateProxyStatus(
-                proxy.id,
-                '🟡 test...'
+            console.log(
+                '[TwitchProxy] ===== TEST PROXYS ====='
             );
 
 
-            var result =
-                await testProxy(
-                    proxy,
-                    channel
-                );
+            for (
+                var i = 0;
+                i < enabled.length;
+                i++
+            ) {
 
+                var proxy =
+                    enabled[i];
 
-            // ----------------------------------------------------
-            // NOUVEAU
-            // Sauvegarde du dernier résultat
-            // ----------------------------------------------------
-
-            proxy.lastTest = {
-
-                ok:
-                    result.ok,
-
-                status:
-                    result.ok
-                        ? 'OK'
-                        : result.status,
-
-                latency:
-                    result.latency,
-
-                timestamp:
-                    Date.now(),
-
-                channel:
-                    channel
-
-            };
-
-
-            saveConfig(
-                pageConfig
-            );
-
-
-            broadcastConfig();
-
-
-            if (result.ok) {
 
                 updateProxyStatus(
                     proxy.id,
-                    '🟢 OK · ' +
-                    result.latency +
-                    ' ms'
+                    '🟡 test...'
                 );
 
-            } else {
 
-                updateProxyStatus(
-                    proxy.id,
-                    '🔴 ' +
-                    result.status +
-                    (
-                        result.latency
-                            ? ' · ' +
-                              result.latency +
-                              ' ms'
-                            : ''
-                    )
+                var result =
+                    await testProxy(
+                        proxy,
+                        channel
+                    );
+
+
+                // ----------------------------------------------------
+                // NOUVEAU
+                // Sauvegarde du dernier résultat
+                // ----------------------------------------------------
+
+                proxy.lastTest = {
+
+                    ok:
+                        result.ok,
+
+                    status:
+                        result.ok
+                            ? 'OK'
+                            : result.status,
+
+                    latency:
+                        result.latency,
+
+                    timestamp:
+                        Date.now(),
+
+                    channel:
+                        channel
+
+                };
+
+
+                saveConfig(
+                    pageConfig
                 );
+
+
+                broadcastConfig();
+
+
+                if (result.ok) {
+
+                    updateProxyStatus(
+                        proxy.id,
+                        '🟢 OK · ' +
+                        result.latency +
+                        ' ms'
+                    );
+
+                } else {
+
+                    updateProxyStatus(
+                        proxy.id,
+                        '🔴 ' +
+                        result.status +
+                        (
+                            result.latency
+                                ? ' · ' +
+                                  result.latency +
+                                  ' ms'
+                                : ''
+                        )
+                    );
+
+                }
 
             }
 
+
+            updateCurrentTestInfo();
+
+
+            console.log(
+                '[TwitchProxy] ===== FIN TEST ====='
+            );
+
+        } finally {
+
+            testInProgress = false;
+
         }
-
-
-        updateCurrentTestInfo();
-
-
-        console.log(
-            '[TwitchProxy] ===== FIN TEST ====='
-        );
 
     }
 
@@ -3448,7 +4106,8 @@ dashboardButton.style.visibility =
             function __tp_fetchProxy(
                 proxyURL,
                 init,
-                timeout
+                timeout,
+                controller
             ){
 
                 return new Promise(
@@ -3464,6 +4123,10 @@ dashboardButton.style.visibility =
 
                                         finished = true;
 
+                                        try {
+                                            controller.abort();
+                                        } catch(e) {}
+
                                         reject(
                                             new Error(
                                                 "Proxy timeout"
@@ -3477,10 +4140,16 @@ dashboardButton.style.visibility =
                             );
 
 
+                        var fetchInit =
+                            init
+                                ? Object.assign({}, init, { signal: controller.signal })
+                                : { signal: controller.signal };
+
+
                         __tp_originalFetch.call(
                             self,
                             proxyURL,
-                            init
+                            fetchInit
                         )
                         .then(function(response){
 
@@ -3694,130 +4363,192 @@ dashboardButton.style.visibility =
                     );
 
 
-                var chain =
-                    Promise.resolve();
+                // Les proxys sont tentés en PARALLÈLE (au lieu
+                // d'un par un) : on garde le premier qui répond
+                // avec un manifest HLS valide et on annule les
+                // autres tentatives encore en vol.
+                var controllers =
+                    [];
 
 
-                var successfulResponse =
+                var winnerFound =
+                    false;
+
+
+                var winnerResponse =
                     null;
 
 
-                enabled.forEach(
-                    function(proxy, index){
+                console.log(
+                    "[TwitchProxy] Lancement en parallèle sur " +
+                    enabled.length +
+                    " proxys :",
+                    enabled.map(
+                        function(proxy){
 
-                        chain =
-                            chain.then(
-                                function(){
+                            return {
+                                name: proxy.name,
+                                url: __tp_buildURL(proxy, channel)
+                            };
 
-                                    if (
-                                        successfulResponse
-                                    ) {
-                                        return;
-                                    }
-
-
-                                    var proxyURL =
-                                        __tp_buildURL(
-                                            proxy,
-                                            channel
-                                        );
+                        }
+                    )
+                );
 
 
-                                    console.log(
-                                        "[TwitchProxy] Test proxy:",
-                                        proxy.name
-                                    );
+                var attempts =
+                    enabled.map(
+                        function(proxy){
 
-                                    console.log(
-                                        "[TwitchProxy] URL:",
-                                        proxyURL
-                                    );
+                            var controller =
+                                new AbortController();
 
-
-                                    var start =
-                                        performance.now();
+                            controllers.push(
+                                controller
+                            );
 
 
-                                    return __tp_fetchProxy(
-                                        proxyURL,
-                                        init,
-                                        timeout
+                            var proxyURL =
+                                __tp_buildURL(
+                                    proxy,
+                                    channel
+                                );
+
+
+                            var start =
+                                performance.now();
+
+
+                            return __tp_fetchProxy(
+                                proxyURL,
+                                init,
+                                timeout,
+                                controller
+                            )
+                            .then(
+                                function(response){
+
+                                    return __tp_validateResponse(
+                                        response
                                     )
                                     .then(
-                                        function(response){
+                                        function(valid){
 
-                                            return __tp_validateResponse(
-                                                response
-                                            )
-                                            .then(
-                                                function(valid){
+                                            if (!valid) {
+
+                                                console.warn(
+                                                    "[TwitchProxy] 🔴 Proxy HLS invalide:",
+                                                    proxy.name
+                                                );
+
+                                                return;
+
+                                            }
+
+
+                                            if (
+                                                winnerFound
+                                            ) {
+                                                return;
+                                            }
+
+
+                                            winnerFound = true;
+
+                                            winnerResponse =
+                                                response;
+
+
+                                            var elapsed =
+                                                Math.round(
+                                                    performance.now()
+                                                    -
+                                                    start
+                                                );
+
+
+                                            console.log(
+                                                "[TwitchProxy] 🟢 Proxy OK:",
+                                                proxy.name,
+                                                response.status,
+                                                elapsed + "ms"
+                                            );
+
+
+                                            controllers.forEach(
+                                                function(other){
 
                                                     if (
-                                                        valid
+                                                        other !==
+                                                        controller
                                                     ) {
 
-                                                        var elapsed =
-                                                            Math.round(
-                                                                performance.now()
-                                                                -
-                                                                start
-                                                            );
-
-
-                                                        console.log(
-                                                            "[TwitchProxy] 🟢 Proxy OK:",
-                                                            proxy.name,
-                                                            response.status,
-                                                            elapsed + "ms"
-                                                        );
-
-
-                                                        successfulResponse =
-                                                            response;
-
-
-                                                        return;
+                                                        try {
+                                                            other.abort();
+                                                        } catch(e) {}
 
                                                     }
-
-
-                                                    console.warn(
-                                                        "[TwitchProxy] 🔴 Proxy HLS invalide:",
-                                                        proxy.name
-                                                    );
 
                                                 }
                                             );
 
-                                        }
-                                    )
-                                    .catch(
-                                        function(error){
 
-                                            console.warn(
-                                                "[TwitchProxy] 🔴 Proxy erreur:",
-                                                proxy.name,
-                                                error
-                                            );
+                                            if (__tp_bc) {
+
+                                                try {
+
+                                                    __tp_bc.postMessage({
+                                                        type: "activeProxy",
+                                                        proxyId: proxy.id,
+                                                        proxyName: proxy.name,
+                                                        channel: channel,
+                                                        direct: false,
+                                                        timestamp: Date.now()
+                                                    });
+
+                                                } catch(e) {}
+
+                                            }
 
                                         }
                                     );
 
                                 }
+                            )
+                            .catch(
+                                function(error){
+
+                                    if (
+                                        error &&
+                                        error.name === "AbortError"
+                                    ) {
+                                        return;
+                                    }
+
+                                    console.warn(
+                                        "[TwitchProxy] 🔴 Proxy erreur:",
+                                        proxy.name,
+                                        error
+                                    );
+
+                                }
                             );
 
-                    }
-                );
+                        }
+                    );
 
 
-                return chain.then(
+                return Promise.all(
+                    attempts
+                )
+                .then(
                     function(){
 
                         if (
-                            successfulResponse
+                            winnerResponse
                         ) {
 
-                            return successfulResponse;
+                            return winnerResponse;
 
                         }
 
@@ -3825,6 +4556,24 @@ dashboardButton.style.visibility =
                         console.warn(
                             "[TwitchProxy] Tous les proxys ont échoué"
                         );
+
+
+                        if (__tp_bc) {
+
+                            try {
+
+                                __tp_bc.postMessage({
+                                    type: "activeProxy",
+                                    proxyId: null,
+                                    proxyName: null,
+                                    channel: channel,
+                                    direct: true,
+                                    timestamp: Date.now()
+                                });
+
+                            } catch(e) {}
+
+                        }
 
 
                         if (
@@ -3915,6 +4664,14 @@ dashboardButton.style.visibility =
     // HOOK WORKER
     // ============================================================
 
+    // URL du dernier Blob Worker patché créé. On la libère
+    // seulement quand un NOUVEAU Worker est créé (donc que
+    // l'ancien a forcément déjà fini de charger son script),
+    // pour éviter d'accumuler des Blob non libérés en mémoire
+    // à chaque changement de chaîne/qualité.
+    var lastPatchedBlobURL = null;
+
+
     window.Worker =
         function (
             scriptURL,
@@ -3972,6 +4729,18 @@ dashboardButton.style.visibility =
                         URL.createObjectURL(
                             blob
                         );
+
+
+                    if (lastPatchedBlobURL) {
+
+                        URL.revokeObjectURL(
+                            lastPatchedBlobURL
+                        );
+
+                    }
+
+                    lastPatchedBlobURL =
+                        newURL;
 
 
                     console.log(
@@ -4047,6 +4816,11 @@ dashboardButton.style.visibility =
 
     async function autoTestOnLoad() {
 
+        if (testInProgress) {
+            console.log('[TwitchProxy] Auto-test ignoré : un test est déjà en cours');
+            return;
+        }
+
         var channel = getTestChannel();
 
         if (!channel) {
@@ -4061,6 +4835,7 @@ dashboardButton.style.visibility =
         var recentTest = pageConfig.proxies.some(function (p) {
             return (
                 p.lastTest &&
+                p.lastTest.channel === channel &&
                 p.lastTest.timestamp &&
                 (now - p.lastTest.timestamp) < delay
             );
@@ -4080,29 +4855,102 @@ dashboardButton.style.visibility =
             return;
         }
 
-        console.log('[TwitchProxy] ===== AUTO-TEST DÉMARRAGE =====');
+        testInProgress = true;
 
-        for (var i = 0; i < enabled.length; i++) {
+        try {
 
-            var proxy = enabled[i];
+            console.log('[TwitchProxy] ===== AUTO-TEST DÉMARRAGE =====');
 
-            var result = await testProxy(proxy, channel);
+            for (var i = 0; i < enabled.length; i++) {
 
-            proxy.lastTest = {
-                ok: result.ok,
-                status: result.ok ? 'OK' : result.status,
-                latency: result.latency,
-                timestamp: Date.now(),
-                channel: channel
-            };
+                var proxy = enabled[i];
+
+                var result = await testProxy(proxy, channel);
+
+                proxy.lastTest = {
+                    ok: result.ok,
+                    status: result.ok ? 'OK' : result.status,
+                    latency: result.latency,
+                    timestamp: Date.now(),
+                    channel: channel
+                };
+
+            }
+
+            autoSortProxies();
+
+            console.log('[TwitchProxy] ===== AUTO-TEST TERMINÉ =====');
+
+        } finally {
+
+            testInProgress = false;
 
         }
 
-        autoSortProxies();
+    }
 
-        console.log('[TwitchProxy] ===== AUTO-TEST TERMINÉ =====');
+
+    // ============================================================
+    // DÉTECTION NAVIGATION SPA (changement de stream sans reload)
+    // ============================================================
+
+    var lastKnownChannel = null;
+
+    function handlePossibleChannelChange() {
+
+        var channel = getTestChannel();
+
+        if (!channel || channel === lastKnownChannel) {
+            return;
+        }
+
+        lastKnownChannel = channel;
+
+        console.log('[TwitchProxy] Changement de chaîne détecté :', channel);
+
+        setTimeout(function () {
+            autoTestOnLoad();
+        }, 3000);
 
     }
+
+    (function hookHistoryForNavigation() {
+
+        var originalPushState = history.pushState;
+        var originalReplaceState = history.replaceState;
+
+        history.pushState = function () {
+
+            var result = originalPushState.apply(this, arguments);
+
+            window.dispatchEvent(new Event('tp9-locationchange'));
+
+            return result;
+
+        };
+
+        history.replaceState = function () {
+
+            var result = originalReplaceState.apply(this, arguments);
+
+            window.dispatchEvent(new Event('tp9-locationchange'));
+
+            return result;
+
+        };
+
+        window.addEventListener('popstate', function () {
+
+            window.dispatchEvent(new Event('tp9-locationchange'));
+
+        });
+
+        window.addEventListener(
+            'tp9-locationchange',
+            handlePossibleChannelChange
+        );
+
+    })();
 
 
     function initUI() {
@@ -4119,6 +4967,8 @@ dashboardButton.style.visibility =
         }
 
 
+        lastKnownChannel = getTestChannel();
+
         createPlayerButton();
 
         // Lancement du test auto après 3 secondes
@@ -4128,11 +4978,77 @@ dashboardButton.style.visibility =
         }, 3000);
 
 
+        // Le chat Twitch déclenche des dizaines de mutations DOM
+        // par seconde sur document.body : on throttle l'appel à
+        // positionPlayerUI() pour éviter de le relancer en boucle
+        // (les mutations de chat n'affectent quasiment jamais la
+        // position réelle du bouton, un léger délai ne se voit pas).
+        var positionUIThrottleTimer = null;
+        var positionUILastRun = 0;
+        var POSITION_UI_THROTTLE_MS = 300;
+
+        function throttledPositionPlayerUI() {
+
+            var now = Date.now();
+            var elapsed = now - positionUILastRun;
+
+            if (elapsed >= POSITION_UI_THROTTLE_MS) {
+
+                positionUILastRun = now;
+                positionPlayerUI();
+                return;
+
+            }
+
+            if (positionUIThrottleTimer) {
+                return;
+            }
+
+            positionUIThrottleTimer = setTimeout(
+                function () {
+
+                    positionUIThrottleTimer = null;
+                    positionUILastRun = Date.now();
+                    positionPlayerUI();
+
+                },
+                POSITION_UI_THROTTLE_MS - elapsed
+            );
+
+        }
+
+
+        // Pour scroll/resize, la position DOIT suivre en temps réel
+        // (le bouton est en position: fixed et doit rester collé au
+        // bouton Follow pendant le scroll) : on cale l'appel sur
+        // requestAnimationFrame plutôt que sur un délai fixe, pour
+        // rester fluide (~60fps) tout en évitant les appels
+        // redondants si plusieurs events arrivent avant la frame.
+        var positionUIRafPending = false;
+
+        function rafPositionPlayerUI() {
+
+            if (positionUIRafPending) {
+                return;
+            }
+
+            positionUIRafPending = true;
+
+            requestAnimationFrame(function () {
+
+                positionUIRafPending = false;
+                positionPlayerUI();
+
+            });
+
+        }
+
+
         var observer =
             new MutationObserver(
                 function () {
 
-                    positionPlayerUI();
+                    throttledPositionPlayerUI();
 
                 }
             );
@@ -4149,13 +5065,13 @@ dashboardButton.style.visibility =
 
         window.addEventListener(
             'resize',
-            positionPlayerUI
+            rafPositionPlayerUI
         );
 
 
         window.addEventListener(
             'scroll',
-            positionPlayerUI,
+            rafPositionPlayerUI,
             true
         );
 
@@ -4163,6 +5079,18 @@ dashboardButton.style.visibility =
         setInterval(
             positionPlayerUI,
             1500
+        );
+
+
+        // Re-test périodique en arrière-plan : autoTestOnLoad()
+        // gère déjà lui-même le cooldown via "Re-test auto",
+        // on l'appelle juste régulièrement pour qu'il puisse
+        // se déclencher sans changement de chaîne ni refresh.
+        setInterval(
+            function () {
+                autoTestOnLoad();
+            },
+            60 * 1000
         );
 
     }
