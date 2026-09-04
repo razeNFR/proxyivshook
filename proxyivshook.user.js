@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.2.2
+// @name         Twitch HLS Proxy v1.2.3
 // @namespace    twitch-proxy-ivs
-// @version      1.2.2
+// @version      1.2.3
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -4804,7 +4804,23 @@ dashboardButton.style.visibility =
             return a.lastTest.latency - b.lastTest.latency;
         });
 
-        pageConfig.proxies = tested.concat(failed);
+        var reordered = tested.concat(failed);
+
+        // Évite de sauvegarder/broadcast/logger pour rien quand le
+        // tri ne change en fait rien à l'ordre (appelé toutes les
+        // minutes par le re-test périodique même sans nouveaux
+        // résultats) — ça spammait la console et les Workers.
+        var unchanged =
+            reordered.length === pageConfig.proxies.length &&
+            reordered.every(function (p, i) {
+                return p.id === pageConfig.proxies[i].id;
+            });
+
+        if (unchanged) {
+            return;
+        }
+
+        pageConfig.proxies = reordered;
 
         saveConfig(pageConfig);
 
