@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.1.3
+// @name         Twitch HLS Proxy v1.2.2
 // @namespace    twitch-proxy-ivs
-// @version      1.1.3
+// @version      1.2.2
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -4379,6 +4379,10 @@ dashboardButton.style.visibility =
                     null;
 
 
+                var winnerProxy =
+                    null;
+
+
                 console.log(
                     "[TwitchProxy] Lancement en parallèle sur " +
                     enabled.length +
@@ -4457,6 +4461,9 @@ dashboardButton.style.visibility =
 
                                             winnerResponse =
                                                 response;
+
+                                            winnerProxy =
+                                                proxy;
 
 
                                             var elapsed =
