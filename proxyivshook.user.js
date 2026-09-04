@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Twitch HLS Proxy v1.0.7
+// @name         Twitch HLS Proxy v1.0.8
 // @namespace    twitch-proxy-ivs
-// @version      1.0.7
+// @version      1.0.8
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -21,7 +21,7 @@
     var STORAGE_KEY = 'twitchProxyManagerV1';
     var CHANNEL_CACHE_KEY = 'twitchProxyLastChannelV1';
 
-    var DEFAULT_TIMEOUT = 4000;
+    var DEFAULT_TIMEOUT = 2000;
     var DEFAULT_CACHE_DELAY = 5;
 
     var DEFAULT_PROXIES = [
