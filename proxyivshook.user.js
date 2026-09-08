@@ -6458,8 +6458,15 @@ dashboardButton.style.visibility =
 
         try {
 
+            // On évite l'accueil Twitch ("/") : il autoplay une
+            // preview de stream en vedette (parfois avec le son).
+            // Un nom de chaîne inexistant affiche une page "hors
+            // ligne" sans aucune vidéo.
             var url =
-                location.origin + '/?' + STATS_DASHBOARD_PARAM + '=1';
+                location.origin +
+                '/tp9proxydashboard?' +
+                STATS_DASHBOARD_PARAM +
+                '=1';
 
             window.open(url, '_blank', 'noopener');
 
