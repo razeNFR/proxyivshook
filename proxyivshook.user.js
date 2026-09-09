@@ -9421,11 +9421,13 @@ dashboardButton.style.visibility =
             autoTestOnLoad();
         }, 3000);
 
-        // Vérification de mise à jour : une fois au démarrage (avec
-        // le cooldown normal d'UPDATE_CHECK_INTERVAL_MS), puis on
-        // relance le check périodiquement pour couvrir les sessions
-        // qui restent ouvertes longtemps.
-        checkForScriptUpdate();
+        // Vérification de mise à jour : toujours forcée à chaque
+        // chargement/refresh de page (l'utilisateur veut être fixé
+        // immédiatement, pas attendre le cooldown d'1h), puis on
+        // relance le check périodiquement (celui-ci respecte le
+        // cooldown) pour couvrir les sessions qui restent ouvertes
+        // longtemps sans reload.
+        checkForScriptUpdate(true);
 
         setInterval(
             function () {
