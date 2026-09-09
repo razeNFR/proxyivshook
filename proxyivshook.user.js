@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.3.5
+// @version      1.3.6
 // @author       razeNFR
 // @description  Twitch HLS via plusieurs proxys - Dashboard statistiques (nouvel onglet, design amélioré) + fallback automatique + résultats persistants + proxys personnalisés
 // @match        https://www.twitch.tv/*
@@ -24,7 +24,7 @@
     var UPDATE_CHECK_KEY = 'twitchProxyUpdateCheckV1';
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.3.5';
+    var CURRENT_VERSION = '1.3.6';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -1820,6 +1820,7 @@
     <div class="tp9-update-text">
         <div class="tp9-update-title">Nouvelle mise à jour disponible</div>
         <div class="tp9-update-version"></div>
+        <div class="tp9-update-hint">Actualise la page une fois installée</div>
     </div>
     <button class="tp9-update-btn" type="button">Mettre à jour</button>
 </div>
@@ -2280,6 +2281,31 @@ document.addEventListener(
                     // Tampermonkey détecte l'URL et propose
                     // automatiquement l'installation/mise à jour.
                     window.open(UPDATE_CHECK_URL, '_blank');
+
+                    // Le code de CET onglet reste l'ancien tant
+                    // qu'il n'est pas rechargé (Tampermonkey ne peut
+                    // pas "recharger à chaud" un script déjà en
+                    // cours d'exécution) : on laisse le temps de
+                    // valider l'install dans l'autre onglet, puis on
+                    // propose de rafraîchir pour faire disparaître
+                    // le badge/la bannière.
+                    setTimeout(
+                        function () {
+
+                            if (
+                                confirm(
+                                    'As-tu terminé la mise à jour dans l\'autre onglet ?\n\n' +
+                                    'Actualiser cette page maintenant pour appliquer la nouvelle version ?'
+                                )
+                            ) {
+
+                                location.reload();
+
+                            }
+
+                        },
+                        4000
+                    );
 
                 }
             );
@@ -4144,6 +4170,17 @@ dashboardButton.style.visibility =
                 color: #ff9d9e;
 
                 margin-top: 1px;
+
+            }
+
+
+            .tp9-update-hint {
+
+                font-size: 10px;
+
+                color: #c98a8b;
+
+                margin-top: 3px;
 
             }
 
