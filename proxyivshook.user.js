@@ -37283,14 +37283,17 @@ dashboardButton.style.visibility =
         } else if (ended && pos && len && pos >= len) {
             // Les pubs sont finies, mais Twitch garde leur trace une
             // trentaine de secondes : le flux de secours tient jusque-là.
-            title = tt('Pubs terminées', 'Ads over');
+            // Le badge reste celui d'une pub bloquée, avec sa barre, qui
+            // se remplit cette fois jusqu'à la relance.
+            title = tt('Pub ', 'Ad ') + kind + ' ' + len + '/' + len;
             var reloadIn = Math.ceil((pod.end + SP_RELOAD_AFTER_AD_MS - now) / 1000);
             if (reloadIn >= 1) {
-                sub = tt('relance du lecteur dans', 'player restarts in');
+                sub = tt('relance dans', 'restart in');
                 time = reloadIn + ' s';
             } else {
-                sub = tt('relance du lecteur…', 'restarting player…');
+                sub = tt('relance…', 'restarting…');
             }
+            progress = (now - pod.end) / SP_RELOAD_AFTER_AD_MS;
         } else {
             if (pos && len) {
                 // Entre deux pubs, la suivante n'est pas encore annoncée.
