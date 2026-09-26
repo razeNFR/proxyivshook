@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.7
+// @version      1.9.8
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -33,7 +33,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.7';
+    var CURRENT_VERSION = '1.9.8';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -35209,121 +35209,9 @@ dashboardButton.style.visibility =
                 }
                 return out;
             }
-            // ------------------------------------------------------
-            // OBSERVATION DU RETOUR ANTICIPÉ (rien n'est changé)
-            // ------------------------------------------------------
-            // Aujourd'hui la pub est finie quand plus aucune trace de pub
-            // ne reste dans la liste, soit une trentaine de secondes après
-            // la dernière pub. On note ici, sans rien toucher, quand un
-            // retour plus tôt aurait eu lieu : dès que les derniers
-            // morceaux de la liste sont redevenus du vrai stream. Et on
-            // note s'il se serait trompé (morceau de pub revenu ensuite).
-            var __sp_OBS_TAIL = 3;
-            function __sp_tailState(text){
-                var lines = __sp_lines(text);
-                var live = [];
-                for (var i = 0; i < lines.length; i++) {
-                    if (lines[i].indexOf("#EXTINF") === 0) {
-                        live.push(lines[i].indexOf(",live") >= 0);
-                    }
-                }
-                if (live.length < __sp_OBS_TAIL) {
-                    return null;
-                }
-                return {
-                    live: live.slice(-__sp_OBS_TAIL).every(function(x){ return x; }),
-                    ad: !live[live.length - 1]
-                };
-            }
-            function __sp_observeEnd(info, text, pod){
-                var obs = info.obs;
-                if (!obs) {
-                    obs = info.obs = {
-                        ids: {},
-                        sawAd: false,
-                        at: 0,
-                        podDone: null,
-                        relapseAd: 0,
-                        relapseAdAfter: 0,
-                        relapseNew: 0,
-                        relapseNewAfter: 0
-                    };
-                }
-                var now = Date.now();
-                // Une pub jamais vue : Twitch numérote chacune.
-                var fresh = false;
-                __sp_lines(text).forEach(function(line){
-                    if (line.indexOf("#EXT-X-DATERANGE") !== 0 || line.indexOf(__sp_MARK) < 0) {
-                        return;
-                    }
-                    var id = __sp_attrs(line).ID || line;
-                    if (!obs.ids[id]) {
-                        obs.ids[id] = true;
-                        fresh = true;
-                    }
-                });
-                var tail = __sp_tailState(text);
-                if (!tail) {
-                    return;
-                }
-                if (tail.ad) {
-                    obs.sawAd = true;
-                }
-                if (obs.at) {
-                    if (fresh) {
-                        // Pub suivante annoncée : le vrai retour repasserait
-                        // sur le secours, c'est prévu.
-                        obs.relapseNew++;
-                        if (!obs.relapseNewAfter) {
-                            obs.relapseNewAfter = now - obs.at;
-                        }
-                        obs.at = 0;
-                        obs.podDone = null;
-                    } else if (tail.ad) {
-                        // Morceau de pub revenu sans nouvelle pub : c'est le
-                        // cas où le retour anticipé se serait trompé.
-                        obs.relapseAd++;
-                        if (!obs.relapseAdAfter) {
-                            obs.relapseAdAfter = now - obs.at;
-                        }
-                        obs.at = 0;
-                        obs.podDone = null;
-                    }
-                    return;
-                }
-                // Il faut avoir vu au moins un morceau de pub en fin de liste :
-                // au tout début, Twitch annonce la pub avant ses morceaux.
-                if (obs.sawAd && tail.live) {
-                    var podDone = pod && pod.len && pod.end
-                        ? (pod.pos >= pod.len && now >= pod.end - 2000)
-                        : null;
-                    // Twitch annonce encore une pub à venir : on attend.
-                    if (podDone === false) {
-                        return;
-                    }
-                    obs.at = now;
-                    obs.podDone = podDone;
-                }
-            }
-            // Après un retour anticipé, les vieux repères de pub restent
-            // dans la liste ~30 s : pub suivante (repère jamais vu),
-            // morceau de pub revenu, ou simples restes à nettoyer.
-            function __sp_afterState(info, text){
-                var ids = info.after.ids;
-                var fresh = __sp_lines(text).some(function(line){
-                    if (line.indexOf("#EXT-X-DATERANGE") !== 0 || line.indexOf(__sp_MARK) < 0) {
-                        return false;
-                    }
-                    return !ids[__sp_attrs(line).ID || line];
-                });
-                if (fresh) {
-                    return "new";
-                }
-                var tail = __sp_tailState(text);
-                return tail && tail.ad ? "relapse" : "clean";
-            }
-            // Liste rendue au lecteur après le retour anticipé : sans les
-            // repères de pub, et les vieux morceaux de pub remplacés par du vide.
+            // Coupure finie pendant la recherche du flux de secours : la
+            // liste est rendue sans repères de pub, et ses vieux morceaux
+            // de pub remplacés par du vide.
             function __sp_cleanAfter(text){
                 var lines = __sp_lines(text);
                 var now = Date.now();
@@ -35346,7 +35234,36 @@ dashboardButton.style.visibility =
                 }
                 return out.join(__sp_NL);
             }
-            function __sp_endAd(info, early){
+            // Heure (d'après Twitch) de la fin du dernier morceau d'une
+            // liste : comparée entre flux de secours et flux normal, elle
+            // dit de combien l'un est en avance sur l'autre.
+            function __sp_listEnd(text){
+                var lines = __sp_lines(text);
+                var pendingPdt = 0;
+                var end = 0;
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        pendingPdt = Date.parse(line.substring(25).trim()) || 0;
+                    } else if (line.indexOf("#EXTINF:") === 0) {
+                        if (pendingPdt) {
+                            end = pendingPdt + (parseFloat(line.substring(8)) || 0) * 1000;
+                        }
+                        pendingPdt = 0;
+                    }
+                }
+                return end;
+            }
+            function __sp_median(values){
+                if (!values || !values.length) {
+                    return null;
+                }
+                var sorted = values.slice().sort(function(a, b){
+                    return a - b;
+                });
+                return sorted[Math.floor(sorted.length / 2)];
+            }
+            function __sp_endAd(info){
                 var wasModified = info.usingModified;
                 __sp_lastEndAt = Date.now();
                 __sp_blankAfterEnd = 0;
@@ -35358,11 +35275,10 @@ dashboardButton.style.visibility =
                 info.lastReload = Date.now();
                 __tp_postLog("info",
                     "🛡️ Fin de la pub sur " + info.channel + " (" +
-                    Math.round((Date.now() - info.adStart) / 1000) + " s" +
-                    (early ? ", retour anticipé" : "") + ") : " +
+                    Math.round((Date.now() - info.adStart) / 1000) + " s) : " +
                     "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : ""));
                 __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
-                __sp_post({ type: "spPlayer", action: "reload" });
+                __sp_post({ type: "spPlayer", action: "reload", afterAd: true, channel: info.channel, edgeGap: __sp_median(info.edgeGaps) });
             }
             async function __sp_processMedia(url, text, info){
                 if (__sp_reloaded) {
@@ -35370,28 +35286,6 @@ dashboardButton.style.visibility =
                     info.lastReload = Date.now();
                 }
                 var marked = text.indexOf(__sp_MARK) >= 0;
-                if (info.after) {
-                    var state = marked ? __sp_afterState(info, text) : "gone";
-                    if (state === "clean") {
-                        return __sp_cleanAfter(text);
-                    }
-                    if (state === "gone") {
-                        __tp_postLog("info",
-                            "🛡️ Repères de pub effacés par Twitch sur " + info.channel +
-                            " : le retour anticipé a évité " +
-                            Math.round((Date.now() - info.after.at) / 1000) +
-                            " s de flux de secours", true);
-                    }
-                    if (state === "relapse") {
-                        // Filet : plus de retour anticipé jusqu'à la vraie fin.
-                        info.noEarly = true;
-                        __tp_postLog("warn",
-                            "🛡️ Retour anticipé trop tôt sur " + info.channel +
-                            " : un morceau de pub est revenu, retour sur le flux de secours" +
-                            " jusqu'à la vraie fin de la coupure");
-                    }
-                    info.after = null;
-                }
                 if (marked) {
                     info.midroll = text.indexOf('"MIDROLL"') >= 0 || text.indexOf('"midroll"') >= 0;
                     if (!info.inAd) {
@@ -35401,8 +35295,7 @@ dashboardButton.style.visibility =
                         info.blankLogged = false;
                         info.adIdsSeen = {};
                         info.adTimes = {};
-                        info.obs = null;
-                        info.earlySkipLogged = false;
+                        info.edgeGaps = [];
                         __tp_postLog("warn",
                             "🛡️ Pub " + (info.midroll ? "en cours de stream" : "de début de stream") +
                             " sur " + info.channel + " : recherche d'un flux sans pub");
@@ -35410,28 +35303,6 @@ dashboardButton.style.visibility =
                     }
                     __sp_logAdInfo(info, text);
                     var pod = __sp_podInfo(info, text);
-                    __sp_observeEnd(info, text, pod);
-                    // Retour anticipé : les derniers morceaux sont du vrai
-                    // stream et Twitch n'annonce plus de pub à venir.
-                    // Pas en 2K/4K : les restes de pub y seraient remplacés par
-                    // une image vide en H.264, que le lecteur reparti en HEVC
-                    // ne sait pas enchaîner (son qui coupe, décalage jusqu'au
-                    // F5). Le secours tient alors jusqu'à ce que Twitch efface
-                    // ses repères, et la relance se fait sur un flux propre.
-                    if (info.obs && info.obs.at && info.usingModified && !info.earlySkipLogged) {
-                        info.earlySkipLogged = true;
-                        __tp_postLog("info",
-                            "🛡️ Stream en 2K/4K sur " + info.channel +
-                            " : pas de retour anticipé, le flux de secours tient jusqu'à ce que Twitch efface ses repères de pub",
-                            true);
-                    }
-                    if (info.obs && info.obs.at && !info.noEarly && !info.usingModified) {
-                        var seenIds = info.obs.ids;
-                        info.obs = null;
-                        __sp_endAd(info, true);
-                        info.after = { ids: seenIds, at: Date.now() };
-                        return __sp_cleanAfter(text);
-                    }
                     // Pub de début : Twitch veut voir qu'on la charge,
                     // on en télécharge un segment par liste.
                     if (!info.midroll) {
@@ -35463,13 +35334,21 @@ dashboardButton.style.visibility =
                         __sp_post({ type: "spPlayer", action: "reload" });
                     }
                     var backup = await __sp_findBackup(info, current);
-                    // La coupure s'est terminée pendant la recherche (retour
-                    // anticipé, autre liste plus rapide) : annoncer une pub
+                    // La coupure s'est terminée pendant la recherche (autre
+                    // liste plus rapide) : annoncer une pub
                     // maintenant laisserait la page croire à une pub sans fin.
                     if (!info.inAd) {
                         return __sp_cleanAfter(text);
                     }
                     if (backup.text) {
+                        var mainEnd = __sp_listEnd(text);
+                        var backupEnd = __sp_listEnd(backup.text);
+                        if (mainEnd && backupEnd) {
+                            info.edgeGaps.push(backupEnd - mainEnd);
+                            if (info.edgeGaps.length > 20) {
+                                info.edgeGaps.shift();
+                            }
+                        }
                         text = backup.text;
                         info.backupLabel = backup.label || "";
                         if (info.backupType !== backup.type) {
@@ -35496,13 +35375,12 @@ dashboardButton.style.visibility =
                         stripping: info.stripping,
                         backupType: backup.text ? info.backupType : null,
                         quality: backup.text ? info.backupLabel : "",
-                        pod: pod,
-                        // 2K/4K : pas de retour anticipé, le badge doit
-                        // annoncer la relance plus tard.
-                        hevc: !!info.usingModified
+                        pod: pod
                     });
                 } else {
-                    info.noEarly = false;
+                    // Plus aucun repère de pub dans la liste : c'est la seule
+                    // fin de coupure (comme Vaft). Pas de retour anticipé : il
+                    // devinait la fin plus tôt et se trompait parfois.
                     if (info.inAd) {
                         // Relance complète, comme Vaft : les morceaux servis
                         // pendant la pub n'ont pas tout à fait la même durée
@@ -35510,8 +35388,7 @@ dashboardButton.style.visibility =
                         // pause/lecture laissait le décalage jusqu'au F5.
                         // La relance remet tout à zéro (et rend la 2K/4K si
                         // le lecteur était passé en H.264).
-                        info.obs = null;
-                        __sp_endAd(info, false);
+                        __sp_endAd(info);
                     }
                 }
                 return text;
@@ -36527,7 +36404,7 @@ dashboardButton.style.visibility =
         return spParts;
     }
 
-    function spPlayerTask(action) {
+    function spPlayerTask(action, options) {
         var parts = spPlayerParts(true);
         if (!parts || !parts.player || !parts.state) {
             logEvent('warn', 'Bloqueur de pub : lecteur Twitch introuvable');
@@ -36548,9 +36425,13 @@ dashboardButton.style.visibility =
             } catch (e) {}
             return;
         }
+        if (options && options.afterAd) {
+            spCatchUpArm(player, options.channel, options.edgeGap);
+        }
         try {
             parts.state.setSrc({ isNewMediaPlayerInstance: true, refreshAccessToken: true });
         } catch (e) {
+            spCatchUp = null;
             logEvent('warn', 'Relance du lecteur Twitch refusée : ' + (e && e.message));
             return;
         }
@@ -36560,6 +36441,181 @@ dashboardButton.style.visibility =
         try {
             player.play();
         } catch (e) {}
+    }
+
+    // ------------------------------------------------------------
+    // Retour après une pub : ne pas revoir ce qu'on a déjà vu
+    // ------------------------------------------------------------
+    //
+    // Un lecteur relancé ne repart pas au même endroit : il se place
+    // quelques secondes plus loin du direct pour se faire une réserve,
+    // et on revoyait ces secondes-là. On note le retard sur le direct
+    // juste avant la relance, puis, une fois l'image repartie, on
+    // avance d'autant (dans ce qui est déjà téléchargé). Chaque retour
+    // laisse une ligne dans les Logs, réussi ou non.
+    var SP_CATCHUP_WAIT_MS = 12000;
+    var SP_CATCHUP_STABLE_MS = 800;
+    var SP_CATCHUP_MARGIN = 1.5;
+    var SP_CATCHUP_MIN = 0.5;
+    var spCatchUp = null;
+    var spCatchUpTimer = null;
+
+    function spLiveLatency(player) {
+        try {
+            var value = player && typeof player.getLiveLatency === 'function'
+                ? player.getLiveLatency()
+                : NaN;
+            return typeof value === 'number' && isFinite(value) && value > 0 ? value : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function spAheadOf(video) {
+        try {
+            for (var i = 0; i < video.buffered.length; i++) {
+                if (
+                    video.buffered.start(i) <= video.currentTime + 0.5 &&
+                    video.buffered.end(i) > video.currentTime
+                ) {
+                    return video.buffered.end(i) - video.currentTime;
+                }
+            }
+        } catch (e) {}
+        return 0;
+    }
+
+    function spSec(value) {
+        return (Math.round(value * 10) / 10).toFixed(1).replace('.', ',') + ' s';
+    }
+
+    function spCatchUpStop() {
+        if (spCatchUpTimer) {
+            clearInterval(spCatchUpTimer);
+            spCatchUpTimer = null;
+        }
+        spCatchUp = null;
+    }
+
+    function spCatchUpArm(player, channel, edgeGap) {
+        spCatchUpStop();
+        var latency = spLiveLatency(player);
+        if (latency === null) {
+            logEvent('info', 'Retour après pub sur ' + (channel || '?') +
+                ' : retard sur le direct illisible avant la relance, pas de rattrapage');
+            return;
+        }
+        spCatchUp = {
+            channel: channel || getTestChannel(),
+            at: Date.now(),
+            latency: latency,
+            edgeGap: typeof edgeGap === 'number' ? edgeGap : null,
+            video: null,
+            time: null,
+            movingSince: 0
+        };
+        spCatchUpTimer = setInterval(spCatchUpTick, 250);
+    }
+
+    function spCatchUpTick() {
+        var w = spCatchUp;
+        if (!w || proxiesOn() || getTestChannel() !== w.channel) {
+            spCatchUpStop();
+            return;
+        }
+        var now = Date.now();
+        if ((now - w.at) > SP_CATCHUP_WAIT_MS) {
+            spCatchUpStop();
+            logEvent('warn', 'Retour après pub sur ' + w.channel +
+                ' : le lecteur n\'est pas reparti dans les ' + (SP_CATCHUP_WAIT_MS / 1000) +
+                ' s, pas de rattrapage');
+            return;
+        }
+        // Dans le passé (retour arrière), c'est notre lecteur qu'on regarde.
+        if (dvrOverlay && !dvrIsLive()) {
+            spCatchUpStop();
+            return;
+        }
+        var video = adCleanPlaybackVideo();
+        // On attend que l'image tourne pour de bon, dans le lecteur neuf.
+        if (
+            !video ||
+            video.paused ||
+            video.readyState < 3 ||
+            video !== w.video ||
+            video.currentTime === w.time
+        ) {
+            if (video !== w.video) {
+                w.movingSince = 0;
+            } else if (video && video.currentTime === w.time) {
+                w.movingSince = 0;
+            }
+            w.video = video;
+            w.time = video ? video.currentTime : null;
+            return;
+        }
+        w.time = video.currentTime;
+        if (!w.movingSince) {
+            w.movingSince = now;
+            return;
+        }
+        if ((now - w.movingSince) < SP_CATCHUP_STABLE_MS) {
+            return;
+        }
+        spCatchUpStop();
+        var parts = spPlayerParts(true);
+        var after = spLiveLatency(parts && parts.player);
+        if (after === null) {
+            logEvent('info', 'Retour après pub sur ' + w.channel +
+                ' : retard sur le direct illisible après la relance, pas de rattrapage');
+            return;
+        }
+        // Ce qu'on reverrait : l'image montrée avant la relance moins
+        // celle montrée maintenant, en temps du stream.
+        var repeat = (after - w.latency) - (now - w.at) / 1000;
+        var summary = ' (retard sur le direct : ' + spSec(w.latency) + ' avant la relance, ' +
+            spSec(after) + ' après' +
+            // 🔎 Avance du flux de secours sur le flux normal (heures
+            // des morceaux d'après Twitch) : si elle est positive, la
+            // relance fait revenir en arrière d'autant.
+            (w.edgeGap !== null
+                ? ' · 🔎 flux de secours ' + (w.edgeGap >= 0 ? 'en avance' : 'en retard') +
+                    ' de ' + spSec(Math.abs(w.edgeGap) / 1000) + ' sur le flux normal'
+                : ' · 🔎 avance du flux de secours inconnue') +
+            ')';
+        if (repeat < SP_CATCHUP_MIN) {
+            logEvent('info', 'Retour après pub sur ' + w.channel +
+                ' : rien à revoir' + summary, true);
+            return;
+        }
+        var room = spAheadOf(video) - SP_CATCHUP_MARGIN;
+        var jump = Math.min(repeat, room);
+        if (jump < SP_CATCHUP_MIN) {
+            logEvent('warn', 'Retour après pub sur ' + w.channel + ' : ' + spSec(repeat) +
+                ' revues, pas assez de vidéo chargée pour avancer (' + spSec(spAheadOf(video)) +
+                ' devant)' + summary);
+            return;
+        }
+        try {
+            video.currentTime = video.currentTime + jump;
+        } catch (e) {
+            logEvent('warn', 'Retour après pub sur ' + w.channel + ' : avance refusée par le lecteur (' +
+                (e && e.message) + ')' + summary);
+            return;
+        }
+        var channel = w.channel;
+        setTimeout(function () {
+            var check = spPlayerParts(false);
+            var final = spLiveLatency(check && check.player);
+            logEvent(
+                'success',
+                'Retour après pub sur ' + channel + ' : avancé de ' + spSec(jump) +
+                ' pour ne pas revoir ' + spSec(repeat) +
+                (jump < repeat - 0.2 ? ' (pas plus : pas assez de vidéo chargée)' : '') +
+                summary +
+                (final !== null ? ', ' + spSec(final) + ' maintenant' : '')
+            );
+        }, 1500);
     }
 
     // Fin de pub : pause/lecture, invisible ou presque. Si l'image
@@ -36633,7 +36689,7 @@ dashboardButton.style.visibility =
                 if (data.action === 'resume') {
                     spResumeAfterAd();
                 } else {
-                    spPlayerTask(data.action);
+                    spPlayerTask(data.action, data);
                 }
             }
             return;
@@ -37135,16 +37191,12 @@ dashboardButton.style.visibility =
     // par seconde entre deux messages, pour le compte à rebours.
     var spBadgeData = null;
 
-    // Délai habituel entre la fin de la dernière pub et la relance du
-    // lecteur : le Worker attend de voir trois morceaux (2 s chacun) de
-    // vrai stream en fin de liste. C'est une estimation, d'où le « … »
-    // quand elle est dépassée plutôt qu'un « 0 s » figé.
-    var SP_RELOAD_AFTER_AD_MS = 6000;
-
-    // 2K/4K : pas de retour anticipé, la relance attend que Twitch
-    // efface ses repères de pub, une trentaine de secondes après la
-    // dernière pub (mesuré sur un stream 2K : 33 à 36 s).
-    var SP_RELOAD_AFTER_AD_HEVC_MS = 35000;
+    // Délai entre la fin de la dernière pub et la relance du lecteur :
+    // la relance attend que Twitch efface ses repères de pub, une
+    // trentaine de secondes après la dernière pub (mesuré : 33 à 36 s).
+    // C'est une estimation, d'où le « relance du lecteur… » quand elle
+    // est dépassée plutôt qu'un « 0 s » figé.
+    var SP_RELOAD_AFTER_AD_MS = 35000;
     var spBadgeTimer = null;
     var spBadgeProgress = null;
 
@@ -37232,8 +37284,7 @@ dashboardButton.style.visibility =
             // Les pubs sont finies, mais Twitch garde leur trace une
             // trentaine de secondes : le flux de secours tient jusque-là.
             title = tt('Pubs terminées', 'Ads over');
-            var reloadAfter = data.hevc ? SP_RELOAD_AFTER_AD_HEVC_MS : SP_RELOAD_AFTER_AD_MS;
-            var reloadIn = Math.ceil((pod.end + reloadAfter - now) / 1000);
+            var reloadIn = Math.ceil((pod.end + SP_RELOAD_AFTER_AD_MS - now) / 1000);
             if (reloadIn >= 1) {
                 sub = tt('relance du lecteur dans', 'player restarts in');
                 time = reloadIn + ' s';
