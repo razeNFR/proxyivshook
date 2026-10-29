@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.8
+// @version      1.9.9
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -33,7 +33,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.8';
+    var CURRENT_VERSION = '1.9.9';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -43,7 +43,7 @@
     var UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 heure
 
     var DEFAULT_TIMEOUT = 2000;
-    var DEFAULT_CACHE_DELAY = 5;
+    var DEFAULT_CACHE_DELAY = 60;
 
     var DEFAULT_PROXIES = [
         {
@@ -257,6 +257,10 @@
         'Mode Proxy': 'Proxy mode',
         'Le stream passe par des proxys situés dans un pays sans pub.': 'The stream goes through proxies located in an ad-free country.',
         'Mode Adblock': 'Adblock mode',
+        'Désactivé': 'Disabled',
+        'Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.': 'No ad blocking: Twitch works normally. Handy to use another ad blocker. The page reloads.',
+        '⛔ Bloqueur de pub désactivé': '⛔ Ad blocker disabled',
+        'Ni proxy ni Adblock : Twitch fonctionne comme sans le script, tu peux utiliser un autre bloqueur de pub. Choisis Proxy ou Adblock pour le réactiver (la page se recharge).': 'No proxy, no Adblock: Twitch works as if the script were not there, you can use another ad blocker. Pick Proxy or Adblock to turn it back on (the page reloads).',
         'Twitch lu en direct, sans proxy. Pendant une pub, on passe sur un autre lecteur Twitch sans pub.': 'Twitch played directly, no proxy. During an ad, it switches to another ad-free Twitch player.',
         'Pubs bloquées sur ce stream': 'Ads blocked on this stream',
         'Depuis l\'ouverture du stream. Dessous : les coupures (pubs d\'affilée).': 'Since the stream was opened. Below: ad breaks (ads in a row).',
@@ -906,6 +910,7 @@
             fallback: true,
             timeout: DEFAULT_TIMEOUT,
             cacheDelay: DEFAULT_CACHE_DELAY,
+            cacheDelayV2: true,
             keepQualityInBackground: true,
             autoBackupStats: true,
             dvrChannels: {},
@@ -913,9 +918,11 @@
             statsEnabled: true,
             dvrAutoNoVod: false,
             wheelVolumeStep: 1,
+            audioNormalize: false,
             customPlayer: true,
             hideTwitchTurbo: false,
             proxiesEnabled: true,
+            scriptOff: false,
             hideTwitchSubButtons: false,
             hideTwitchPromo: false,
             detailedLogs: false,
@@ -1108,6 +1115,15 @@
             config.cacheDelay =
                 parsed.cacheDelay;
 
+            // L'ancien défaut (5 min) passe au nouveau (1 h), une
+            // seule fois : un 5 min choisi après coup est gardé.
+            if (
+                parsed.cacheDelay === 5 &&
+                parsed.cacheDelayV2 !== true
+            ) {
+                config.cacheDelay = DEFAULT_CACHE_DELAY;
+            }
+
         }
 
         if (
@@ -1130,7 +1146,7 @@
 
         }
 
-        ['statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons', 'hideTwitchPromo', 'proxiesEnabled', 'dvrAutoNoVod', 'detailedLogs', 'tooltips'].forEach(
+        ['statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons', 'hideTwitchPromo', 'proxiesEnabled', 'scriptOff', 'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips'].forEach(
             function (key) {
                 if (typeof parsed[key] === 'boolean') {
                     config[key] = parsed[key];
@@ -1412,6 +1428,8 @@
                 cacheDelay:
                     pageConfig.cacheDelay,
 
+                cacheDelayV2: true,
+
                 keepQualityInBackground:
                     pageConfig.keepQualityInBackground,
 
@@ -1429,6 +1447,9 @@
 
                 wheelVolumeStep:
                     pageConfig.wheelVolumeStep || 1,
+
+                audioNormalize:
+                    !!pageConfig.audioNormalize,
 
                 statsEnabled:
                     pageConfig.statsEnabled !== false,
@@ -1592,6 +1613,15 @@
 
     var pageConfig =
         loadConfig();
+
+    // Mode Désactivé, lu une seule fois au chargement : les accroches
+    // (Worker, fetch) se posent maintenant ou jamais, un changement
+    // de mode recharge donc la page.
+    var SCRIPT_OFF_AT_LOAD = pageConfig.scriptOff === true;
+
+    function scriptIsOff() {
+        return SCRIPT_OFF_AT_LOAD;
+    }
 
 
     // ============================================================
@@ -2386,6 +2416,15 @@
 
                 if (savedConfig && typeof savedConfig.tooltips === 'boolean') {
                     pageConfig.tooltips = savedConfig.tooltips;
+                }
+
+                if (
+                    savedConfig &&
+                    typeof savedConfig.audioNormalize === 'boolean' &&
+                    savedConfig.audioNormalize !== pageConfig.audioNormalize
+                ) {
+                    pageConfig.audioNormalize = savedConfig.audioNormalize;
+                    audioNormRefresh();
                 }
 
                 if (savedConfig && typeof savedConfig.lang === 'string' && savedConfig.lang !== pageConfig.lang) {
@@ -5278,7 +5317,7 @@
             // arrière-plan.
             var spoofVisibility = function () {
                 return !!pageConfig.keepQualityInBackground ||
-                    pageConfig.proxiesEnabled === false;
+                    (pageConfig.proxiesEnabled === false && !scriptIsOff());
             };
 
             var fakeValues = {
@@ -5848,6 +5887,13 @@
     <button type="button" class="tp9-mode-btn" data-mode="adblock" role="radio"
         data-tp9-tip="Mode Adblock"
         data-tp9-tip-sub="Twitch lu en direct, sans proxy. Pendant une pub, on passe sur un autre lecteur Twitch sans pub.">🛡️ Adblock</button>
+    <button type="button" class="tp9-mode-btn" data-mode="off" role="radio"
+        data-tp9-tip="Désactivé"
+        data-tp9-tip-sub="Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.">⛔ Désactivé</button>
+</div>
+<div class="tp9-off-card">
+    <div class="tp9-off-title">⛔ Bloqueur de pub désactivé</div>
+    <div class="tp9-off-text">Ni proxy ni Adblock : Twitch fonctionne comme sans le script, tu peux utiliser un autre bloqueur de pub. Choisis Proxy ou Adblock pour le réactiver (la page se recharge).</div>
 </div>
 <div class="tp9-sans-proxy-card">
     <div class="tp9-sans-proxy-title">🛡️ Bloqueur de pub actif</div>
@@ -6303,7 +6349,7 @@ document.addEventListener(
         dashboard.querySelectorAll('.tp9-mode-btn').forEach(function (button) {
             button.addEventListener('click', function (event) {
                 event.stopPropagation();
-                setProxiesEnabled(button.getAttribute('data-mode') === 'proxy');
+                setPlayMode(button.getAttribute('data-mode'));
             });
         });
         dashboard
@@ -6494,6 +6540,8 @@ document.addEventListener(
                         cacheDelay:
                             DEFAULT_CACHE_DELAY,
 
+                        cacheDelayV2: true,
+
                         keepQualityInBackground:
                             true,
 
@@ -6524,6 +6572,9 @@ document.addEventListener(
 
                         wheelVolumeStep:
                             pageConfig.wheelVolumeStep || 1,
+
+                        audioNormalize:
+                            !!pageConfig.audioNormalize,
 
                         hideTwitchSubButtons:
                             !!pageConfig.hideTwitchSubButtons,
@@ -7502,7 +7553,7 @@ document.addEventListener(
         // Mode Adblock : forcée (la relance de fin de pub en a besoin
         // quand l'onglet est caché), l'interrupteur est verrouillé.
         var keepQualityBox = dashboard.querySelector('.tp9-keep-quality');
-        var keepQualityForced = !proxiesOn();
+        var keepQualityForced = !proxiesOn() && !scriptIsOff();
         keepQualityBox.checked =
             keepQualityForced || !!pageConfig.keepQualityInBackground;
         keepQualityBox.disabled = keepQualityForced;
@@ -7519,13 +7570,16 @@ document.addEventListener(
 
         dashboard.querySelector('.tp9-custom-player').checked = isCustomPlayerOn();
         var modeSwitch = dashboard.querySelector('.tp9-mode-switch');
-        modeSwitch.classList.toggle('tp9-mode-adblock', !proxiesOn());
+        var currentMode = scriptIsOff() ? 'off' : (proxiesOn() ? 'proxy' : 'adblock');
+        modeSwitch.classList.toggle('tp9-mode-adblock', currentMode === 'adblock');
+        modeSwitch.classList.toggle('tp9-mode-off', currentMode === 'off');
         modeSwitch.querySelectorAll('.tp9-mode-btn').forEach(function (button) {
-            var on = (button.getAttribute('data-mode') === 'proxy') === proxiesOn();
+            var on = button.getAttribute('data-mode') === currentMode;
             button.classList.toggle('tp9-mode-active', on);
             button.setAttribute('aria-checked', on ? 'true' : 'false');
         });
-        dashboard.classList.toggle('tp9-no-proxy', !proxiesOn());
+        dashboard.classList.toggle('tp9-no-proxy', !proxiesOn() || scriptIsOff());
+        dashboard.classList.toggle('tp9-script-off', scriptIsOff());
         renderAdblockStats();
 
         var statsOn = pageConfig.statsEnabled !== false;
@@ -9543,7 +9597,7 @@ function showAddProxyForm() {
 
             max-width: 310px;
 
-            max-height: 340px;
+            max-height: 380px;
 
             padding: 10px 12px 12px;
 
@@ -14238,7 +14292,7 @@ function showAddProxyForm() {
         if (isDashboardOnlyTab) {
             return;
         }
-        if (!proxiesOn()) {
+        if (!proxiesOn() || scriptIsOff()) {
             watchdogReset();
             return;
         }
@@ -15880,7 +15934,20 @@ function showAddProxyForm() {
                             '" data-step="' + step + '">' + step + ' %</button>';
                     }).join('') +
                 '</div>' +
-            '</div>';
+            '</div>' +
+            '<label class="tp9dvr-set-row"' +
+                ' data-tp9-tip="' + tt('Normaliser le son', 'Normalize audio') + '"' +
+                ' data-tp9-tip-sub="' + tt(
+                    'Compresseur multibande : rapproche les sons forts et faibles, par exemple un micro trop fort face à la vidéo qu\'il regarde.',
+                    'Multiband compressor: brings loud and quiet sounds closer, e.g. a mic too loud compared to the video being watched.'
+                ) + '">' +
+                '<span class="tp9dvr-set-label">' + tt('Normaliser le son', 'Normalize audio') + '</span>' +
+                '<span class="tp9dvr-set-switch">' +
+                    '<input type="checkbox" class="tp9dvr-set-norm"' +
+                    (pageConfig.audioNormalize ? ' checked' : '') + '>' +
+                    '<span class="tp9dvr-set-track"></span>' +
+                '</span>' +
+            '</label>';
 
         dvrUpdateSettingsHint();
 
@@ -16078,6 +16145,15 @@ function showAddProxyForm() {
                         menu,
                         dvrQuery('.tp9dvr-settings')
                     );
+                }
+            );
+        }
+        var normBox = menu.querySelector('.tp9dvr-set-norm');
+        if (normBox) {
+            normBox.addEventListener(
+                'change',
+                function (event) {
+                    setAudioNormalize(event.target.checked);
                 }
             );
         }
@@ -17936,6 +18012,325 @@ function showAddProxyForm() {
 
 
     // ------------------------------------------------------------
+    // NORMALISATION DU SON (COMPRESSEUR MULTIBANDE)
+    // ------------------------------------------------------------
+    //
+    // Même principe que le « Compresseur audio » de Xtra (Android,
+    // DynamicsProcessing) : le son est coupé en bandes de
+    // fréquences, chaque bande est compressée à part, puis tout est
+    // ressommé et passé dans un limiteur. Un seuil très bas et un
+    // genou très large tassent doucement tout ce qui dépasse : un
+    // micro trop fort redescend, une vidéo trop faible remonte.
+    //
+    // createMediaElementSource est sans retour : une fois branchée,
+    // une vidéo ne sort plus que par le graphe. Couper l'option ne
+    // débranche donc rien, l'entrée part juste en direct vers la
+    // sortie.
+
+    // Coupures entre les quatre bandes, en Hz.
+    var AUDIO_NORM_CROSSOVERS = [120, 800, 4000];
+
+    // Réglages de bande de Xtra (seuil -50, genou 40, ratio 1.6),
+    // traduits pour Web Audio. Android centre son genou sur le
+    // seuil, Web Audio le fait partir du seuil : -50 recopié tel
+    // quel ne compresse presque rien, -70 redonne la même courbe.
+    // Pas de gain de rattrapage en plus : Web Audio en applique un
+    // tout seul, là où Android a besoin de ses +10 dB explicites.
+    var AUDIO_NORM_BAND = {
+        threshold: -70,
+        knee: 40,
+        ratio: 1.6,
+        attack: 0,
+        release: 0.25
+    };
+
+    var AUDIO_NORM_MAKEUP_DB = 0;
+
+    var audioNormCtx = null;
+    var audioNormInput = null;
+    var audioNormChain = null;
+    var audioNormVideos = new WeakSet();
+    var audioNormWaitingGesture = false;
+
+    function audioNormBuildChain(ctx) {
+
+        // Q de Butterworth (0,707). Web Audio le prend en dB pour
+        // les passe-bas/passe-haut, mais tel quel pour le passe-tout.
+        function filter(type, frequency) {
+            var node = ctx.createBiquadFilter();
+            node.type = type;
+            node.frequency.value = frequency;
+            node.Q.value = type === 'allpass'
+                ? Math.SQRT1_2
+                : 20 * Math.log10(Math.SQRT1_2);
+            return node;
+        }
+
+        // Linkwitz-Riley 24 dB/oct : deux Butterworth en cascade. Le
+        // grave et l'aigu d'une même coupure se ressomment à plat.
+        function split(from, frequency) {
+            return ['lowpass', 'highpass'].map(function (type) {
+                var first = filter(type, frequency);
+                var second = filter(type, frequency);
+                from.connect(first);
+                first.connect(second);
+                return second;
+            });
+        }
+
+        function compressBand(from) {
+            var comp = ctx.createDynamicsCompressor();
+            comp.threshold.value = AUDIO_NORM_BAND.threshold;
+            comp.knee.value = AUDIO_NORM_BAND.knee;
+            comp.ratio.value = AUDIO_NORM_BAND.ratio;
+            comp.attack.value = AUDIO_NORM_BAND.attack;
+            comp.release.value = AUDIO_NORM_BAND.release;
+            from.connect(comp);
+            comp.connect(sum);
+        }
+
+        var input = ctx.createGain();
+        var sum = ctx.createGain();
+        var cuts = AUDIO_NORM_CROSSOVERS;
+
+        // Coupure du milieu d'abord, puis chaque moitié en deux. Un
+        // passe-tout sur chaque moitié lui donne la phase de la
+        // coupure de l'autre moitié, sinon la somme se creuse autour
+        // des fréquences de coupure.
+        var halves = split(input, cuts[1]);
+
+        var lowAligned = filter('allpass', cuts[2]);
+        var highAligned = filter('allpass', cuts[0]);
+
+        halves[0].connect(lowAligned);
+        halves[1].connect(highAligned);
+
+        split(lowAligned, cuts[0]).forEach(compressBand);
+        split(highAligned, cuts[2]).forEach(compressBand);
+
+        var makeup = ctx.createGain();
+        makeup.gain.value = Math.pow(10, AUDIO_NORM_MAKEUP_DB / 20);
+
+        // Limiteur : rattrape les crêtes que la somme des bandes
+        // peut encore produire.
+        var limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -2;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 20;
+        limiter.attack.value = 0.002;
+        limiter.release.value = 0.1;
+
+        sum.connect(makeup);
+        makeup.connect(limiter);
+        limiter.connect(ctx.destination);
+
+        return input;
+
+    }
+
+    function audioNormContext() {
+
+        if (audioNormCtx) {
+            return audioNormCtx;
+        }
+
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+
+        if (!Ctx) {
+            return null;
+        }
+
+        try {
+            audioNormCtx = new Ctx();
+            audioNormInput = audioNormCtx.createGain();
+            audioNormChain = audioNormBuildChain(audioNormCtx);
+        } catch (e) {
+            console.warn('[TwitchProxy][Audio] Web Audio indisponible :', e);
+            audioNormCtx = null;
+            return null;
+        }
+
+        audioNormRoute();
+
+        audioNormCtx.addEventListener('statechange', function () {
+            if (audioNormCtx.state === 'running') {
+                audioNormStopWaiting();
+                audioNormScan();
+            }
+        });
+
+        return audioNormCtx;
+
+    }
+
+    function audioNormRoute() {
+
+        if (!audioNormCtx) {
+            return;
+        }
+
+        try {
+            audioNormInput.disconnect();
+        } catch (e) {}
+
+        audioNormInput.connect(
+            pageConfig.audioNormalize ? audioNormChain : audioNormCtx.destination
+        );
+
+    }
+
+    // Le lecteur de Twitch, et le nôtre quand on rejoue le passé.
+    // Les aperçus muets des vignettes restent en dehors.
+    function audioNormIsTarget(video) {
+        return video === dvrVideo ||
+            isOwnPlayerVideo(video) ||
+            video === findPlaybackVideo();
+    }
+
+    function audioNormAttach(video) {
+
+        if (!video || audioNormVideos.has(video)) {
+            return;
+        }
+
+        var ctx = audioNormContext();
+
+        if (!ctx) {
+            return;
+        }
+
+        // Brancher sur un contexte suspendu (le navigateur attend un
+        // clic avant d'autoriser le son) rendrait la vidéo muette :
+        // elle sort en direct jusque-là.
+        if (ctx.state !== 'running') {
+            audioNormWaitForGesture();
+            return;
+        }
+
+        audioNormVideos.add(video);
+
+        try {
+            ctx.createMediaElementSource(video).connect(audioNormInput);
+        } catch (e) {
+            // Déjà prise par une autre extension : on n'insiste pas.
+            console.warn('[TwitchProxy][Audio] Branchement impossible :', e);
+        }
+
+    }
+
+    function audioNormScan() {
+
+        if (!pageConfig.audioNormalize || SCRIPT_OFF_AT_LOAD) {
+            return;
+        }
+
+        [findPlaybackVideo(), dvrVideo].forEach(audioNormAttach);
+
+    }
+
+    function audioNormWake() {
+
+        if (!audioNormCtx || audioNormCtx.state !== 'suspended') {
+            return;
+        }
+
+        try {
+            var resumed = audioNormCtx.resume();
+            if (resumed && resumed.catch) {
+                resumed.catch(function () {});
+            }
+        } catch (e) {}
+
+    }
+
+    function audioNormStopWaiting() {
+
+        if (!audioNormWaitingGesture) {
+            return;
+        }
+
+        audioNormWaitingGesture = false;
+
+        ['pointerdown', 'click', 'keydown'].forEach(function (type) {
+            document.removeEventListener(type, audioNormWake, true);
+        });
+
+    }
+
+    // La reprise suffit parfois (Twitch a déjà le droit de jouer du
+    // son), sinon on retente au premier clic ou à la première touche.
+    function audioNormWaitForGesture() {
+
+        audioNormWake();
+
+        if (audioNormWaitingGesture) {
+            return;
+        }
+
+        audioNormWaitingGesture = true;
+
+        ['pointerdown', 'click', 'keydown'].forEach(function (type) {
+            document.addEventListener(type, audioNormWake, true);
+        });
+
+    }
+
+    function audioNormRefresh() {
+
+        if (!pageConfig.audioNormalize || SCRIPT_OFF_AT_LOAD) {
+            audioNormRoute();
+            return;
+        }
+
+        var ctx = audioNormContext();
+
+        if (!ctx) {
+            return;
+        }
+
+        audioNormRoute();
+
+        if (ctx.state === 'running') {
+            audioNormScan();
+        } else {
+            audioNormWaitForGesture();
+        }
+
+    }
+
+    function setAudioNormalize(on) {
+
+        pageConfig.audioNormalize = !!on;
+
+        saveConfig(pageConfig);
+        broadcastConfig();
+
+        audioNormRefresh();
+
+        console.log(
+            '[TwitchProxy][Audio] Normalisation du son ' +
+            (on ? 'activée' : 'désactivée')
+        );
+
+    }
+
+    // Les évènements de lecture ne remontent pas : on les capte à la
+    // descente. Twitch recrée sa vidéo au fil de la navigation, et
+    // la nôtre naît avec chaque retour arrière.
+    document.addEventListener('play', function (event) {
+        var video = event.target;
+        if (
+            pageConfig.audioNormalize &&
+            !SCRIPT_OFF_AT_LOAD &&
+            video instanceof HTMLVideoElement &&
+            audioNormIsTarget(video)
+        ) {
+            audioNormAttach(video);
+        }
+    }, true);
+
+
+    // ------------------------------------------------------------
     // NOS COMMANDES DE GAUCHE, QUAND TWITCH RETIRE LES SIENNES
     // ------------------------------------------------------------
     var dvrFallbackGroup = null;
@@ -18303,11 +18698,15 @@ function showAddProxyForm() {
 
         dashboardButton.innerHTML =
             '<svg width="16" height="16" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L3 6v6c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V6L12 2z"/></svg>' +
-            '<span class="tp9-update-badge" style="display:none;"></span>';
-
-
-        dashboardButton.dataset.tp9Tip = 'Twitch Guard';
+            '<span class="tp9-update-badge" style="display:none;"></span>' +
+            (scriptIsOff() ? '<span class="tp9-off-badge">OFF</span>' : '');
+        dashboardButton.dataset.tp9Tip = scriptIsOff()
+            ? tt('Twitch Guard · désactivé', 'Twitch Guard · disabled')
+            : 'Twitch Guard';
         dashboardButton.dataset.tp9TipSub = tt('Alt + P pour ouvrir ou fermer', 'Alt + P to open or close');
+        if (scriptIsOff()) {
+            dashboardButton.classList.add('tp9-player-off');
+        }
 
 dashboardButton.style.visibility =
     'hidden';
@@ -18803,7 +19202,9 @@ dashboardButton.style.visibility =
                 dashboard.style.top =
                     (
                         followRect.bottom -
-                        460
+                        // Mode Désactivé : menu bien plus court, calé
+                        // sur sa vraie hauteur pour rester sur le bouton.
+                        (scriptIsOff() ? (dashboard.offsetHeight || 460) : 460)
                     ) + 'px';
 
             }
@@ -22478,7 +22879,7 @@ dashboardButton.style.visibility =
             .tp9-mode-switch {
                 position: relative;
                 display: grid;
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: 1fr 1fr 1fr;
                 padding: 3px;
                 border-radius: 10px;
                 background: rgba(0,0,0,.35);
@@ -22493,7 +22894,7 @@ dashboardButton.style.visibility =
                 top: 3px;
                 bottom: 3px;
                 left: 3px;
-                width: calc(50% - 3px);
+                width: calc((100% - 6px) / 3);
                 border-radius: 7px;
                 background: linear-gradient(135deg, #a970ff, #772ce8);
                 box-shadow: 0 2px 10px rgba(145,71,255,.4);
@@ -22503,6 +22904,57 @@ dashboardButton.style.visibility =
                 transform: translateX(100%);
                 background: linear-gradient(135deg, #00e57a, #00a85a);
                 box-shadow: 0 2px 10px rgba(0,229,122,.35);
+            }
+            .tp9-mode-switch.tp9-mode-off::before {
+                transform: translateX(200%);
+                background: linear-gradient(135deg, #7a7a85, #4d4d57);
+                box-shadow: 0 2px 10px rgba(0,0,0,.35);
+            }
+            .tp9-off-card {
+                display: none;
+                margin-top: 8px;
+                padding: 9px 11px;
+                border-radius: 9px;
+                background: rgba(255,255,255,.05);
+                border: 1px solid rgba(255,255,255,.1);
+            }
+            #tp9-dashboard.tp9-script-off .tp9-off-card {
+                display: block;
+            }
+            #tp9-dashboard.tp9-script-off .tp9-sans-proxy-card {
+                display: none !important;
+            }
+            #tp9-dashboard.tp9-script-off .tp9-hero {
+                display: none !important;
+            }
+            .tp9-off-title {
+                font-size: 12.5px;
+                font-weight: 700;
+                color: #e0e0e6;
+                margin-bottom: 3px;
+            }
+            .tp9-off-text {
+                font-size: 11.5px;
+                line-height: 1.4;
+                color: #9a9aa3;
+            }
+            #tp9-player-button.tp9-player-off svg {
+                opacity: .45;
+            }
+            .tp9-off-badge {
+                position: absolute;
+                right: -2px;
+                bottom: 0;
+                padding: 0 3px;
+                border-radius: 4px;
+                background: #4d4d57;
+                border: 1px solid rgba(15,15,15,.97);
+                color: #fff;
+                font-size: 8px;
+                font-weight: 800;
+                line-height: 11px;
+                letter-spacing: .3px;
+                pointer-events: none;
             }
             .tp9-mode-btn {
                 position: relative;
@@ -36345,6 +36797,11 @@ dashboardButton.style.visibility =
         return spNativeFetch.call(window, input, init);
     };
 
+    // Mode Désactivé : fetch de Twitch rendu tel quel.
+    if (scriptIsOff()) {
+        window.fetch = spNativeFetch;
+    }
+
     function spAnswerGql(data) {
         if (!spDeviceId) {
             spDeviceId = '';
@@ -37403,6 +37860,37 @@ dashboardButton.style.visibility =
         }
     }
 
+    // Proxy / Adblock / Désactivé. Entrer dans le mode Désactivé ou en
+    // sortir recharge la page : les accroches se posent au chargement.
+    function setPlayMode(mode) {
+        var off = mode === 'off';
+        if (off === scriptIsOff()) {
+            pageConfig.scriptOff = off;
+            if (off) {
+                saveConfig(pageConfig);
+            } else {
+                setProxiesEnabled(mode === 'proxy');
+                saveConfig(pageConfig);
+            }
+            return;
+        }
+        pageConfig.scriptOff = off;
+        if (!off) {
+            pageConfig.proxiesEnabled = mode === 'proxy';
+        }
+        saveConfig(pageConfig);
+        broadcastConfig();
+        logEvent(
+            'info',
+            off
+                ? 'Bloqueur de pub désactivé : la page se recharge, Twitch sans proxy ni Adblock'
+                : 'Bloqueur de pub réactivé en mode ' + (mode === 'proxy' ? 'Proxy' : 'Adblock') + ' : la page se recharge'
+        );
+        setTimeout(function () {
+            location.reload();
+        }, 150);
+    }
+
     function setProxiesEnabled(on) {
         if (proxiesOn() === on) {
             return;
@@ -37458,6 +37946,82 @@ dashboardButton.style.visibility =
     var lastPatchedBlobURL = null;
 
 
+    // Mode Désactivé : le Worker de Twitch ne reçoit que ce compteur.
+    // Il ne touche à rien (ni proxy, ni pub, ni playlist) : il compte
+    // les octets des morceaux vidéo et les envoie à la page toutes les
+    // 5 s, comme le patch complet, pour garder le débit des stats.
+    function bandwidthOnlyWorker(tabId) {
+        var originalFetch = self.fetch;
+        var channel = null;
+        var pending = 0;
+        var bc = null;
+        try {
+            bc = new BroadcastChannel('twitch-proxy-config-v1');
+        } catch (e) {}
+        function isSegment(lower) {
+            if (lower.indexOf('.m3u8') >= 0) {
+                return false;
+            }
+            return /\.(ts|m4s|mp4|m4v|m4a|aac|fmp4)([?#]|$)/i.test(lower) ||
+                lower.indexOf('/v1/segment/') >= 0;
+        }
+        function channelOf(url) {
+            try {
+                var parts = new URL(url).pathname.split('/').filter(Boolean);
+                var i = parts.indexOf('hls');
+                if (i >= 0 && parts[i + 1]) {
+                    return parts[i + 1].replace(/\.m3u8$/i, '').toLowerCase();
+                }
+            } catch (e) {}
+            return null;
+        }
+        self.fetch = function (input, init) {
+            var promise = originalFetch.apply(this, arguments);
+            try {
+                var url = typeof input === 'string'
+                    ? input
+                    : (input && input.url) || String(input || '');
+                var lower = url.toLowerCase();
+                if (lower.indexOf('usher.ttvnw.net') >= 0) {
+                    channel = channelOf(url) || channel;
+                } else if (isSegment(lower)) {
+                    promise.then(function (response) {
+                        try {
+                            var len = parseInt(response.headers.get('content-length'), 10);
+                            if (len > 0) {
+                                pending += len;
+                                return;
+                            }
+                            response.clone().arrayBuffer().then(function (buffer) {
+                                pending += buffer.byteLength;
+                            }).catch(function () {});
+                        } catch (e) {}
+                    }).catch(function () {});
+                }
+            } catch (e) {}
+            return promise;
+        };
+        setInterval(function () {
+            if (pending > 0 && channel && bc) {
+                try {
+                    bc.postMessage({
+                        type: 'bandwidth',
+                        tabId: tabId,
+                        channel: channel,
+                        bytes: pending
+                    });
+                } catch (e) {}
+                pending = 0;
+            }
+        }, 5000);
+    }
+
+    function makeBandwidthOnlyPatch() {
+        return '(' + bandwidthOnlyWorker.toString() + ')(' +
+            JSON.stringify(TAB_ID) + ');';
+    }
+
+
     window.Worker =
         function (
             scriptURL,
@@ -37496,7 +38060,7 @@ dashboardButton.style.visibility =
 
 
                     var patchedCode =
-                        makePatch() +
+                        (scriptIsOff() ? makeBandwidthOnlyPatch() : makePatch()) +
                         '\n' +
                         originalCode;
 
@@ -37559,6 +38123,10 @@ dashboardButton.style.visibility =
 
     window.Worker.prototype =
         NativeWorker.prototype;
+
+    if (scriptIsOff()) {
+        console.log('[TwitchProxy] Mode Désactivé : aucun blocage de pub, débit seul mesuré');
+    }
 
 
     // ============================================================
