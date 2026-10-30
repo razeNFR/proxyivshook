@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.9
+// @version      1.9.11
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -33,7 +33,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.9';
+    var CURRENT_VERSION = '1.9.11';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -14065,6 +14065,63 @@ function showAddProxyForm() {
     var diagChannel = null;
     var diagCounted = null;
 
+    // Qui a demandé une pause de la vidéo Twitch : Twitch, ce script,
+    // ou personne (le navigateur lui-même). On note la pile d'appel
+    // de pause(), sans rien changer à la pause.
+    var diagPauseCall = null;
+
+    (function () {
+        try {
+            var nativePause = HTMLMediaElement.prototype.pause;
+            HTMLMediaElement.prototype.pause = function () {
+                if (this instanceof HTMLVideoElement && !isOwnPlayerVideo(this)) {
+                    diagPauseCall = {
+                        video: this,
+                        at: Date.now(),
+                        stack: String(new Error().stack || '')
+                    };
+                }
+                return nativePause.apply(this, arguments);
+            };
+        } catch (e) {}
+    })();
+
+    function diagPauseOrigin(video) {
+        var call = diagPauseCall;
+        if (!call || call.video !== video || (Date.now() - call.at) > 1000) {
+            return 'aucun appel à pause() : le navigateur l\'a décidée';
+        }
+        var stack = call.stack;
+        var ours = stack.match(/\b(spPlayerTask|dvrPauseLive|dvrTwitchNativePlayPause|spResumeAfterAd)\b/);
+        if (ours) {
+            return 'ce script (' + ours[1] + ')';
+        }
+        if (/twitch(cdn)?\.(tv|net)/i.test(stack)) {
+            return 'le lecteur de Twitch';
+        }
+        var frames = stack.split('\n').slice(2, 4).map(function (line) {
+            return line.trim().slice(0, 120);
+        });
+        return 'inconnu (' + frames.join(' ← ') + ')';
+    }
+
+    function diagTwitchPlayerState() {
+        try {
+            var parts = spPlayerParts(false);
+            var player = parts && parts.player;
+            if (!player) {
+                return 'introuvable';
+            }
+            var buffer = player.getBufferDuration();
+            var latency = spLiveLatency(player);
+            return player.getState() +
+                (typeof buffer === 'number' ? ', réserve ' + buffer.toFixed(1) + ' s' : '') +
+                (latency !== null ? ', retard ' + latency.toFixed(1) + ' s' : '');
+        } catch (e) {
+            return 'illisible';
+        }
+    }
+
     function diagShortText(el) {
         try {
             var text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
@@ -14128,7 +14185,11 @@ function showAddProxyForm() {
                             rare ? 'warn' : 'info',
                             '🔎 Vidéo du lecteur Twitch : « ' + type + ' » sur ' + here + ' · ' +
                             adCleanVideoState(video) + ' · durée ' +
-                            (isFinite(video.duration) ? Math.round(video.duration) + ' s' : 'infinie (direct)'),
+                            (isFinite(video.duration) ? Math.round(video.duration) + ' s' : 'infinie (direct)') +
+                            (type === 'pause'
+                                ? ' · demandée par ' + diagPauseOrigin(video) +
+                                    ' · lecteur Twitch : ' + diagTwitchPlayerState()
+                                : ''),
                             !rare
                         );
                     });
@@ -18211,9 +18272,14 @@ function showAddProxyForm() {
 
         try {
             ctx.createMediaElementSource(video).connect(audioNormInput);
+            logEvent('info', '🔊 Normalisation du son branchée sur le lecteur (' +
+                (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch') +
+                ') : son traité jusqu\'au prochain F5, même si l\'option est décochée');
         } catch (e) {
             // Déjà prise par une autre extension : on n'insiste pas.
-            console.warn('[TwitchProxy][Audio] Branchement impossible :', e);
+            logEvent('warn', '🔊 Normalisation du son impossible sur le lecteur (' +
+                (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch') +
+                ') : ' + ((e && e.message) || e) + ' (une autre extension traite peut-être déjà le son)');
         }
 
     }
@@ -18224,7 +18290,14 @@ function showAddProxyForm() {
             return;
         }
 
-        [findPlaybackVideo(), dvrVideo].forEach(audioNormAttach);
+        // La vidéo du retour arrière existe dès que notre lecteur est
+        // là, même au direct : elle ne se branche qu'en jouant, via
+        // l'évènement « play ».
+        audioNormAttach(findPlaybackVideo());
+
+        if (dvrVideo && !dvrVideo.paused) {
+            audioNormAttach(dvrVideo);
+        }
 
     }
 
@@ -36709,6 +36782,7 @@ dashboardButton.style.visibility =
         position: 0,
         buffered: 0,
         duration: 0,
+        time: null,
         same: 0,
         lastFix: 0
     };
@@ -36910,6 +36984,13 @@ dashboardButton.style.visibility =
     // juste avant la relance, puis, une fois l'image repartie, on
     // avance d'autant (dans ce qui est déjà téléchargé). Chaque retour
     // laisse une ligne dans les Logs, réussi ou non.
+    //
+    // Avance coupée : déplacer la vidéo sous le lecteur de Twitch ne
+    // lui laissait que 1,5 s de réserve, et son pilote de latence ne
+    // s'en remettait pas (sautes de son et décalage jusqu'au F5). On
+    // garde la mesure dans les Logs, comme vaft on revoit ces
+    // quelques secondes.
+    var SP_CATCHUP_SEEK = false;
     var SP_CATCHUP_WAIT_MS = 12000;
     var SP_CATCHUP_STABLE_MS = 800;
     var SP_CATCHUP_MARGIN = 1.5;
@@ -37043,6 +37124,11 @@ dashboardButton.style.visibility =
         if (repeat < SP_CATCHUP_MIN) {
             logEvent('info', 'Retour après pub sur ' + w.channel +
                 ' : rien à revoir' + summary, true);
+            return;
+        }
+        if (!SP_CATCHUP_SEEK) {
+            logEvent('info', 'Retour après pub sur ' + w.channel + ' : ' + spSec(repeat) +
+                ' revues, laissées telles quelles' + summary, true);
             return;
         }
         var room = spAheadOf(video) - SP_CATCHUP_MARGIN;
@@ -37793,8 +37879,16 @@ dashboardButton.style.visibility =
         spBadgeProgress = progress;
     }
 
-    // Lecteur qui tourne en rond sans avancer : pause/lecture, au plus
-    // une fois toutes les 8 s (réglages de vaft).
+    // Lecteur qui tourne en rond sans avancer : relance complète, au
+    // plus une fois toutes les 8 s (réglages de vaft).
+    //
+    // « Bloqué » veut dire que l'image ne bouge plus depuis 3 s. Vaft
+    // se contentait de moins d'1 s de réserve sans nouveau morceau,
+    // or c'est l'ordinaire en faible latence : il relançait des
+    // lecteurs qui tournaient très bien. Une simple
+    // pause/lecture laissait souvent le son sauter et décalé de
+    // l'image jusqu'au F5 ; la relance repart d'un lecteur neuf
+    // (option PlayerBufferingDoPlayerReload de vaft).
     function sansProxyBufferTick() {
         if (isDashboardOnlyTab || proxiesOn()) {
             return;
@@ -37833,21 +37927,25 @@ dashboardButton.style.visibility =
             var position = coreState.position;
             var buffered = coreState.bufferedPosition;
             var duration = player.getBufferDuration();
-            if (position === undefined || buffered === undefined) {
+            var time = video ? video.currentTime : null;
+            if (position === undefined || buffered === undefined || time === null) {
                 spBuffer.same = 0;
+                spBuffer.time = time;
                 return;
             }
             if (
                 spBuffer.started &&
-                (spBuffer.position === position || duration < 1) &&
+                spBuffer.time !== null &&
+                Math.abs(time - spBuffer.time) < 0.05 &&
+                spBuffer.position === position &&
                 spBuffer.buffered === buffered &&
                 spBuffer.duration >= duration &&
                 (position !== 0 || buffered !== 0 || duration !== 0)
             ) {
                 spBuffer.same++;
-                if (spBuffer.same === 3) {
-                    logEvent('info', 'Lecteur Twitch bloqué en chargement : pause/lecture automatique');
-                    spPlayerTask('pausePlay');
+                if (spBuffer.same === 5) {
+                    logEvent('info', 'Lecteur Twitch bloqué en chargement : relance automatique du lecteur');
+                    spPlayerTask('reload');
                 }
             } else {
                 spBuffer.same = 0;
@@ -37855,6 +37953,7 @@ dashboardButton.style.visibility =
             spBuffer.position = position;
             spBuffer.buffered = buffered;
             spBuffer.duration = duration;
+            spBuffer.time = time;
         } catch (e) {
             spParts = null;
         }
