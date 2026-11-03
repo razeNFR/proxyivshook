@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.20
+// @version      1.9.21
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -33,7 +33,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.20';
+    var CURRENT_VERSION = '1.9.21';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -1806,11 +1806,21 @@
 
     }
 
+    // Texte exact des stats dans le stockage, tel que lu ou écrit
+    // en dernier par cet onglet. Comparer à statsBaseline ne marchait
+    // pas : celle-ci est re-sérialisée après relecture, dans un autre
+    // ordre de clés, et ne correspondait presque jamais. Chaque
+    // sauvegarde refaisait alors toute la fusion (plusieurs lectures
+    // et écritures JSON de plusieurs Mo).
+    var statsLastRaw = null;
+
     function loadStats() {
 
         try {
 
             var saved = localStorage.getItem(STATS_KEY);
+
+            statsLastRaw = saved;
 
             if (saved) {
 
@@ -1868,7 +1878,7 @@
     // ------------------------------------------------------------
     //
     // Chaque onglet accumule ses incréments en mémoire et ne les
-    // écrit que 2 s plus tard (scheduleStatsSave). L'écouteur
+    // écrit que 15 s plus tard (scheduleStatsSave). L'écouteur
     // 'storage' remplaçait purement et simplement pageStats par la
     // version d'un autre onglet : tout ce qui n'était pas encore
     // écrit disparaissait, et la sauvegarde suivante réécrivait la
@@ -2303,10 +2313,10 @@
                 var raw = localStorage.getItem(STATS_KEY);
 
                 // Cas courant (personne d'autre n'a écrit depuis notre
-                // dernière sauvegarde) : rien à fusionner, et surtout
-                // pas de JSON.parse/stringify supplémentaire sur un
-                // objet qui peut peser plusieurs Mo.
-                if (raw !== statsBaseline) {
+                // dernière lecture ou écriture) : rien à fusionner, et
+                // surtout pas de JSON.parse/stringify supplémentaire
+                // sur un objet qui peut peser plusieurs Mo.
+                if (raw !== statsLastRaw) {
 
                     adoptStoredStats(loadStats());
 
@@ -2325,6 +2335,7 @@
             // version réellement écrite, sinon le delta suivant
             // serait faux.
             statsBaseline = payload;
+            statsLastRaw = payload;
 
             if (statsStorageState.full) {
 
@@ -2380,7 +2391,13 @@
 
     // Les mises à jour de stats (bande passante, tchat, ...) sont
     // fréquentes : on regroupe les écritures localStorage pour
-    // éviter de sérialiser tout l'objet à chaque événement.
+    // éviter de sérialiser tout l'objet à chaque événement. Chaque
+    // écriture recopie plusieurs Mo, et chaque autre onglet Twitch
+    // relit et refusionne le tout : à 2 s, c'était un travail continu
+    // pour le navigateur. Rien n'est perdu à la fermeture, voir
+    // flushStatsSave.
+    var STATS_SAVE_DELAY_MS = 15000;
+
     function scheduleStatsSave() {
 
         if (statsSaveTimer) {
@@ -2394,10 +2411,41 @@
                 saveStatsNow();
 
             },
-            2000
+            STATS_SAVE_DELAY_MS
         );
 
     }
+
+    // Onglet fermé, rechargé ou mis en arrière-plan : la sauvegarde en
+    // attente part tout de suite. Sans verrou : le rappel du verrou
+    // est asynchrone et n'aurait pas le temps de tourner avant la
+    // fermeture.
+    function flushStatsSave() {
+
+        if (!statsSaveTimer) {
+            return;
+        }
+
+        clearTimeout(statsSaveTimer);
+        statsSaveTimer = null;
+
+        if (pageConfig && pageConfig.statsEnabled === false) {
+            return;
+        }
+
+        saveStatsUnlocked();
+
+    }
+
+    window.addEventListener('pagehide', flushStatsSave);
+
+    document.addEventListener('visibilitychange', function () {
+
+        if (document.visibilityState === 'hidden') {
+            flushStatsSave();
+        }
+
+    });
 
     // Chaque onglet twitch.tv a sa PROPRE copie en mémoire de
     // pageStats, et la sauvegarde régulièrement (bande passante,
@@ -13147,8 +13195,36 @@ function showAddProxyForm() {
         document.body.classList.toggle('tp9-hide-promo', !!pageConfig.hideTwitchPromo);
     }
 
-    function scheduleTwitchUIScan() {
+    // Liste des messages du tchat : elle change plusieurs fois par
+    // seconde et ne contient rien de ce que le script masque ou place.
+    var TWITCH_CHAT_MESSAGES =
+        '.chat-scrollable-area__message-container, [data-a-target="chat-scroller"]';
+
+    function mutationsOnlyInChat(records) {
+        if (!records || !records.length) {
+            return false;
+        }
+        for (var i = 0; i < records.length; i++) {
+            var target = records[i].target;
+            var el = target && target.nodeType === 1 ? target : target && target.parentElement;
+            if (!el || !el.closest(TWITCH_CHAT_MESSAGES)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Au plus deux passages par seconde : chaque passage relit tous
+    // les boutons de la page et leur taille. Le premier part tout de
+    // suite, un bouton qui apparaît reste donc masqué sans délai.
+    var TWITCH_UI_SCAN_GAP_MS = 500;
+    var twitchUIScanLast = 0;
+
+    function scheduleTwitchUIScan(records) {
         if (twitchUIScanPending) {
+            return;
+        }
+        if (mutationsOnlyInChat(records)) {
             return;
         }
         if (
@@ -13159,12 +13235,16 @@ function showAddProxyForm() {
             return;
         }
         twitchUIScanPending = true;
-        requestAnimationFrame(function () {
-            twitchUIScanPending = false;
-            try {
-                scanTwitchUI();
-            } catch (e) {}
-        });
+        var wait = Math.max(0, TWITCH_UI_SCAN_GAP_MS - (Date.now() - twitchUIScanLast));
+        setTimeout(function () {
+            requestAnimationFrame(function () {
+                twitchUIScanPending = false;
+                twitchUIScanLast = Date.now();
+                try {
+                    scanTwitchUI();
+                } catch (e) {}
+            });
+        }, wait);
     }
 
     function startTwitchUIHider() {
@@ -39141,7 +39221,12 @@ dashboardButton.style.visibility =
 
         var observer =
             new MutationObserver(
-                function () {
+                function (records) {
+
+                    // Un message de tchat ne déplace pas le bouton.
+                    if (mutationsOnlyInChat(records)) {
+                        return;
+                    }
 
                     throttledPositionPlayerUI();
 
