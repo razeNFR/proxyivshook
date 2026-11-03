@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.11
+// @version      1.9.20
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -33,7 +33,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.11';
+    var CURRENT_VERSION = '1.9.20';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -922,6 +922,7 @@
             customPlayer: true,
             hideTwitchTurbo: false,
             proxiesEnabled: true,
+            proxyAdsOnly: false,
             scriptOff: false,
             hideTwitchSubButtons: false,
             hideTwitchPromo: false,
@@ -1146,7 +1147,7 @@
 
         }
 
-        ['statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons', 'hideTwitchPromo', 'proxiesEnabled', 'scriptOff', 'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips'].forEach(
+        ['statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons', 'hideTwitchPromo', 'proxiesEnabled', 'proxyAdsOnly', 'scriptOff', 'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips'].forEach(
             function (key) {
                 if (typeof parsed[key] === 'boolean') {
                     config[key] = parsed[key];
@@ -1464,6 +1465,8 @@
                     !!pageConfig.hideTwitchTurbo,
                 proxiesEnabled:
                     pageConfig.proxiesEnabled !== false,
+                proxyAdsOnly:
+                    !!pageConfig.proxyAdsOnly,
 
                 hideTwitchSubButtons:
                     !!pageConfig.hideTwitchSubButtons,
@@ -2291,6 +2294,8 @@
 
     function saveStatsUnlocked(options) {
 
+        var diagStart = Date.now();
+
         try {
 
             if (!(options && options.authoritative)) {
@@ -2369,6 +2374,8 @@
 
         }
 
+        diagNoteStatsWork('sauvegarde', diagStart);
+
     }
 
     // Les mises à jour de stats (bande passante, tchat, ...) sont
@@ -2442,7 +2449,11 @@
             return;
         }
 
+        var diagStart = Date.now();
+
         adoptStoredStats(loadStats());
+
+        diagNoteStatsWork('relecture après un autre onglet', diagStart);
 
         if (
             typeof statsDashboardVisible !== 'undefined' &&
@@ -4172,7 +4183,7 @@
         // Mode Adblock : compté à part, pour que la part de pub d'un
         // streamer ne mélange pas les heures passées en mode Proxy,
         // où les pubs ne sont pas comptées.
-        if (!proxiesOn()) {
+        if (directPlaybackOn()) {
             streamer.adblockWatchMs =
                 (streamer.adblockWatchMs || 0) + watchedMs;
             pageStats.totals.adblockWatchMsGlobal =
@@ -5873,9 +5884,16 @@
     <span class="tp9-hero-meta"></span>
 </div>
 
+<div class="tp9-top-actions">
 <button class="tp9-open-stats" type="button">
     <span class="tp9-btn-icon">📊</span> Ouvrir le dashboard complet
 </button>
+<button class="tp9-open-settings tp9-settings-square" type="button"
+    aria-label="Réglages"
+    data-tp9-tip="Réglages">
+    <span class="tp9-btn-icon">⚙️</span><span class="tp9-settings-label">Réglages</span>
+</button>
+</div>
 
 <div class="tp9-block tp9-mode-block">
 
@@ -5891,6 +5909,18 @@
         data-tp9-tip="Désactivé"
         data-tp9-tip-sub="Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.">⛔ Désactivé</button>
 </div>
+<label class="tp9-toggle-row tp9-proxy-ads-row"
+    data-tp9-tip="Proxys pendant les pubs"
+    data-tp9-tip-sub="Hors pub, lecture directe sur Twitch (qualité d'origine, 2K comprise). Pendant une pub, le flux est d'abord demandé à un proxy, avant les lecteurs Twitch de secours.">
+    <span class="tp9-toggle-label">
+        <span class="tp9-toggle-icon">🎯</span>
+        <span class="tp9-proxy-ads-text">Proxys pendant les pubs</span>
+    </span>
+    <span class="tp9-switch">
+        <input type="checkbox" class="tp9-proxy-ads-only">
+        <span class="tp9-switch-track"></span>
+    </span>
+</label>
 <div class="tp9-off-card">
     <div class="tp9-off-title">⛔ Bloqueur de pub désactivé</div>
     <div class="tp9-off-text">Ni proxy ni Adblock : Twitch fonctionne comme sans le script, tu peux utiliser un autre bloqueur de pub. Choisis Proxy ou Adblock pour le réactiver (la page se recharge).</div>
@@ -5968,10 +5998,6 @@
 
     <button class="tp9-test tp9-proxy-only" type="button">
         <span class="tp9-btn-icon">🧪</span> Tester
-    </button>
-
-    <button class="tp9-open-settings" type="button">
-        <span class="tp9-btn-icon">⚙️</span> Réglages
     </button>
 
 </div>
@@ -6255,6 +6281,12 @@ document.addEventListener(
                 }
             );
 
+
+        dashboard
+            .querySelector('.tp9-proxy-ads-only')
+            .addEventListener('change', function (event) {
+                setProxyAdsOnly(event.target.checked);
+            });
 
         dashboard
             .querySelector('.tp9-fallback')
@@ -6567,6 +6599,8 @@ document.addEventListener(
                             !!pageConfig.hideTwitchTurbo,
                         proxiesEnabled:
                             pageConfig.proxiesEnabled !== false,
+                        proxyAdsOnly:
+                            !!pageConfig.proxyAdsOnly,
                         dvrAutoNoVod:
                             !!pageConfig.dvrAutoNoVod,
 
@@ -7549,11 +7583,32 @@ document.addEventListener(
             .checked =
             pageConfig.fallback;
 
+        dashboard.querySelector('.tp9-proxy-ads-only').checked =
+            !!pageConfig.proxyAdsOnly;
+
+        // Même réglage, lu depuis le mode choisi : en Proxy il retire
+        // les proxys du reste de la lecture, en Adblock il les ajoute
+        // pendant les pubs.
+        var proxyAdsRow = dashboard.querySelector('.tp9-proxy-ads-row');
+        if (proxyAdsRow) {
+            var proxyAdsTitle = proxiesOn()
+                ? tt('Proxy uniquement pour les pubs', 'Proxy only for ads')
+                : tt('Proxys pendant les pubs', 'Proxies during ads');
+            proxyAdsRow.querySelector('.tp9-proxy-ads-text').textContent = proxyAdsTitle;
+            proxyAdsRow.setAttribute('data-tp9-tip', proxyAdsTitle);
+            proxyAdsRow.setAttribute(
+                'data-tp9-tip-sub',
+                proxiesOn()
+                    ? tt('Hors pub, lecture directe sur Twitch (qualité d\'origine, 2K comprise) au lieu des proxys. Pendant une pub, un proxy prend le relais.', 'Outside ads, direct playback on Twitch (original quality, 2K included) instead of proxies. During an ad, a proxy takes over.')
+                    : tt('Pendant une pub, le flux est d\'abord demandé à un proxy, avant les lecteurs Twitch de secours.', 'During an ad, the stream is first requested from a proxy, before the backup Twitch players.')
+            );
+        }
+
 
         // Mode Adblock : forcée (la relance de fin de pub en a besoin
         // quand l'onglet est caché), l'interrupteur est verrouillé.
         var keepQualityBox = dashboard.querySelector('.tp9-keep-quality');
-        var keepQualityForced = !proxiesOn() && !scriptIsOff();
+        var keepQualityForced = directPlaybackOn() && !scriptIsOff();
         keepQualityBox.checked =
             keepQualityForced || !!pageConfig.keepQualityInBackground;
         keepQualityBox.disabled = keepQualityForced;
@@ -7589,6 +7644,8 @@ document.addEventListener(
             statsOn && !(statsAskBox && statsAskBox.style.display === 'block');
         var openStatsButton = dashboard.querySelector('.tp9-open-stats');
         if (openStatsButton) openStatsButton.style.display = statsOn ? '' : 'none';
+        var topActions = dashboard.querySelector('.tp9-top-actions');
+        if (topActions) topActions.classList.toggle('tp9-no-stats', !statsOn);
         var backupRow = dashboard.querySelector('.tp9-auto-backup-row');
         if (backupRow) backupRow.style.display = statsOn ? '' : 'none';
         dashboard.querySelector('.tp9-hide-turbo').checked = !!pageConfig.hideTwitchTurbo;
@@ -7750,7 +7807,13 @@ document.addEventListener(
 
         if (activeProxyInfo.sansProxy) {
             hero.classList.add('tp9-hero-live');
-            valueEl.textContent = tt('Twitch · Adblock actif', 'Twitch · Adblock on');
+            // Lecture directe dans les deux modes quand les proxys ne
+            // servent que pendant les pubs : le titre dit lequel.
+            valueEl.textContent = !proxyAdsOnlyOn()
+                ? tt('Twitch · Adblock actif', 'Twitch · Adblock on')
+                : proxiesOn()
+                    ? tt('Twitch · Proxy pendant les pubs', 'Twitch · Proxy during ads')
+                    : tt('Twitch · Adblock + proxys', 'Twitch · Adblock + proxies');
             var spThroughput = formatThroughput(getLiveThroughputBps());
             // La pub en cours se lit déjà sur le badge du lecteur et dans
             // l'encart Adblock plus bas : ici, le débit seul.
@@ -8554,6 +8617,7 @@ function showAddProxyForm() {
         '.tp9-close',
         '.tp9-update-btn',
         '.tp9-open-stats',
+        '.tp9-settings-square',
         '.tp9-actions button',
         '.tp9-add-proxy',
         '.tp9-unquarantine',
@@ -12652,6 +12716,10 @@ function showAddProxyForm() {
     // l'habillage fait suivre notre vidéo toute seule.
     var dvrWheelWatched = false;
 
+    // Vidéo dont la molette a descendu le son jusqu'à 0 : remonter
+    // repart alors du premier cran, pas du niveau d'avant la coupure.
+    var dvrWheelZeroVideo = null;
+
     function dvrWheelStep() {
         return WHEEL_VOLUME_STEPS.indexOf(pageConfig.wheelVolumeStep) >= 0
             ? pageConfig.wheelVolumeStep
@@ -12688,15 +12756,19 @@ function showAddProxyForm() {
         var muteButton = controls && controls.querySelector('[data-a-target="player-mute-unmute-button"]');
         var slider = controls && controls.querySelector('[data-a-target="player-volume-slider"]');
         var muted = video.muted || video.volume === 0;
+        if (!muted) dvrWheelZeroVideo = null;
         // Monter le son alors qu'il est coupé le rétablit au niveau
-        // d'avant : repartir de 1 % obligerait à trente crans.
-        if (muted && up && video.muted && muteButton) {
+        // d'avant : repartir de 1 % obligerait à trente crans. Mais un
+        // son descendu jusqu'à 0 n'a pas de niveau d'avant : Twitch
+        // remettait ses 10 % par défaut. Là, on repart du premier cran.
+        var restorable = video.muted && video.volume > 0 && dvrWheelZeroVideo !== video;
+        if (muted && up && restorable && muteButton) {
             muteButton.click();
             setTimeout(function () { dvrShowVolumeHint(video.volume, false); }, 60);
             return;
         }
-        if (muted && up && video.muted && !muteButton && dvrOverlay) {
-            dvrSetVolume(video.volume || 0.3, false);
+        if (muted && up && restorable && !muteButton && dvrOverlay) {
+            dvrSetVolume(video.volume, false);
             return;
         }
         var current = muted ? 0 : Math.round(video.volume * 100);
@@ -12709,15 +12781,28 @@ function showAddProxyForm() {
         var level = target / 100;
         if (level < 0) level = 0;
         if (level > 1) level = 1;
+        dvrWheelZeroVideo = level === 0 ? video : null;
         if (slider) {
             var max = parseFloat(slider.max) || 1;
-            dvrSetTwitchSlider(slider, Math.round(level * max * 100) / 100);
+            var sliderValue = Math.round(level * max * 100) / 100;
+            dvrSetTwitchSlider(slider, sliderValue);
+            // Le curseur de Twitch devrait rétablir le son de lui-même ;
+            // s'il le laisse coupé, son bouton le rétablit (à son niveau
+            // à lui), puis on remet le nôtre.
+            if (level > 0 && muted && muteButton) {
+                setTimeout(function () {
+                    if (!video.muted) return;
+                    muteButton.click();
+                    dvrSetTwitchSlider(slider, sliderValue);
+                }, 60);
+            }
         } else if (dvrOverlay) {
             // Pas de curseur Twitch (fin de stream) : notre volume, qui
             // rétablit aussi le son s'il était coupé.
             dvrSetVolume(level, level === 0, true);
         } else {
             video.volume = level;
+            if (level > 0) video.muted = false;
         }
         dvrShowVolumeHint(level, level === 0);
     }
@@ -13446,7 +13531,7 @@ function showAddProxyForm() {
     var twitchAdOverlayPendingChannel = null;
 
     function detectTwitchAdOverlay() {
-        if (!proxiesOn()) {
+        if (directPlaybackOn()) {
             return;
         }
         var channel = getTestChannel();
@@ -13615,7 +13700,7 @@ function showAddProxyForm() {
     }
 
     function adCleanWatchTick() {
-        if (!proxiesOn()) {
+        if (directPlaybackOn()) {
             adCleanWatch = null;
             return;
         }
@@ -14065,6 +14150,79 @@ function showAddProxyForm() {
     var diagChannel = null;
     var diagCounted = null;
 
+    // Page bloquée juste avant une pause : pendant une tâche longue,
+    // le lecteur de Twitch ne peut plus nourrir sa vidéo, qui se vide
+    // alors qu'il a encore de la réserve. On garde les tâches de plus
+    // de 50 ms vues par le navigateur, et à part le travail des stats
+    // du script (relues et réécrites en entier à chaque sauvegarde).
+    var diagLongTasks = [];
+    var diagStatsWork = [];
+
+    // Firefox ne mesure pas les tâches longues : sans ce drapeau, il
+    // affichait « page bloquée 0 ms » quoi qu'il se passe.
+    var diagLongTasksMeasured = false;
+
+    try {
+        diagLongTasksMeasured =
+            (PerformanceObserver.supportedEntryTypes || []).indexOf('longtask') >= 0;
+        new PerformanceObserver(function (list) {
+            list.getEntries().forEach(function (entry) {
+                diagLongTasks.push({
+                    at: performance.timeOrigin + entry.startTime + entry.duration,
+                    ms: entry.duration
+                });
+            });
+            if (diagLongTasks.length > 100) {
+                diagLongTasks.splice(0, diagLongTasks.length - 100);
+            }
+        }).observe({ type: 'longtask', buffered: true });
+    } catch (e) {}
+
+    function diagNoteStatsWork(what, startedAt) {
+        if (!diagStatsWork) {
+            return;
+        }
+        var ms = Date.now() - startedAt;
+        if (ms < 20) {
+            return;
+        }
+        diagStatsWork.push({
+            at: Date.now(),
+            ms: ms,
+            what: what,
+            bytes: statsStorageState && statsStorageState.bytes
+        });
+        if (diagStatsWork.length > 50) {
+            diagStatsWork.splice(0, diagStatsWork.length - 50);
+        }
+    }
+
+    function diagRecentJank() {
+        var since = Date.now() - 5000;
+        var total = 0;
+        var worst = 0;
+        diagLongTasks.forEach(function (task) {
+            if (task.at >= since) {
+                total += task.ms;
+                worst = Math.max(worst, task.ms);
+            }
+        });
+        var out = diagLongTasksMeasured
+            ? 'page bloquée ' + Math.round(total) + ' ms sur les 5 dernières s' +
+                (worst ? ' (pire tâche ' + Math.round(worst) + ' ms)' : '')
+            : 'blocage de la page non mesurable sur ce navigateur';
+        var stats = diagStatsWork.filter(function (work) {
+            return work.at >= since;
+        });
+        if (stats.length) {
+            out += ', dont stats du script : ' + stats.map(function (work) {
+                return work.what + ' ' + work.ms + ' ms';
+            }).join(', ') +
+                (stats[stats.length - 1].bytes ? ' (' + formatBytes(stats[stats.length - 1].bytes) + ')' : '');
+        }
+        return out;
+    }
+
     // Qui a demandé une pause de la vidéo Twitch : Twitch, ce script,
     // ou personne (le navigateur lui-même). On note la pile d'appel
     // de pause(), sans rien changer à la pause.
@@ -14188,7 +14346,8 @@ function showAddProxyForm() {
                             (isFinite(video.duration) ? Math.round(video.duration) + ' s' : 'infinie (direct)') +
                             (type === 'pause'
                                 ? ' · demandée par ' + diagPauseOrigin(video) +
-                                    ' · lecteur Twitch : ' + diagTwitchPlayerState()
+                                    ' · lecteur Twitch : ' + diagTwitchPlayerState() +
+                                    ' · ' + diagRecentJank()
                                 : ''),
                             !rare
                         );
@@ -14353,7 +14512,7 @@ function showAddProxyForm() {
         if (isDashboardOnlyTab) {
             return;
         }
-        if (!proxiesOn() || scriptIsOff()) {
+        if (directPlaybackOn() || scriptIsOff()) {
             watchdogReset();
             return;
         }
@@ -22464,6 +22623,7 @@ dashboardButton.style.visibility =
             .tp9-close,
             .tp9-update-btn,
             .tp9-open-stats,
+            .tp9-settings-square,
             .tp9-actions button,
             .tp9-add-proxy,
             .tp9-unquarantine,
@@ -22481,6 +22641,7 @@ dashboardButton.style.visibility =
             .tp9-close::after,
             .tp9-update-btn::after,
             .tp9-open-stats::after,
+            .tp9-settings-square::after,
             .tp9-actions button::after,
             .tp9-add-proxy::after,
             .tp9-unquarantine::after,
@@ -22517,6 +22678,7 @@ dashboardButton.style.visibility =
             .tp9-close:hover::after,
             .tp9-update-btn:hover::after,
             .tp9-open-stats:hover::after,
+            .tp9-settings-square:hover::after,
             .tp9-actions button:hover::after,
             .tp9-add-proxy:hover::after,
             .tp9-unquarantine:hover::after,
@@ -22943,6 +23105,72 @@ dashboardButton.style.visibility =
             }
 
 
+            /* Bouton dashboard et carré des réglages sur une même
+               ligne, à la même hauteur. */
+            .tp9-top-actions {
+                display: flex;
+                gap: 7px;
+                margin: 0 0 12px;
+            }
+            .tp9-top-actions .tp9-open-stats {
+                flex: 1;
+                width: auto;
+                min-width: 0;
+                margin: 0;
+            }
+            .tp9-settings-square {
+                flex: 0 0 auto;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                width: 42px;
+                padding: 0;
+                border: 1px solid rgba(255,255,255,.08);
+                border-radius: 8px;
+                background:
+                    linear-gradient(135deg,
+                        rgba(255,255,255,.1),
+                        rgba(255,255,255,.03));
+                color: #ddd;
+                font-size: 12.5px;
+                font-weight: 600;
+                cursor: pointer;
+                transition:
+                    background-color .12s ease,
+                    border-color .12s ease,
+                    transform .12s ease;
+            }
+            .tp9-settings-square .tp9-btn-icon {
+                font-size: 15px;
+            }
+            .tp9-settings-square:hover {
+                background:
+                    linear-gradient(135deg,
+                        rgba(255,255,255,.18),
+                        rgba(255,255,255,.06));
+                border-color: rgba(255,255,255,.18);
+                transform: var(--tp9-lift);
+            }
+            /* Après le survol : sinon l'appui ne se verrait pas. */
+            .tp9-settings-square:active {
+                transform: var(--tp9-press);
+            }
+            .tp9-settings-label {
+                display: none;
+            }
+            .tp9-top-actions.tp9-no-stats .tp9-settings-square {
+                flex: 1;
+                width: auto;
+                padding: 10px;
+            }
+            .tp9-top-actions.tp9-no-stats .tp9-settings-label {
+                display: inline;
+            }
+            /* Seul « Tester » reste en bas : rien à montrer en Adblock. */
+            #tp9-dashboard.tp9-no-proxy .tp9-main-actions {
+                display: none;
+            }
             #tp9-dashboard.tp9-no-proxy .tp9-proxy-only {
                 display: none !important;
             }
@@ -22990,6 +23218,12 @@ dashboardButton.style.visibility =
                 border-radius: 9px;
                 background: rgba(255,255,255,.05);
                 border: 1px solid rgba(255,255,255,.1);
+            }
+            .tp9-proxy-ads-row {
+                margin-top: 8px;
+            }
+            #tp9-dashboard.tp9-script-off .tp9-proxy-ads-row {
+                display: none !important;
             }
             #tp9-dashboard.tp9-script-off .tp9-off-card {
                 display: block;
@@ -31090,6 +31324,7 @@ dashboardButton.style.visibility =
         embed: 'Embedded player',
         popout: 'Popout player',
         autoplay: 'Autoplay player',
+        proxy: 'Proxy',
         blank: 'Blank image'
     };
 
@@ -31101,6 +31336,7 @@ dashboardButton.style.visibility =
         embed: 'Lecteur intégré',
         popout: 'Lecteur popout',
         autoplay: 'Lecteur autoplay',
+        proxy: 'Proxy',
         blank: 'Image vide'
     };
 
@@ -33170,7 +33406,7 @@ dashboardButton.style.visibility =
 
 
     async function testAllProxies() {
-        if (!proxiesOn()) {
+        if (!proxiesOn() && !proxyAdsOnlyOn()) {
             return;
         }
 
@@ -35122,8 +35358,117 @@ dashboardButton.style.visibility =
             // envoyée au lecteur juste après.
             var __sp_lastEndAt = 0;
             var __sp_blankAfterEnd = 0;
+            // Lecture directe sur Twitch avec ce bloqueur : mode
+            // Adblock, ou mode Proxy réglé sur « proxys pendant les pubs ».
             function __sp_on(){
-                return !!(__tp_config && __tp_config.proxiesEnabled === false);
+                return !!(__tp_config && (
+                    __tp_config.proxiesEnabled === false ||
+                    __tp_config.proxyAdsOnly === true
+                ));
+            }
+            // Les proxys servent alors de flux de secours prioritaire,
+            // avant les lecteurs intégré, popout et autoplay de vaft.
+            function __sp_proxyAds(){
+                return !!(__tp_config && __tp_config.proxyAdsOnly === true);
+            }
+            // Dans l'ordre du tri de l'auto-test ; trois au plus, pour
+            // ne pas faire attendre la coupure sur toute la liste.
+            function __sp_adProxies(){
+                if (!__tp_config || !Array.isArray(__tp_config.proxies)) {
+                    return [];
+                }
+                return __tp_config.proxies.filter(function(proxy){
+                    return proxy.enabled && !proxy.quarantine;
+                }).slice(0, 3);
+            }
+            // Manifeste du proxy (celui que Twitch donne depuis son
+            // pays), gardé jusqu'à ce que ses listes ne répondent plus.
+            function __sp_proxyMaster(info, proxy){
+                if (info.proxyCache[proxy.id]) {
+                    return Promise.resolve(info.proxyCache[proxy.id]);
+                }
+                // Une seule demande à la fois par proxy : la préparation
+                // en cours sert aussi à la pub qui arrive pendant ce temps.
+                if (info.proxyPending[proxy.id]) {
+                    return info.proxyPending[proxy.id];
+                }
+                var timeout = (__tp_config && __tp_config.timeout) || 4000;
+                var pending = info.proxyPending[proxy.id] = __tp_fetchProxy(
+                    __tp_buildURL(proxy, info.channel),
+                    null,
+                    timeout,
+                    new AbortController()
+                ).then(function(response){
+                    return response && response.ok ? response.text() : null;
+                }).then(function(text){
+                    if (!text || text.indexOf("#EXT-X-STREAM-INF") < 0) {
+                        return null;
+                    }
+                    info.proxyCache[proxy.id] = text;
+                    return text;
+                }).catch(function(){
+                    return null;
+                }).then(function(text){
+                    if (info.proxyPending[proxy.id] === pending) {
+                        delete info.proxyPending[proxy.id];
+                    }
+                    return text;
+                });
+                return pending;
+            }
+            // Préparé dès l'ouverture du stream : à la pub, il ne reste
+            // que la liste de segments à demander.
+            function __sp_warmProxies(info){
+                __sp_adProxies().slice(0, 1).forEach(function(proxy){
+                    __sp_proxyMaster(info, proxy);
+                });
+            }
+            async function __sp_findProxyBackup(info, current, minimal){
+                var proxies = __sp_adProxies();
+                for (var p = 0; p < proxies.length; p++) {
+                    var proxy = proxies[p];
+                    for (var pass = 0; pass < 2; pass++) {
+                        var fresh = !info.proxyCache[proxy.id];
+                        // Juste après une relance, pas de nouvelle demande
+                        // aux proxys : seulement ce qui est déjà en cache,
+                        // ou la préparation lancée à l'ouverture du stream.
+                        // Sans cette attente, la pub de début partait sur
+                        // l'autoplay en 360p alors que le proxy arrivait.
+                        if (fresh && minimal && !info.proxyPending[proxy.id]) {
+                            break;
+                        }
+                        var master = await __sp_proxyMaster(info, proxy);
+                        if (!master) {
+                            break;
+                        }
+                        try {
+                            var mediaURL = __sp_pickRendition(master, current);
+                            var mediaResponse = mediaURL ? await __tp_originalFetch(mediaURL) : null;
+                            if (mediaResponse && mediaResponse.status === 200) {
+                                var list = await mediaResponse.text();
+                                if (list && list.indexOf(__sp_MARK) < 0) {
+                                    return {
+                                        text: list,
+                                        type: "proxy",
+                                        label: __sp_renditionLabel(master, mediaURL),
+                                        proxyName: proxy.name
+                                    };
+                                }
+                                // Pub chez ce proxy aussi : son manifeste
+                                // reste bon, on passe au suivant.
+                                if (list) {
+                                    break;
+                                }
+                            }
+                        } catch(e) {}
+                        // Liste périmée : manifeste redemandé une fois.
+                        delete info.proxyCache[proxy.id];
+                        if (fresh) {
+                            break;
+                        }
+                    }
+                }
+                return null;
             }
             function __sp_post(data){
                 if (!__tp_bc) {
@@ -35228,7 +35573,9 @@ dashboardButton.style.visibility =
                     stripped: 0,
                     blankLogged: false,
                     lastReload: Date.now(),
-                    requestedAds: {}
+                    requestedAds: {},
+                    proxyCache: {},
+                    proxyPending: {}
                 };
                 for (var i = 0; i < lines.length - 1; i++) {
                     if (
@@ -35344,6 +35691,9 @@ dashboardButton.style.visibility =
                         __sp_streams[channel] = info;
                     }
                     info.lastReload = Date.now();
+                    if (__sp_proxyAds()) {
+                        __sp_warmProxies(info);
+                    }
                     var out = __sp_withServerTime(
                         info.usingModified && info.modified ? info.modified : info.master,
                         text,
@@ -35351,7 +35701,9 @@ dashboardButton.style.visibility =
                     );
                     __tp_noteOrigin(
                         __tp_parseMediaInfo(out),
-                        "Twitch direct, bloqueur de pub sans proxy",
+                        __sp_proxyAds()
+                            ? "Twitch direct, proxys pendant les pubs"
+                            : "Twitch direct, bloqueur de pub sans proxy",
                         playerType,
                         usherN
                     );
@@ -35482,6 +35834,12 @@ dashboardButton.style.visibility =
                 if (info.lastReload > Date.now() - 1500) {
                     start = 2;
                     minimal = true;
+                }
+                if (__sp_proxyAds()) {
+                    var viaProxy = await __sp_findProxyBackup(info, current, minimal);
+                    if (viaProxy) {
+                        return viaProxy;
+                    }
                 }
                 for (var t = start; !found && t < __sp_TYPES.length; t++) {
                     var type = __sp_TYPES[t];
@@ -35759,6 +36117,54 @@ dashboardButton.style.visibility =
                 }
                 return out.join(__sp_NL);
             }
+            // Coupure vraiment finie : les derniers morceaux de la liste
+            // sont du direct, datés après la fin annoncée de chaque pub.
+            // Twitch, lui, ne retire ses repères qu'une trentaine de
+            // secondes plus tard, quand les morceaux de pub sortent de la
+            // liste ; vaft attendait jusque-là sur le flux de secours.
+            // Entre deux pubs d'une même coupure il n'y a aucun morceau
+            // de direct, et une durée de pub inconnue laisse l'ancienne
+            // règle s'appliquer.
+            var __sp_LIVE_TAIL_MIN = 3;
+            function __sp_adOver(text){
+                var lines = __sp_lines(text);
+                var pendingPdt = 0;
+                var adEnd = 0;
+                var adUnknown = false;
+                var tail = 0;
+                var tailStart = 0;
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        pendingPdt = Date.parse(line.substring(25).trim()) || 0;
+                    } else if (line.indexOf("#EXT-X-DATERANGE") === 0 && line.indexOf(__sp_MARK) >= 0) {
+                        var a = __sp_attrs(line);
+                        var start = Date.parse(a["START-DATE"] || "");
+                        var dur = parseFloat(a.DURATION);
+                        if (isNaN(start) || !(dur > 0)) {
+                            adUnknown = true;
+                        } else {
+                            adEnd = Math.max(adEnd, start + dur * 1000);
+                        }
+                    } else if (line.indexOf("#EXTINF") === 0) {
+                        if (line.indexOf(",live") >= 0) {
+                            if (!tail) {
+                                tailStart = pendingPdt;
+                            }
+                            tail++;
+                        } else {
+                            tail = 0;
+                            tailStart = 0;
+                        }
+                        pendingPdt = 0;
+                    }
+                }
+                return !adUnknown &&
+                    adEnd > 0 &&
+                    tail >= __sp_LIVE_TAIL_MIN &&
+                    tailStart > 0 &&
+                    tailStart >= adEnd - 500;
+            }
             // Heure (d'après Twitch) de la fin du dernier morceau d'une
             // liste : comparée entre flux de secours et flux normal, elle
             // dit de combien l'un est en avance sur l'autre.
@@ -35788,7 +36194,7 @@ dashboardButton.style.visibility =
                 });
                 return sorted[Math.floor(sorted.length / 2)];
             }
-            function __sp_endAd(info){
+            function __sp_endAd(info, liveBack){
                 var wasModified = info.usingModified;
                 __sp_lastEndAt = Date.now();
                 __sp_blankAfterEnd = 0;
@@ -35796,12 +36202,14 @@ dashboardButton.style.visibility =
                 info.stripping = false;
                 info.stripped = 0;
                 info.backupType = null;
+                info.backupName = null;
                 info.usingModified = false;
                 info.lastReload = Date.now();
                 __tp_postLog("info",
                     "🛡️ Fin de la pub sur " + info.channel + " (" +
                     Math.round((Date.now() - info.adStart) / 1000) + " s) : " +
-                    "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : ""));
+                    "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : "") +
+                    (liveBack ? " · direct revenu, sans attendre que Twitch efface ses repères" : ""));
                 __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
                 __sp_post({ type: "spPlayer", action: "reload", afterAd: true, channel: info.channel, edgeGap: __sp_median(info.edgeGaps) });
             }
@@ -35811,12 +36219,22 @@ dashboardButton.style.visibility =
                     info.lastReload = Date.now();
                 }
                 var marked = text.indexOf(__sp_MARK) >= 0;
+                // Direct revenu alors que Twitch garde encore ses repères :
+                // coupure finie. Le lecteur relancé reçoit la même liste,
+                // nettoyée, et n'y voit pas une nouvelle pub.
+                if (marked && __sp_adOver(text)) {
+                    if (info.inAd) {
+                        __sp_endAd(info, true);
+                    }
+                    return __sp_cleanAfter(text);
+                }
                 if (marked) {
                     info.midroll = text.indexOf('"MIDROLL"') >= 0 || text.indexOf('"midroll"') >= 0;
                     if (!info.inAd) {
                         info.inAd = true;
                         info.adStart = Date.now();
                         info.backupType = null;
+                        info.backupName = null;
                         info.blankLogged = false;
                         info.adIdsSeen = {};
                         info.adTimes = {};
@@ -35868,6 +36286,14 @@ dashboardButton.style.visibility =
                     if (backup.text) {
                         var mainEnd = __sp_listEnd(text);
                         var backupEnd = __sp_listEnd(backup.text);
+                        // 🔎 Un secours en retard sur le flux normal n'a
+                        // rien de neuf à donner au lecteur, qui se vide.
+                        var gapNote = "";
+                        if (mainEnd && backupEnd) {
+                            var gapSec = (backupEnd - mainEnd) / 1000;
+                            gapNote = " · 🔎 " + (gapSec >= 0 ? "en avance" : "en retard") +
+                                " de " + Math.abs(gapSec).toFixed(1) + " s sur le flux normal";
+                        }
                         if (mainEnd && backupEnd) {
                             info.edgeGaps.push(backupEnd - mainEnd);
                             if (info.edgeGaps.length > 20) {
@@ -35876,13 +36302,17 @@ dashboardButton.style.visibility =
                         }
                         text = backup.text;
                         info.backupLabel = backup.label || "";
-                        if (info.backupType !== backup.type) {
+                        if (
+                            info.backupType !== backup.type ||
+                            info.backupName !== backup.proxyName
+                        ) {
                             info.backupType = backup.type;
+                            info.backupName = backup.proxyName;
                             __tp_postLog("success",
                                 "🛡️ Pub bloquée sur " + info.channel + " : flux du " +
-                                __sp_typeLabel(backup.type) +
+                                (backup.proxyName ? "proxy " + backup.proxyName : __sp_typeLabel(backup.type)) +
                                 (backup.label ? " (" + backup.label + ")" : "") +
-                                " le temps de la coupure");
+                                " le temps de la coupure" + gapNote);
                         }
                     }
                     text = __sp_strip(text, isHevc && !!info.modified, info);
@@ -35903,9 +36333,11 @@ dashboardButton.style.visibility =
                         pod: pod
                     });
                 } else {
-                    // Plus aucun repère de pub dans la liste : c'est la seule
-                    // fin de coupure (comme Vaft). Pas de retour anticipé : il
-                    // devinait la fin plus tôt et se trompait parfois.
+                    // Plus aucun repère de pub dans la liste : fin de coupure
+                    // comme vaft, quand le retour du direct n'a pas pu être
+                    // prouvé plus tôt (voir __sp_adOver). L'ancien retour
+                    // anticipé devinait la fin et se trompait parfois ;
+                    // celui-ci attend des morceaux de direct bien réels.
                     if (info.inAd) {
                         // Relance complète, comme Vaft : les morceaux servis
                         // pendant la pub n'ont pas tout à fait la même durée
@@ -36762,6 +37194,19 @@ dashboardButton.style.visibility =
         return pageConfig.proxiesEnabled !== false;
     }
 
+    // Proxys gardés pour les seules pubs, en mode Proxy comme en mode
+    // Adblock : la lecture passe par Twitch en direct, et un proxy est
+    // le premier flux de secours pendant la coupure.
+    function proxyAdsOnlyOn() {
+        return pageConfig.proxyAdsOnly === true && !scriptIsOff();
+    }
+
+    // Lecture directe sur Twitch avec le bloqueur façon vaft : mode
+    // Adblock, ou mode Proxy avec « proxys pendant les pubs ».
+    function directPlaybackOn() {
+        return !proxiesOn() || proxyAdsOnlyOn();
+    }
+
     var SP_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
     var SP_HEADER_NAMES = [
         'Client-ID',
@@ -36860,7 +37305,7 @@ dashboardButton.style.visibility =
                 : (input && input.url) || '';
             if (url.indexOf('gql.twitch.tv') >= 0 && init) {
                 spNoteHeaders(init.headers);
-                if (!proxiesOn() && typeof init.body === 'string') {
+                if (directPlaybackOn() && typeof init.body === 'string') {
                     var body = spRewriteTokenBody(init.body);
                     if (body !== init.body) {
                         init = Object.assign({}, init, { body: body });
@@ -37057,7 +37502,7 @@ dashboardButton.style.visibility =
 
     function spCatchUpTick() {
         var w = spCatchUp;
-        if (!w || proxiesOn() || getTestChannel() !== w.channel) {
+        if (!w || !directPlaybackOn() || getTestChannel() !== w.channel) {
             spCatchUpStop();
             return;
         }
@@ -37185,7 +37630,7 @@ dashboardButton.style.visibility =
                 clearInterval(spResumeTimer);
                 spResumeTimer = null;
             }
-            if (proxiesOn()) {
+            if (!directPlaybackOn()) {
                 stop();
                 return;
             }
@@ -37222,13 +37667,13 @@ dashboardButton.style.visibility =
 
     function spHandleMessage(data) {
         if (data.type === 'spGql') {
-            if (!proxiesOn()) {
+            if (directPlaybackOn()) {
                 spAnswerGql(data);
             }
             return;
         }
         if (data.type === 'spPlayer') {
-            if (!proxiesOn()) {
+            if (directPlaybackOn()) {
                 if (data.action === 'resume') {
                     spResumeAfterAd();
                 } else {
@@ -37687,10 +38132,11 @@ dashboardButton.style.visibility =
     var SP_BADGE_TYPES = {
         embed: 'intégré',
         popout: 'popout',
-        autoplay: 'autoplay'
+        autoplay: 'autoplay',
+        proxy: 'proxy'
     };
 
-    var SP_BADGE_TYPES_EN = { embed: 'embed', popout: 'popout', autoplay: 'autoplay' };
+    var SP_BADGE_TYPES_EN = { embed: 'embed', popout: 'popout', autoplay: 'autoplay', proxy: 'proxy' };
 
     function spInjectBadgeCSS() {
         if (document.getElementById('tp9-sp-badge-style')) {
@@ -37735,11 +38181,12 @@ dashboardButton.style.visibility =
     var spBadgeData = null;
 
     // Délai entre la fin de la dernière pub et la relance du lecteur :
-    // la relance attend que Twitch efface ses repères de pub, une
-    // trentaine de secondes après la dernière pub (mesuré : 33 à 36 s).
-    // C'est une estimation, d'où le « relance du lecteur… » quand elle
-    // est dépassée plutôt qu'un « 0 s » figé.
-    var SP_RELOAD_AFTER_AD_MS = 35000;
+    // trois morceaux de direct (2 s chacun) et la relecture suivante de
+    // la liste, voir __sp_adOver dans le Worker. Avant, la relance
+    // attendait que Twitch efface ses repères de pub (33 à 36 s). C'est
+    // une estimation, d'où le « relance du lecteur… » quand elle est
+    // dépassée plutôt qu'un « 0 s » figé.
+    var SP_RELOAD_AFTER_AD_MS = 8000;
     var spBadgeTimer = null;
     var spBadgeProgress = null;
 
@@ -37759,7 +38206,7 @@ dashboardButton.style.visibility =
     function spUpdateBadge(data) {
         if (
             !data.active ||
-            proxiesOn() ||
+            !directPlaybackOn() ||
             !data.channel ||
             data.channel !== getTestChannel()
         ) {
@@ -37890,7 +38337,7 @@ dashboardButton.style.visibility =
     // l'image jusqu'au F5 ; la relance repart d'un lecteur neuf
     // (option PlayerBufferingDoPlayerReload de vaft).
     function sansProxyBufferTick() {
-        if (isDashboardOnlyTab || proxiesOn()) {
+        if (isDashboardOnlyTab || !directPlaybackOn()) {
             return;
         }
         var parts = spPlayerParts(false);
@@ -37910,7 +38357,7 @@ dashboardButton.style.visibility =
                 content.type !== 'live' ||
                 player.isPaused() ||
                 (video && video.ended) ||
-                spAd.stripping ||
+                spAd.active ||
                 spBuffer.lastFix > Date.now() - 8000
             ) {
                 return;
@@ -38030,6 +38477,45 @@ dashboardButton.style.visibility =
                 ok: true,
                 duration: 4000
             });
+        }, 300);
+    }
+
+    function setProxyAdsOnly(on) {
+        on = !!on;
+        if (!!pageConfig.proxyAdsOnly === on) {
+            return;
+        }
+        pageConfig.proxyAdsOnly = on;
+        saveConfig(pageConfig);
+        broadcastConfig();
+        watchdogReset();
+        adCleanWatch = null;
+        spAd.active = false;
+        spAd.stripping = false;
+        spBuffer.same = 0;
+        spHideBadge();
+        logEvent(
+            'info',
+            on
+                ? 'Proxys pendant les pubs : lecture Twitch directe, un proxy sert de secours le temps d\'une coupure'
+                : proxiesOn()
+                    ? 'Proxys en permanence : le flux repasse par les proxys'
+                    : 'Proxys pendant les pubs coupés : seuls les lecteurs Twitch servent de secours'
+        );
+        renderDashboard();
+        // Les proxys n'étaient plus testés en mode Adblock : il faut
+        // savoir lesquels répondent avant la prochaine pub.
+        if (on) {
+            setTimeout(autoTestOnLoad, 3000);
+        }
+        // En mode Proxy, le flux change de chemin : la prochaine
+        // demande de flux suit le nouveau réglage. En mode Adblock,
+        // seul le choix du secours change, rien à relancer.
+        if (!proxiesOn() || !getWatchedChannel()) {
+            return;
+        }
+        setTimeout(function () {
+            reloadTwitchPlayer();
         }, 300);
     }
 
@@ -38290,7 +38776,7 @@ dashboardButton.style.visibility =
     // ============================================================
 
     async function autoTestOnLoad() {
-        if (!proxiesOn()) {
+        if (!proxiesOn() && !proxyAdsOnlyOn()) {
             return;
         }
 
