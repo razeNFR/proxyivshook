@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.9.21
+// @version      1.10
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -11,6 +11,12 @@
 // @updateURL    https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
 // @downloadURL  https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js
 // ==/UserScript==
+
+// ==Changelog==
+// 1.10
+// - Nouveau menu : plus clair, mieux rangé, avec des icônes dessinées || New menu: clearer, better organised, with drawn icons
+// - Écran Nouveautés pour voir ce qui change avant de mettre à jour || What's new screen to see the changes before updating
+// ==/Changelog==
 
 (function () {
     'use strict';
@@ -33,7 +39,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.9.21';
+    var CURRENT_VERSION = '1.10';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -41,6 +47,7 @@
     // custom dans le menu du script.
     var UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js';
     var UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 heure
+    var CHANGELOG_MAX_VERSIONS = 8;
 
     var DEFAULT_TIMEOUT = 2000;
     var DEFAULT_CACHE_DELAY = 60;
@@ -213,17 +220,17 @@
     }
 
     var UI_EN = {
-        'ANTI-PUB TWITCH': 'TWITCH AD BLOCKER',
-        'Nouvelle mise à jour disponible': 'New update available',
-        'Actualise la page une fois installée': 'Reload the page once installed',
+        'Voir les nouveautés': 'See what\'s new',
+        'Fermer': 'Close',
+        'Ouvrir le dashboard': 'Open the dashboard',
+        'Langue': 'Language',
+        'Données': 'Data',
         'Mettre à jour': 'Update',
         'Sauvegarde tes statistiques': 'Back up your stats',
         'Un nettoyage du navigateur les effacerait': 'Clearing browser data would erase them',
         'Sauvegarder': 'Back up',
-        'LECTURE ACTUELLE': 'NOW PLAYING',
         'En attente du flux…': 'Waiting for the stream…',
-        'Ouvrir le dashboard complet': 'Open the full dashboard',
-        '🛡️ Bloqueur de pub actif': '🛡️ Ad blocker active',
+        'Bloqueur de pub actif': 'Ad blocker active',
         'sur ce stream': 'on this stream',
         '0 coupure': '0 breaks',
         'de pub évitée': 'of ads avoided',
@@ -231,12 +238,9 @@
         'Le compte démarre avec la lecture': 'Counting starts with playback',
         'Qualité réduite pendant une pub': 'Lower quality during an ad',
         'Pubs de début (preroll) non comptées': 'Pre-roll ads not counted',
-        '📡 PROXYS': '📡 PROXIES',
-        '＋ Ajouter un proxy': '＋ Add a proxy',
         'Tester': 'Test',
         'Réglages': 'Settings',
         'Retour': 'Back',
-        '▶️ LECTURE': '▶️ PLAYBACK',
         'Fallback automatique': 'Automatic fallback',
         'Qualité en arrière-plan': 'Background quality',
         'Lecteur custom': 'Custom player',
@@ -247,7 +251,6 @@
         'Cacher Bits et abonnements': 'Hide Bits and subscriptions',
         'Cacher le bandeau promo': 'Hide the promo banner',
         'Infobulles d\'aide': 'Help tooltips',
-        '💾 DONNÉES': '💾 DATA',
         'Dashboard et statistiques': 'Dashboard and stats',
         'Supprimer aussi les statistiques déjà enregistrées ?': 'Also delete the stats already saved?',
         'Supprimer': 'Delete',
@@ -259,7 +262,7 @@
         'Mode Adblock': 'Adblock mode',
         'Désactivé': 'Disabled',
         'Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.': 'No ad blocking: Twitch works normally. Handy to use another ad blocker. The page reloads.',
-        '⛔ Bloqueur de pub désactivé': '⛔ Ad blocker disabled',
+        'Bloqueur de pub désactivé': 'Ad blocker disabled',
         'Ni proxy ni Adblock : Twitch fonctionne comme sans le script, tu peux utiliser un autre bloqueur de pub. Choisis Proxy ou Adblock pour le réactiver (la page se recharge).': 'No proxy, no Adblock: Twitch works as if the script were not there, you can use another ad blocker. Pick Proxy or Adblock to turn it back on (the page reloads).',
         'Twitch lu en direct, sans proxy. Pendant une pub, on passe sur un autre lecteur Twitch sans pub.': 'Twitch played directly, no proxy. During an ad, it switches to another ad-free Twitch player.',
         'Pubs bloquées sur ce stream': 'Ads blocked on this stream',
@@ -307,7 +310,7 @@
         'https://exemple.com/live/{channel}': 'https://example.com/live/{channel}',
         'L\'URL doit contenir': 'The URL must contain',
         'Annuler': 'Cancel',
-        '＋ Ajouter': '＋ Add',
+        'Ajouter': 'Add',
         // Lecteur custom
         'Retour arrière': 'Rewind',
         'Position dans le direct': 'Position in the stream',
@@ -565,6 +568,31 @@
             });
         });
     }
+
+    // Icônes du menu : dessinées, pour rendre pareil partout (un emoji
+    // change d'aspect selon le système).
+    function tp9Icon(size, paths) {
+        return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none"' +
+            ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
+            ' aria-hidden="true">' + paths + '</svg>';
+    }
+
+    var TP9_ICON_PATHS = {
+        shield: '<path d="M12 3l7 3v5c0 5-3 8-7 10c-4-2-7-5-7-10V6z"/>',
+        chart: '<path d="M5 20V10"/><path d="M12 20V4"/><path d="M19 20v-7"/>',
+        gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+        close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
+        back: '<path d="M15 6l-6 6l6 6"/>',
+        globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3 3 15 0 18"/><path d="M12 3c-3 3-3 15 0 18"/>',
+        power: '<path d="M12 3v9"/><path d="M6.3 7a8 8 0 1 0 11.4 0"/>',
+        search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+        plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
+        caret: '<path d="M6 9l6 6l6-6"/>',
+        flask: '<path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
+        up: '<path d="M12 19V5"/><path d="M6 11l6-6l6 6"/>',
+        down: '<path d="M12 5v14"/><path d="M6 13l6 6l6-6"/>',
+        unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>'
+    };
 
     // Drapeaux dessinés (Windows n'affiche pas les emojis drapeaux).
     var LANG_FLAGS_HTML =
@@ -1331,10 +1359,45 @@
 
     }
 
-    function applyUpdateCheckResult(latestVersion) {
+    // Nouveautés d'une version : le bloc ==Changelog== en tête du
+    // fichier en ligne, déjà téléchargé pour lire son numéro. Une ligne
+    // par changement, le français puis l'anglais après « || ».
+    function parseChangelog(text) {
+
+        var block = text.match(/==Changelog==([\s\S]*?)==\/Changelog==/);
+
+        if (!block) {
+            return [];
+        }
+
+        var versions = [];
+
+        block[1].split('\n').forEach(function (raw) {
+
+            var line = raw.replace(/^\s*\/\/\s?/, '').trim();
+            var version = line.match(/^(\d+(?:\.\d+)+)$/);
+
+            if (version) {
+                versions.push({ version: version[1], items: [] });
+            } else if (versions.length && line.indexOf('- ') === 0) {
+                var parts = line.slice(2).split('||');
+                versions[versions.length - 1].items.push({
+                    fr: parts[0].trim(),
+                    en: (parts[1] || parts[0]).trim()
+                });
+            }
+
+        });
+
+        return versions.slice(0, CHANGELOG_MAX_VERSIONS);
+
+    }
+
+    function applyUpdateCheckResult(latestVersion, text) {
 
         updateCheckState.latestVersion = latestVersion;
         updateCheckState.lastCheck = Date.now();
+        updateCheckState.changelog = parseChangelog(text);
 
         saveUpdateCheck(updateCheckState);
 
@@ -1373,7 +1436,7 @@
                 var match = text.match(/@version\s+([\d.]+)/);
 
                 if (match) {
-                    applyUpdateCheckResult(match[1]);
+                    applyUpdateCheckResult(match[1], text);
                 }
 
             })
@@ -5307,7 +5370,9 @@
 
                 var overdue = backupIsOverdue();
 
-                banner.style.display = overdue ? 'flex' : 'none';
+                // Un encart à la fois : à deux, ils mangeaient presque
+                // toute la hauteur de la liste des proxys.
+                banner.style.display = overdue && !availableUpdate ? 'flex' : 'none';
 
                 if (overdue) {
 
@@ -5872,30 +5937,40 @@
 
             <div class="tp9-header">
 
+                <button class="tp9-settings-back tp9-icon-btn" type="button"
+                    aria-label="Retour" data-tp9-tip="Retour">${tp9Icon(18, TP9_ICON_PATHS.back)}</button>
+
+                <span class="tp9-screen-title"></span>
+
                 <div class="tp9-brand">
 
                     <div class="tp9-brand-icon">
-                        ⚡
+                        ${tp9Icon(15, TP9_ICON_PATHS.shield)}
                     </div>
 
                     <div class="tp9-brand-text">
-                        <div class="tp9-title">Twitch Guard<span class="tp9-version">v${CURRENT_VERSION}</span>${LANG_FLAGS_HTML}</div>
-                        <div class="tp9-subtitle">ANTI-PUB TWITCH</div>
+                        <div class="tp9-title">Twitch Guard<span class="tp9-version">v${CURRENT_VERSION}</span></div>
                     </div>
 
                 </div>
 
-                <button
-                    class="tp9-close"
-                    type="button"
-                >
-                    ×
-                </button>
+                <div class="tp9-header-actions">
 
-            </div>
+                    <button class="tp9-open-stats tp9-icon-btn" type="button"
+                        aria-label="Ouvrir le dashboard" data-tp9-tip="Ouvrir le dashboard">${tp9Icon(17, TP9_ICON_PATHS.chart)}</button>
 
-            <div class="tp9-test-progress">
-                <div class="tp9-test-progress-fill"></div>
+                    <button class="tp9-open-settings tp9-icon-btn" type="button"
+                        aria-label="Réglages" data-tp9-tip="Réglages">${tp9Icon(17, TP9_ICON_PATHS.gear)}</button>
+
+                    <button class="tp9-close tp9-icon-btn" type="button"
+                        aria-label="Fermer">${tp9Icon(17, TP9_ICON_PATHS.close)}</button>
+
+                </div>
+
+                <div class="tp9-test-progress">
+                    <div class="tp9-test-progress-fill"></div>
+                </div>
+
             </div>
 
 
@@ -5904,21 +5979,19 @@
 <div class="tp9-screen tp9-screen-main">
 
 <div class="tp9-update-banner" style="display:none;">
-    <div class="tp9-update-icon">⬆️</div>
     <div class="tp9-update-text">
-        <div class="tp9-update-title">Nouvelle mise à jour disponible</div>
         <div class="tp9-update-version"></div>
-        <div class="tp9-update-hint">Actualise la page une fois installée</div>
+        <button class="tp9-update-more" type="button">Voir les nouveautés</button>
     </div>
     <button class="tp9-update-btn" type="button">Mettre à jour</button>
 </div>
 
-<div class="tp9-backup-banner" style="display:none;">
-    <div class="tp9-update-icon">💾</div>
+<div class="tp9-backup-banner" style="display:none;"
+    data-tp9-tip="Sauvegarde tes statistiques"
+    data-tp9-tip-sub="Un nettoyage du navigateur les effacerait">
     <div class="tp9-update-text">
         <div class="tp9-update-title">Sauvegarde tes statistiques</div>
         <div class="tp9-update-version tp9-backup-text-sub"></div>
-        <div class="tp9-update-hint">Un nettoyage du navigateur les effacerait</div>
     </div>
     <button class="tp9-update-btn tp9-backup-btn-action" type="button">Sauvegarder</button>
 </div>
@@ -5926,42 +5999,29 @@
 <div class="tp9-hero tp9-hero-idle">
     <span class="tp9-hero-dot"></span>
     <div class="tp9-hero-text">
-        <div class="tp9-hero-label">LECTURE ACTUELLE</div>
         <div class="tp9-hero-value">En attente du flux…</div>
+        <div class="tp9-hero-sub"></div>
     </div>
     <span class="tp9-hero-meta"></span>
 </div>
 
-<div class="tp9-top-actions">
-<button class="tp9-open-stats" type="button">
-    <span class="tp9-btn-icon">📊</span> Ouvrir le dashboard complet
-</button>
-<button class="tp9-open-settings tp9-settings-square" type="button"
-    aria-label="Réglages"
-    data-tp9-tip="Réglages">
-    <span class="tp9-btn-icon">⚙️</span><span class="tp9-settings-label">Réglages</span>
-</button>
-</div>
-
 <div class="tp9-block tp9-mode-block">
 
-<div class="tp9-section-title">🔀 MODE</div>
 <div class="tp9-mode-switch" role="radiogroup" aria-label="Mode de lecture">
     <button type="button" class="tp9-mode-btn" data-mode="proxy" role="radio"
         data-tp9-tip="Mode Proxy"
-        data-tp9-tip-sub="Le stream passe par des proxys situés dans un pays sans pub.">📡 Proxy</button>
+        data-tp9-tip-sub="Le stream passe par des proxys situés dans un pays sans pub.">${tp9Icon(14, TP9_ICON_PATHS.globe)}<span>Proxy</span></button>
     <button type="button" class="tp9-mode-btn" data-mode="adblock" role="radio"
         data-tp9-tip="Mode Adblock"
-        data-tp9-tip-sub="Twitch lu en direct, sans proxy. Pendant une pub, on passe sur un autre lecteur Twitch sans pub.">🛡️ Adblock</button>
+        data-tp9-tip-sub="Twitch lu en direct, sans proxy. Pendant une pub, on passe sur un autre lecteur Twitch sans pub.">${tp9Icon(14, TP9_ICON_PATHS.shield)}<span>Adblock</span></button>
     <button type="button" class="tp9-mode-btn" data-mode="off" role="radio"
         data-tp9-tip="Désactivé"
-        data-tp9-tip-sub="Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.">⛔ Désactivé</button>
+        data-tp9-tip-sub="Aucun blocage de pub : Twitch fonctionne normalement. Pratique pour utiliser un autre bloqueur de pub. La page se recharge.">${tp9Icon(14, TP9_ICON_PATHS.power)}<span>Désactivé</span></button>
 </div>
 <label class="tp9-toggle-row tp9-proxy-ads-row"
     data-tp9-tip="Proxys pendant les pubs"
     data-tp9-tip-sub="Hors pub, lecture directe sur Twitch (qualité d'origine, 2K comprise). Pendant une pub, le flux est d'abord demandé à un proxy, avant les lecteurs Twitch de secours.">
     <span class="tp9-toggle-label">
-        <span class="tp9-toggle-icon">🎯</span>
         <span class="tp9-proxy-ads-text">Proxys pendant les pubs</span>
     </span>
     <span class="tp9-switch">
@@ -5970,11 +6030,11 @@
     </span>
 </label>
 <div class="tp9-off-card">
-    <div class="tp9-off-title">⛔ Bloqueur de pub désactivé</div>
+    <div class="tp9-off-title">Bloqueur de pub désactivé</div>
     <div class="tp9-off-text">Ni proxy ni Adblock : Twitch fonctionne comme sans le script, tu peux utiliser un autre bloqueur de pub. Choisis Proxy ou Adblock pour le réactiver (la page se recharge).</div>
 </div>
 <div class="tp9-sans-proxy-card">
-    <div class="tp9-sans-proxy-title">🛡️ Bloqueur de pub actif</div>
+    <div class="tp9-sans-proxy-title">Bloqueur de pub actif</div>
     <div class="tp9-ab-stats">
         <div class="tp9-ab-stat"
             data-tp9-tip="Pubs bloquées sur ce stream"
@@ -6010,42 +6070,45 @@
         <div class="tp9-ab-ratio-note"></div>
     </div>
     <div class="tp9-sans-proxy-notes">
-        <div class="tp9-sans-proxy-note"><span>📉</span>Qualité réduite pendant une pub</div>
-        <div class="tp9-sans-proxy-note"><span>🎬</span>Pubs de début (preroll) non comptées</div>
+        <div class="tp9-sans-proxy-note">Qualité réduite pendant une pub</div>
+        <div class="tp9-sans-proxy-note">Pubs de début (preroll) non comptées</div>
     </div>
 </div>
 
 </div>
 
-<div class="tp9-block tp9-proxy-only">
+<div class="tp9-block tp9-proxy-block tp9-proxy-only">
 
-<div class="tp9-section-title tp9-proxy-title-row">
-    <span>📡 PROXYS</span>
-    <span class="tp9-proxy-count tp9-proxy-only"></span>
+<div class="tp9-proxy-head">
+    <span class="tp9-proxy-heading">
+        <span class="tp9-proxy-heading-name">Proxys</span>
+        <span class="tp9-proxy-count"></span>
+    </span>
+    <input
+        type="text"
+        class="tp9-proxy-search"
+        placeholder="Rechercher un proxy…"
+        aria-label="Rechercher un proxy…"
+        autocomplete="off"
+    >
+    <button class="tp9-proxy-search-toggle tp9-icon-btn" type="button"
+        aria-label="Rechercher un proxy…" data-tp9-tip="Rechercher un proxy…">${tp9Icon(15, TP9_ICON_PATHS.search)}</button>
+    <button class="tp9-add-proxy tp9-icon-btn" type="button"
+        aria-label="Ajouter un proxy" data-tp9-tip="Ajouter un proxy">${tp9Icon(16, TP9_ICON_PATHS.plus)}</button>
 </div>
-<div class="tp9-proxy-warning tp9-proxy-only" style="display:none;"></div>
-<input
-    type="text"
-    class="tp9-proxy-search tp9-proxy-only"
-    placeholder="Rechercher un proxy…"
-    autocomplete="off"
->
+<div class="tp9-proxy-warning" style="display:none;"></div>
 
-<div class="tp9-proxy-list tp9-proxy-only"></div>
-<button
-    class="tp9-add-proxy tp9-proxy-only"
-    type="button"
->
-    ＋ Ajouter un proxy
-</button>
-<div class="tp9-add-container tp9-proxy-only"></div>
+<div class="tp9-proxy-scroll">
+    <div class="tp9-add-container"></div>
+    <div class="tp9-proxy-list"></div>
+</div>
 
 </div>
 
 <div class="tp9-actions tp9-main-actions">
 
     <button class="tp9-test tp9-proxy-only" type="button">
-        <span class="tp9-btn-icon">🧪</span> Tester
+        <span class="tp9-btn-icon">${tp9Icon(15, TP9_ICON_PATHS.flask)}</span> Tester
     </button>
 
 </div>
@@ -6054,15 +6117,9 @@
 
 <div class="tp9-screen tp9-screen-settings" style="display:none;">
 
-<div class="tp9-actions tp9-settings-top">
-    <button class="tp9-settings-back" type="button">
-        <span class="tp9-btn-icon">⬅️</span> Retour
-    </button>
-</div>
-
 <div class="tp9-block">
 
-<div class="tp9-section-title">▶️ LECTURE</div>
+<div class="tp9-section-title">Lecture</div>
 
 <div class="tp9-settings-list">
 
@@ -6070,7 +6127,6 @@
         data-tp9-tip="Repli sur Twitch"
         data-tp9-tip-sub="Aucun proxy dispo → retour sur Twitch, avec les pubs.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">🔁</span>
             Fallback automatique
         </span>
         <span class="tp9-switch">
@@ -6083,7 +6139,6 @@
         data-tp9-tip="Qualité en arrière-plan"
         data-tp9-tip-sub="Garde la qualité quand tu changes d'onglet.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">🎬</span>
             Qualité en arrière-plan
         </span>
         <span class="tp9-switch">
@@ -6096,7 +6151,6 @@
         data-tp9-tip="Lecteur custom"
         data-tp9-tip-sub="Retour arrière, ⟲30/⟳30, vitesse, volume à la molette.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">⏪</span>
             Lecteur custom
         </span>
         <span class="tp9-switch">
@@ -6143,7 +6197,7 @@
 
 <div class="tp9-block">
 
-<div class="tp9-section-title">🧹 INTERFACE</div>
+<div class="tp9-section-title">Interface</div>
 
 <div class="tp9-settings-list">
 
@@ -6151,7 +6205,6 @@
         data-tp9-tip="Offre « sans publicité »"
         data-tp9-tip-sub="Masque le bouton « Essayez 1 mois sans publicité » en haut de la page.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">🚫</span>
             Cacher l'offre sans pub
         </span>
         <span class="tp9-switch">
@@ -6164,7 +6217,6 @@
         data-tp9-tip="Bits, sub offert, abonnement"
         data-tp9-tip-sub="Le bouton Suivre reste.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">💎</span>
             Cacher Bits et abonnements
         </span>
         <span class="tp9-switch">
@@ -6177,7 +6229,6 @@
         data-tp9-tip="Bandeau promo"
         data-tp9-tip-sub="Masque le grand bandeau d'offre sous le lecteur (SUBtember et les suivants).">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">📢</span>
             Cacher le bandeau promo
         </span>
         <span class="tp9-switch">
@@ -6190,7 +6241,6 @@
         data-tp9-tip="Infobulles d'aide"
         data-tp9-tip-sub="Coupées : seules restent celles qui donnent un chiffre.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">💬</span>
             Infobulles d'aide
         </span>
         <span class="tp9-switch">
@@ -6199,13 +6249,21 @@
         </span>
     </label>
 
+    <div class="tp9-lang-row">
+        <span>Langue</span>
+        <span class="tp9-lang-seg">
+            <button type="button" class="tp9-lang-btn" data-lang="fr" data-tp9-raw aria-label="Français">FR</button>
+            <button type="button" class="tp9-lang-btn" data-lang="en" data-tp9-raw aria-label="English">EN</button>
+        </span>
+    </div>
+
 </div>
 
 </div>
 
 <div class="tp9-block">
 
-<div class="tp9-section-title">💾 DONNÉES</div>
+<div class="tp9-section-title">Données</div>
 
 <div class="tp9-settings-list">
 
@@ -6213,7 +6271,6 @@
         data-tp9-tip="Dashboard et statistiques"
         data-tp9-tip-sub="Coupé : plus aucune stat enregistrée.">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">📊</span>
             Dashboard et statistiques
         </span>
         <span class="tp9-switch">
@@ -6232,7 +6289,6 @@
 
     <label class="tp9-toggle-row tp9-auto-backup-row">
         <span class="tp9-toggle-label">
-            <span class="tp9-toggle-icon">💾</span>
             <span class="tp9-auto-backup-label">Sauvegarde auto des stats</span>
         </span>
         <span class="tp9-switch">
@@ -6245,21 +6301,11 @@
 
 <div class="tp9-actions tp9-data-actions">
 
-    <button class="tp9-export" type="button">
-        <span class="tp9-btn-icon">📤</span> Export
-    </button>
+    <button class="tp9-export" type="button">Export</button>
 
-    <button class="tp9-import" type="button">
-        <span class="tp9-btn-icon">📥</span> Import
-    </button>
+    <button class="tp9-import" type="button">Import</button>
 
-</div>
-
-<div class="tp9-actions tp9-actions-secondary">
-
-    <button class="tp9-reset" type="button">
-        <span class="tp9-btn-icon">🔄</span> Reset
-    </button>
+    <button class="tp9-reset" type="button">Reset</button>
 
 </div>
 
@@ -6270,6 +6316,16 @@
     style="display:none;"
 >
 
+</div>
+
+</div>
+
+<div class="tp9-screen tp9-screen-changelog" style="display:none;">
+
+<div class="tp9-changelog-list"></div>
+
+<div class="tp9-actions tp9-changelog-actions">
+    <button class="tp9-update-now" type="button">Mettre à jour</button>
 </div>
 
 </div>
@@ -6566,7 +6622,7 @@ document.addEventListener(
 
                     var btn = this;
 
-                    setButtonBusy(btn, tt('⏳ Test en cours...', '⏳ Testing...'));
+                    setButtonBusy(btn, tt('Test en cours…', 'Testing…'));
 
                     testAllProxies().finally(
                         function () {
@@ -6687,7 +6743,7 @@ document.addEventListener(
                     // immédiatement après le reset.
                     var btn = this;
 
-                    setButtonBusy(btn, tt('⏳ Test en cours...', '⏳ Testing...'));
+                    setButtonBusy(btn, tt('Test en cours…', 'Testing…'));
 
                     testAllProxies().finally(
                         function () {
@@ -6781,12 +6837,33 @@ document.addEventListener(
 
 
         dashboard
+            .querySelector('.tp9-proxy-search-toggle')
+            .addEventListener('click', function () {
+
+                var head = dashboard.querySelector('.tp9-proxy-head');
+                var field = dashboard.querySelector('.tp9-proxy-search');
+                var open = head.classList.toggle('tp9-searching');
+
+                if (open) {
+                    field.focus();
+                } else if (proxySearchQuery) {
+                    field.value = '';
+                    proxySearchQuery = '';
+                    renderProxyList();
+                }
+
+            });
+
+
+        dashboard
             .querySelector('.tp9-add-proxy')
             .addEventListener(
                 'click',
                 function () {
 
                     showAddProxyForm();
+
+                    dashboard.querySelector('.tp9-proxy-scroll').scrollTop = 0;
 
                 }
             );
@@ -6804,6 +6881,18 @@ document.addEventListener(
                 }
             );
 
+
+        dashboard
+            .querySelector('.tp9-update-more')
+            .addEventListener('click', function () {
+                setDashboardScreen('changelog');
+            });
+
+        dashboard
+            .querySelector('.tp9-update-now')
+            .addEventListener('click', function () {
+                dashboard.querySelector('.tp9-update-btn').click();
+            });
 
         dashboard
             .querySelector('.tp9-update-btn')
@@ -6889,7 +6978,8 @@ document.addEventListener(
                     banner
                         .querySelector('.tp9-update-version')
                         .textContent =
-                        'Version ' + availableUpdate.version;
+                        'Version ' + availableUpdate.version +
+                        tt(' disponible', ' available');
 
                 } else {
 
@@ -6899,7 +6989,45 @@ document.addEventListener(
 
             }
 
+            renderChangelog();
+
+            updateBackupUI();
+
         }
+
+    }
+
+    function renderChangelog() {
+
+        var versions = updateCheckState.changelog || [];
+        var more = dashboard.querySelector('.tp9-update-more');
+        var list = dashboard.querySelector('.tp9-changelog-list');
+
+        if (!more || !list) {
+            return;
+        }
+
+        // Fichier en ligne sans bloc de nouveautés : rien à ouvrir.
+        more.style.display = versions.length ? '' : 'none';
+
+        list.innerHTML = versions.map(function (entry) {
+
+            var isNew = isNewerVersion(entry.version, CURRENT_VERSION);
+
+            return '<div class="tp9-changelog-version">' +
+                '<div class="tp9-changelog-head">Version ' + escapeHTML(entry.version) +
+                    (isNew
+                        ? '<span class="tp9-changelog-tag">' + tt('À installer', 'To install') + '</span>'
+                        : '') +
+                '</div>' +
+                entry.items.map(function (item) {
+                    return '<div class="tp9-changelog-item"><span>' +
+                        escapeHTML(tt(item.fr, item.en)) +
+                    '</span></div>';
+                }).join('') +
+            '</div>';
+
+        }).join('');
 
     }
 
@@ -6931,9 +7059,7 @@ document.addEventListener(
             dashboard.querySelector('.tp9-proxy-count');
 
         countBadge.textContent =
-            quarantinedCount
-                ? raceableCount + tt(' en course · ', ' racing · ') + quarantinedCount + ' 💤'
-                : raceableCount + ' / ' + pageConfig.proxies.length + tt(' en course', ' racing');
+            raceableCount + ' / ' + pageConfig.proxies.length + tt(' actifs', ' active');
 
         countBadge.setAttribute('data-tp9-tip-info', '');
 
@@ -6960,14 +7086,11 @@ document.addEventListener(
         renderProxyWarning(raceableCount);
 
 
-        var searchField =
-            dashboard.querySelector('.tp9-proxy-search');
-
         // En dessous d'une dizaine de proxys, un champ de recherche
         // est du décor : les groupes suffisent largement à s'y
         // retrouver.
-        searchField.style.display =
-            pageConfig.proxies.length >= PROXY_SEARCH_MIN ? 'block' : 'none';
+        dashboard.querySelector('.tp9-proxy-search-toggle').style.display =
+            pageConfig.proxies.length >= PROXY_SEARCH_MIN ? '' : 'none';
 
         renderProxyList();
 
@@ -7018,7 +7141,6 @@ document.addEventListener(
             : tt('le repli étant désactivé, la lecture échouera.', 'fallback is off, so playback will fail.');
 
         warning.innerHTML =
-            '<span class="tp9-proxy-warning-icon">⚠️</span>' +
             '<span>' +
                 escapeHTML(cause + ' : ' + consequence) +
             '</span>';
@@ -7166,8 +7288,7 @@ document.addEventListener(
 
             groupEl.innerHTML =
                 '<div class="tp9-group-head">' +
-                    '<span class="tp9-group-caret">▾</span>' +
-                    '<span class="tp9-group-icon">' + group.icon + '</span>' +
+                    '<span class="tp9-group-caret">' + tp9Icon(13, TP9_ICON_PATHS.caret) + '</span>' +
                     '<span class="tp9-group-name">' +
                         escapeHTML(group.label) +
                     '</span>' +
@@ -7237,7 +7358,36 @@ document.addEventListener(
 
         }
 
+        markCurrentProxy();
+
         translateStatic(list);
+
+    }
+
+
+    // Le proxy qui sert la lecture en ce moment, marqué dans sa ligne.
+    function markCurrentProxy() {
+
+        var currentId =
+            activeProxyInfo &&
+            !activeProxyInfo.sansProxy &&
+            !activeProxyInfo.direct &&
+            activeProxyInfo.channel === getTestChannel()
+                ? activeProxyInfo.proxyId
+                : null;
+
+        dashboard.querySelectorAll('.tp9-proxy').forEach(function (row) {
+
+            var current = !!currentId && row.getAttribute('data-proxy-id') === currentId;
+            var status = row.querySelector('.tp9-status');
+
+            row.classList.toggle('tp9-proxy-current', current);
+
+            if (status) {
+                status.setAttribute('data-current', tt('En cours · ', 'In use · '));
+            }
+
+        });
 
     }
 
@@ -7255,7 +7405,12 @@ document.addEventListener(
                 row.className =
                     'tp9-proxy' +
                     (proxy.enabled ? '' : ' tp9-proxy-disabled') +
-                    (proxy.quarantine ? ' tp9-proxy-quarantined' : '');
+                    (proxy.quarantine ? ' tp9-proxy-quarantined' : '') +
+                    (proxy.lastTest
+                        ? (proxy.lastTest.ok ? ' tp9-proxy-ok' : ' tp9-proxy-error')
+                        : '');
+
+                row.setAttribute('data-proxy-id', proxy.id);
 
 
                 row.style.setProperty(
@@ -7278,7 +7433,7 @@ document.addEventListener(
 
 
                 var statusText =
-                    tt('⚪ non testé', '⚪ not tested');
+                    tt('Non testé', 'Not tested');
 
 
                 var statusClass =
@@ -7288,7 +7443,7 @@ document.addEventListener(
                 if (proxy.quarantine) {
 
                     statusText =
-                        tt('💤 en quarantaine', '💤 quarantined');
+                        tt('Quarantaine', 'Quarantined');
 
                     statusClass =
                         'tp9-status-quarantine';
@@ -7300,7 +7455,6 @@ document.addEventListener(
                     ) {
 
                         statusText =
-                            '🟢 OK · ' +
                             lastTest.latency +
                             ' ms';
 
@@ -7310,19 +7464,7 @@ document.addEventListener(
                     } else {
 
                         statusText =
-                            '🔴 ' +
                             lastTest.status;
-
-                        if (
-                            lastTest.latency
-                        ) {
-
-                            statusText +=
-                                ' · ' +
-                                lastTest.latency +
-                                ' ms';
-
-                        }
 
                         statusClass =
                             'tp9-status-error';
@@ -7332,25 +7474,10 @@ document.addEventListener(
                 }
 
 
-                var lastTestInfo =
-                    '';
-
-
-                if (
-                    lastTest &&
-                    lastTest.timestamp
-                ) {
-
-                    lastTestInfo =
-                        '<span class="tp9-test-time">' +
-                        escapeHTML(
-                            formatTestDate(
-                                lastTest.timestamp
-                            )
-                        ) +
-                        '</span>';
-
-                }
+                var lastTestTitle =
+                    lastTest && lastTest.timestamp
+                        ? ' title="' + escapeHTML(formatTestDate(lastTest.timestamp)) + '"'
+                        : '';
 
 
                 var customBadge =
@@ -7365,7 +7492,7 @@ document.addEventListener(
                             ' data-tp9-tip="Sortir de la quarantaine"' +
                             ' data-tp9-tip-sub="Le proxy est protégé 24 h avant de pouvoir y' +
                             ' retourner."' +
-                            ' aria-label="Sortir de la quarantaine">🔓</button>'
+                            ' aria-label="Sortir de la quarantaine">' + tp9Icon(14, TP9_ICON_PATHS.unlock) + '</button>'
                         : '';
 
 
@@ -7380,11 +7507,11 @@ document.addEventListener(
                             ' data-tp9-tip="Plus prioritaire"' +
                             ' data-tp9-tip-sub="Essayés un par un dans cet ordre, 3 s chacun, avant les autres."' +
                             (customIndex === 0 ? ' disabled' : '') +
-                            ' aria-label="Monter">⬆️</button>' +
+                            ' aria-label="Monter">' + tp9Icon(14, TP9_ICON_PATHS.up) + '</button>' +
                           '<button class="tp9-prio tp9-prio-down" type="button"' +
                             ' data-tp9-tip="Moins prioritaire"' +
                             (customIndex === customCount - 1 ? ' disabled' : '') +
-                            ' aria-label="Descendre">⬇️</button>'
+                            ' aria-label="Descendre">' + tp9Icon(14, TP9_ICON_PATHS.down) + '</button>'
                         : '';
                 var deleteButton =
                     proxy.custom
@@ -7417,18 +7544,16 @@ document.addEventListener(
                             ${proxy.enabled ? 'checked' : ''}
                         >
 
-                        <div
-                            class="tp9-proxy-avatar"
+                        <span
+                            class="tp9-proxy-dot"
                             ${getProxyTipAttrs(proxy)}
-                        >
-                            ${getProxyIcon(proxy)}
-                        </div>
+                        ></span>
 
                         <div class="tp9-proxy-info">
 
                             <div class="tp9-proxy-name">
 
-                                ${escapeHTML(proxy.name)}
+                                <span class="tp9-proxy-name-text">${escapeHTML(proxy.name)}</span>
 
                                 ${customBadge}
 
@@ -7438,13 +7563,8 @@ document.addEventListener(
                             <div
                                 class="tp9-status ${statusClass}"
                                 data-status="${escapeHTML(proxy.id)}"
-                            >
-
-                                ${escapeHTML(statusText)}
-
-                                ${lastTestInfo}
-
-                            </div>
+                                ${lastTestTitle}
+                            >${escapeHTML(statusText)}</div>
 
                         </div>
 
@@ -7692,8 +7812,6 @@ document.addEventListener(
             statsOn && !(statsAskBox && statsAskBox.style.display === 'block');
         var openStatsButton = dashboard.querySelector('.tp9-open-stats');
         if (openStatsButton) openStatsButton.style.display = statsOn ? '' : 'none';
-        var topActions = dashboard.querySelector('.tp9-top-actions');
-        if (topActions) topActions.classList.toggle('tp9-no-stats', !statsOn);
         var backupRow = dashboard.querySelector('.tp9-auto-backup-row');
         if (backupRow) backupRow.style.display = statsOn ? '' : 'none';
         dashboard.querySelector('.tp9-hide-turbo').checked = !!pageConfig.hideTwitchTurbo;
@@ -7823,15 +7941,34 @@ document.addEventListener(
         }
 
         var valueEl = hero.querySelector('.tp9-hero-value');
+        var subEl = hero.querySelector('.tp9-hero-sub');
         var metaEl = hero.querySelector('.tp9-hero-meta');
 
         var channel = getTestChannel();
+
+        markCurrentProxy();
 
         hero.classList.remove(
             'tp9-hero-live',
             'tp9-hero-direct',
             'tp9-hero-idle'
         );
+
+        subEl.textContent = '';
+
+        if (scriptIsOff()) {
+
+            hero.classList.add('tp9-hero-idle');
+
+            valueEl.textContent = tt('Protection désactivée', 'Protection disabled');
+
+            subEl.textContent = tt('Twitch fonctionne sans le script', 'Twitch runs without the script');
+
+            metaEl.textContent = '';
+
+            return;
+
+        }
 
         // Rien remonté par le Worker pour CETTE chaîne : la lecture
         // n'a pas encore démarré. On le dit plutôt que de masquer la
@@ -7858,14 +7995,14 @@ document.addEventListener(
             // Lecture directe dans les deux modes quand les proxys ne
             // servent que pendant les pubs : le titre dit lequel.
             valueEl.textContent = !proxyAdsOnlyOn()
-                ? tt('Twitch · Adblock actif', 'Twitch · Adblock on')
+                ? tt('Adblock actif', 'Adblock on')
                 : proxiesOn()
-                    ? tt('Twitch · Proxy pendant les pubs', 'Twitch · Proxy during ads')
-                    : tt('Twitch · Adblock + proxys', 'Twitch · Adblock + proxies');
-            var spThroughput = formatThroughput(getLiveThroughputBps());
+                    ? tt('Proxy pendant les pubs', 'Proxy during ads')
+                    : tt('Adblock + proxys', 'Adblock + proxies');
+            subEl.textContent = tt('Lecture directe sur Twitch', 'Direct playback on Twitch');
             // La pub en cours se lit déjà sur le badge du lecteur et dans
             // l'encart Adblock plus bas : ici, le débit seul.
-            metaEl.textContent = '🛡️' + (spThroughput ? ' ' + spThroughput : '');
+            metaEl.textContent = formatThroughput(getLiveThroughputBps()) || '';
             return;
         }
         if (activeProxyInfo.direct) {
@@ -7874,7 +8011,9 @@ document.addEventListener(
 
             valueEl.textContent = tt('Twitch en direct', 'Twitch direct');
 
-            metaEl.textContent = tt('aucun proxy', 'no proxy');
+            subEl.textContent = tt('Aucun proxy disponible', 'No proxy available');
+
+            metaEl.textContent = '';
 
             return;
 
@@ -7912,10 +8051,11 @@ document.addEventListener(
         // débit actuel : le voici, au seul endroit où il a du sens.
         var throughputText = formatThroughput(getLiveThroughputBps());
 
-        metaEl.textContent =
-            [latencyText, throughputText]
-                .filter(Boolean)
-                .join(' · ');
+        subEl.textContent =
+            tt('Flux via le proxy', 'Stream through the proxy') +
+            (latencyText ? ' · ' + latencyText : '');
+
+        metaEl.textContent = throughputText || '';
 
     }
 
@@ -7953,7 +8093,6 @@ function showAddProxyForm() {
         <div class="tp9-add-form">
 
             <div class="tp9-add-form-header">
-                <span class="tp9-add-form-icon">⚙️</span>
                 <span class="tp9-add-form-title">Ajouter un proxy</span>
             </div>
 
@@ -8009,7 +8148,7 @@ function showAddProxyForm() {
                     class="tp9-confirm-add"
                     type="button"
                 >
-                    ＋ Ajouter
+                    Ajouter
                 </button>
 
             </div>
@@ -8665,7 +8804,6 @@ function showAddProxyForm() {
         '.tp9-close',
         '.tp9-update-btn',
         '.tp9-open-stats',
-        '.tp9-settings-square',
         '.tp9-actions button',
         '.tp9-add-proxy',
         '.tp9-unquarantine',
@@ -19375,11 +19513,63 @@ dashboardButton.style.visibility =
     }
 
 
+    // Le bouton entre dans la rangée de Twitch, juste avant le bouton
+    // Suivre : posé en fixe au-dessus de la page, il passait devant
+    // les fenêtres de Twitch (chats privés). React ne connaît pas ce
+    // nœud : s'il reconstruit la rangée, le bouton disparaît avec
+    // elle, et le prochain passage le remet dans la nouvelle.
+    function dockPlayerButton(followButton) {
+
+        var row = followButton.closest('[data-target="channel-header-right"]');
+
+        if (!row) {
+            undockPlayerButton();
+            return false;
+        }
+
+        if (dashboardButton.parentElement !== row) {
+            row.insertBefore(dashboardButton, row.firstElementChild);
+        }
+
+        dashboardButton.classList.add('tp9-player-docked');
+        dashboardButton.style.position = '';
+        dashboardButton.style.left = '';
+        dashboardButton.style.top = '';
+        dashboardButton.style.bottom = '';
+
+        return true;
+
+    }
+
+    function undockPlayerButton() {
+
+        dashboardButton.classList.remove('tp9-player-docked');
+
+        if (dashboardButton.parentElement !== document.body) {
+            document.body.appendChild(dashboardButton);
+        }
+
+    }
+
     function positionPlayerUI() {
 
         if (!dashboardButton) {
             return;
         }
+
+        placePlayerUI();
+
+        // Caché dans la rangée, il y laisserait un trou.
+        if (
+            dashboardButton.style.visibility === 'hidden' &&
+            dashboardButton.classList.contains('tp9-player-docked')
+        ) {
+            undockPlayerButton();
+        }
+
+    }
+
+    function placePlayerUI() {
 
 
         // On ne veut le bouton QUE sur la page de la chaîne en
@@ -19473,29 +19663,36 @@ dashboardButton.style.visibility =
         dashboardButton.style.visibility =
             'visible';
 
+        var docked =
+            dockPlayerButton(followButton);
+
         var followRect =
             followButton.getBoundingClientRect();
 
 
-        dashboardButton.style.position =
-            'fixed';
+        if (!docked) {
+
+            dashboardButton.style.position =
+                'fixed';
 
 
-        dashboardButton.style.left =
-            (
-                followRect.left -
-                44
-            ) + 'px';
-
-
-        dashboardButton.style.top =
-            (
-                followRect.top +
+            dashboardButton.style.left =
                 (
-                    followRect.height -
-                    32
-                ) / 2
-            ) + 'px';
+                    followRect.left -
+                    44
+                ) + 'px';
+
+
+            dashboardButton.style.top =
+                (
+                    followRect.top +
+                    (
+                        followRect.height -
+                        32
+                    ) / 2
+                ) + 'px';
+
+        }
 
 
             if (dashboardVisible) {
@@ -19507,16 +19704,16 @@ dashboardButton.style.visibility =
                 dashboard.style.left =
                     (
                         followRect.left -
-                        360
+                        392
                     ) + 'px';
 
 
                 dashboard.style.top =
-                    (
+                    Math.max(8,
                         followRect.bottom -
-                        // Mode Désactivé : menu bien plus court, calé
-                        // sur sa vraie hauteur pour rester sur le bouton.
-                        (scriptIsOff() ? (dashboard.offsetHeight || 460) : 460)
+                        // Calé sur sa vraie hauteur (plus courte en mode
+                        // Désactivé) pour rester sur le bouton.
+                        (dashboard.offsetHeight || 520)
                     ) + 'px';
 
             }
@@ -19636,6 +19833,8 @@ dashboardButton.style.visibility =
             return false;
         }
 
+        undockPlayerButton();
+
         dashboardButton.style.visibility = 'visible';
 
         dashboardButton.style.position = 'fixed';
@@ -19683,18 +19882,24 @@ dashboardButton.style.visibility =
     }
 
 
-    // Le menu a deux écrans : le principal (mode, pubs, proxys) et
-    // les réglages, ouverts par le bouton ⚙️ Réglages.
+    // Le menu a trois écrans : le principal (mode, pubs, proxys), les
+    // réglages et les nouveautés d'une mise à jour. Les deux derniers
+    // reprennent l'en-tête, avec une flèche de retour.
     function setDashboardScreen(name) {
         if (!dashboard) return;
-        var settings = name === 'settings';
-        var main = dashboard.querySelector('.tp9-screen-main');
-        var other = dashboard.querySelector('.tp9-screen-settings');
-        if (!main || !other) return;
-        main.style.display = settings ? 'none' : '';
-        other.style.display = settings ? '' : 'none';
-        var content = dashboard.querySelector('.tp9-content');
-        if (content) content.scrollTop = 0;
+        ['main', 'settings', 'changelog'].forEach(function (screen) {
+            var el = dashboard.querySelector('.tp9-screen-' + screen);
+            if (el) el.style.display = screen === name ? '' : 'none';
+        });
+        dashboard.classList.toggle('tp9-on-sub', name !== 'main');
+        var title = dashboard.querySelector('.tp9-screen-title');
+        if (title) {
+            title.textContent = name === 'settings'
+                ? tt('Réglages', 'Settings')
+                : tt('Nouveautés', 'What\'s new');
+        }
+        var scroller = dashboard.querySelector('.tp9-screen-' + name);
+        if (scroller) scroller.scrollTop = 0;
         hideTooltip();
     }
 
@@ -20066,6 +20271,21 @@ dashboardButton.style.visibility =
                 outline-offset: 2px;
 
                 box-shadow: none;
+
+            }
+
+
+            /* Posé dans la rangée de Twitch : il suit la page et passe
+               sous les fenêtres de Twitch, comme le bouton Suivre. */
+            #tp9-player-button.tp9-player-docked {
+
+                position: relative;
+
+                z-index: auto;
+
+                flex: none;
+
+                margin-right: 4px;
 
             }
 
@@ -21797,9 +22017,10 @@ dashboardButton.style.visibility =
             }
 
 
-            /* Le bouton flottant : la règle d'origine annulait
+            /* Le bouton du lecteur : la règle d'origine annulait
                explicitement toute transformation, celle-ci arrive
-               après et reprend la main. */
+               après et reprend la main. Pas de soulèvement au survol,
+               comme les boutons de Twitch à côté de lui. */
 
             #tp9-player-button {
 
@@ -21807,13 +22028,6 @@ dashboardButton.style.visibility =
                     background-color .12s ease,
                     color .12s ease,
                     transform .12s ease;
-
-            }
-
-
-            #tp9-player-button:hover {
-
-                transform: var(--tp9-lift);
 
             }
 
@@ -22703,7 +22917,6 @@ dashboardButton.style.visibility =
             .tp9-close,
             .tp9-update-btn,
             .tp9-open-stats,
-            .tp9-settings-square,
             .tp9-actions button,
             .tp9-add-proxy,
             .tp9-unquarantine,
@@ -22721,7 +22934,6 @@ dashboardButton.style.visibility =
             .tp9-close::after,
             .tp9-update-btn::after,
             .tp9-open-stats::after,
-            .tp9-settings-square::after,
             .tp9-actions button::after,
             .tp9-add-proxy::after,
             .tp9-unquarantine::after,
@@ -22758,7 +22970,6 @@ dashboardButton.style.visibility =
             .tp9-close:hover::after,
             .tp9-update-btn:hover::after,
             .tp9-open-stats:hover::after,
-            .tp9-settings-square:hover::after,
             .tp9-actions button:hover::after,
             .tp9-add-proxy:hover::after,
             .tp9-unquarantine:hover::after,
@@ -23185,68 +23396,6 @@ dashboardButton.style.visibility =
             }
 
 
-            /* Bouton dashboard et carré des réglages sur une même
-               ligne, à la même hauteur. */
-            .tp9-top-actions {
-                display: flex;
-                gap: 7px;
-                margin: 0 0 12px;
-            }
-            .tp9-top-actions .tp9-open-stats {
-                flex: 1;
-                width: auto;
-                min-width: 0;
-                margin: 0;
-            }
-            .tp9-settings-square {
-                flex: 0 0 auto;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 6px;
-                width: 42px;
-                padding: 0;
-                border: 1px solid rgba(255,255,255,.08);
-                border-radius: 8px;
-                background:
-                    linear-gradient(135deg,
-                        rgba(255,255,255,.1),
-                        rgba(255,255,255,.03));
-                color: #ddd;
-                font-size: 12.5px;
-                font-weight: 600;
-                cursor: pointer;
-                transition:
-                    background-color .12s ease,
-                    border-color .12s ease,
-                    transform .12s ease;
-            }
-            .tp9-settings-square .tp9-btn-icon {
-                font-size: 15px;
-            }
-            .tp9-settings-square:hover {
-                background:
-                    linear-gradient(135deg,
-                        rgba(255,255,255,.18),
-                        rgba(255,255,255,.06));
-                border-color: rgba(255,255,255,.18);
-                transform: var(--tp9-lift);
-            }
-            /* Après le survol : sinon l'appui ne se verrait pas. */
-            .tp9-settings-square:active {
-                transform: var(--tp9-press);
-            }
-            .tp9-settings-label {
-                display: none;
-            }
-            .tp9-top-actions.tp9-no-stats .tp9-settings-square {
-                flex: 1;
-                width: auto;
-                padding: 10px;
-            }
-            .tp9-top-actions.tp9-no-stats .tp9-settings-label {
-                display: inline;
-            }
             /* Seul « Tester » reste en bas : rien à montrer en Adblock. */
             #tp9-dashboard.tp9-no-proxy .tp9-main-actions {
                 display: none;
@@ -23309,9 +23458,6 @@ dashboardButton.style.visibility =
                 display: block;
             }
             #tp9-dashboard.tp9-script-off .tp9-sans-proxy-card {
-                display: none !important;
-            }
-            #tp9-dashboard.tp9-script-off .tp9-hero {
                 display: none !important;
             }
             .tp9-off-title {
@@ -23947,6 +24093,1205 @@ dashboardButton.style.visibility =
 
                 }
 
+            }
+
+
+            /* =====================================================
+               MENU : DESSIN ACTUEL
+               Dernière couche de la feuille : elle reprend la main sur
+               les styles d'origine, plus bas dans l'historique.
+            ===================================================== */
+
+            #tp9-dashboard {
+                --tg-bg: #18181b;
+                --tg-surface: #1f1f23;
+                --tg-raised: #26262c;
+                --tg-button: #2f2f35;
+                --tg-sunken: #0e0e10;
+                --tg-line: #2c2c31;
+                --tg-text: #efeff1;
+                --tg-muted: #adadb8;
+                --tg-accent: #9147ff;
+                --tg-off: #3a3a40;
+                width: 340px;
+                height: min(520px, calc(100vh - 16px));
+                max-height: none;
+                box-sizing: border-box;
+                color: var(--tg-text);
+                background: var(--tg-bg);
+                border: 1px solid #34343a;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0,0,0,.65);
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+                font-family: Inter, Roobert, "Helvetica Neue", Arial, sans-serif;
+                font-size: 13px;
+                line-height: 1.3;
+            }
+            #tp9-dashboard.tp9-script-off {
+                height: auto;
+            }
+            #tp9-dashboard *,
+            #tp9-dashboard *::before {
+                box-sizing: border-box;
+            }
+
+            /* Les halos et barres de couleur du dessin d'origine. */
+            #tp9-dashboard .tp9-close::after,
+            #tp9-dashboard .tp9-update-btn::after,
+            #tp9-dashboard .tp9-open-stats::after,
+            #tp9-dashboard .tp9-actions button::after,
+            #tp9-dashboard .tp9-add-proxy::after,
+            #tp9-dashboard .tp9-unquarantine::after,
+            #tp9-dashboard .tp9-delete::after,
+            #tp9-dashboard .tp9-add-form-actions button::after,
+            #tp9-dashboard .tp9-proxy::after,
+            #tp9-dashboard .tp9-toggle-row::after,
+            #tp9-dashboard .tp9-group-head::after,
+            #tp9-dashboard .tp9-group-count::after,
+            #tp9-dashboard .tp9-proxy::before,
+            #tp9-dashboard .tp9-section-title::before {
+                display: none;
+            }
+
+            /* En-tête */
+            #tp9-dashboard .tp9-header {
+                position: relative;
+                flex: none;
+                height: 48px;
+                padding: 0 8px 0 12px;
+                gap: 8px;
+                background: none;
+                border-bottom: 1px solid var(--tg-line);
+            }
+            #tp9-dashboard .tp9-brand {
+                flex: 1;
+                min-width: 0;
+                gap: 8px;
+            }
+            #tp9-dashboard .tp9-brand-icon {
+                flex: none;
+                width: 26px;
+                height: 26px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 7px;
+                background: var(--tg-accent);
+                box-shadow: none;
+                color: #fff;
+            }
+            #tp9-dashboard .tp9-title {
+                display: flex;
+                align-items: baseline;
+                gap: 6px;
+                margin: 0;
+                color: var(--tg-text);
+                font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            #tp9-dashboard .tp9-version {
+                margin: 0;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: var(--tg-muted);
+                font-size: 11px;
+                font-weight: 400;
+            }
+            .tp9-header-actions {
+                flex: none;
+                display: flex;
+                align-items: center;
+            }
+            #tp9-dashboard .tp9-icon-btn {
+                flex: none;
+                width: 32px;
+                height: 32px;
+                min-width: 0;
+                margin: 0;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 0;
+                border-radius: 6px;
+                background: transparent;
+                box-shadow: none;
+                color: var(--tg-muted);
+                cursor: pointer;
+                transform: none;
+                transition: background-color .12s ease, color .12s ease;
+            }
+            #tp9-dashboard .tp9-icon-btn:hover {
+                background: var(--tg-raised);
+                color: var(--tg-text);
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-icon-btn:active {
+                background: var(--tg-button);
+                transform: none;
+            }
+            #tp9-dashboard .tp9-icon-btn:focus-visible,
+            #tp9-dashboard .tp9-mode-btn:focus-visible,
+            #tp9-dashboard .tp9-lang-btn:focus-visible,
+            #tp9-dashboard .tp9-update-more:focus-visible {
+                outline: 2px solid #fff;
+                outline-offset: 1px;
+            }
+            #tp9-dashboard .tp9-settings-back {
+                display: none;
+                margin-left: -4px;
+                color: var(--tg-text);
+            }
+            .tp9-screen-title {
+                display: none;
+                flex: 1;
+                min-width: 0;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            #tp9-dashboard.tp9-on-sub .tp9-settings-back {
+                display: flex;
+            }
+            #tp9-dashboard.tp9-on-sub .tp9-screen-title {
+                display: block;
+            }
+            #tp9-dashboard.tp9-on-sub .tp9-brand,
+            #tp9-dashboard.tp9-on-sub .tp9-open-stats,
+            #tp9-dashboard.tp9-on-sub .tp9-open-settings {
+                display: none !important;
+            }
+            #tp9-dashboard .tp9-test-progress {
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 47px;
+                z-index: 2;
+                height: 2px;
+                margin: 0;
+                background: none;
+            }
+            #tp9-dashboard .tp9-test-progress-fill {
+                background: var(--tg-accent);
+                box-shadow: none;
+            }
+
+            /* Écrans */
+            #tp9-dashboard .tp9-content {
+                display: flex;
+                flex-direction: column;
+                height: calc(100% - 48px);
+                max-height: none;
+                padding: 0;
+                overflow: hidden;
+            }
+            #tp9-dashboard.tp9-script-off .tp9-content {
+                height: auto;
+                max-height: min(470px, calc(100vh - 66px));
+            }
+            #tp9-dashboard .tp9-screen {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+            }
+            #tp9-dashboard .tp9-screen-main {
+                overflow-y: auto;
+                scrollbar-width: none;
+            }
+            #tp9-dashboard .tp9-screen-settings {
+                display: block;
+                padding: 4px 14px 14px;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: var(--tg-off) transparent;
+            }
+
+            /* Encarts mise à jour et sauvegarde */
+            #tp9-dashboard .tp9-update-banner,
+            #tp9-dashboard .tp9-backup-banner {
+                flex: none;
+                min-height: 48px;
+                margin: 10px 12px 0;
+                padding: 6px 8px 6px 12px;
+                align-items: center;
+                gap: 10px;
+                border: 0;
+                border-radius: 8px;
+                background: #2a2140;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-update-text {
+                flex: 1;
+                min-width: 0;
+            }
+            #tp9-dashboard .tp9-update-title,
+            #tp9-dashboard .tp9-update-version {
+                margin: 0;
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #tp9-dashboard .tp9-backup-banner .tp9-update-version {
+                margin-top: 1px;
+                color: #cdb4ff;
+                font-size: 12px;
+                font-weight: 400;
+            }
+            #tp9-dashboard .tp9-update-more {
+                margin: 1px 0 0;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: #cdb4ff;
+                font-family: inherit;
+                font-size: 12px;
+                text-decoration: underline;
+                cursor: pointer;
+            }
+            #tp9-dashboard .tp9-update-btn,
+            #tp9-dashboard .tp9-backup-banner .tp9-update-btn {
+                flex: none;
+                height: 30px;
+                margin: 0;
+                padding: 0 10px;
+                border: 0;
+                border-radius: 6px;
+                background: var(--tg-accent);
+                box-shadow: none;
+                color: #fff;
+                font-family: inherit;
+                font-size: 12.5px;
+                font-weight: 600;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-update-btn:hover,
+            #tp9-dashboard .tp9-backup-banner .tp9-update-btn:hover {
+                background: #a970ff;
+                box-shadow: none;
+                transform: none;
+            }
+
+            /* État de la lecture */
+            #tp9-dashboard .tp9-hero,
+            #tp9-dashboard.tp9-script-off .tp9-hero {
+                flex: none;
+                display: flex;
+                height: 48px;
+                margin: 10px 12px 0;
+                padding: 0 12px;
+                align-items: center;
+                gap: 10px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-surface);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-hero-dot {
+                flex: none;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #7a7a85;
+                box-shadow: none;
+                animation: none;
+            }
+            #tp9-dashboard .tp9-hero-live .tp9-hero-dot,
+            #tp9-dashboard .tp9-hero-direct .tp9-hero-dot {
+                background: #3bd671;
+                box-shadow: none;
+                animation: none;
+            }
+            #tp9-dashboard .tp9-hero-direct .tp9-hero-dot {
+                background: #ffb020;
+            }
+            #tp9-dashboard .tp9-hero-text {
+                flex: 1;
+                min-width: 0;
+            }
+            #tp9-dashboard .tp9-hero-value,
+            #tp9-dashboard .tp9-hero-idle .tp9-hero-value {
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 600;
+                font-style: normal;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .tp9-hero-sub {
+                margin-top: 2px;
+                color: var(--tg-muted);
+                font-size: 12px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .tp9-hero-sub:empty {
+                display: none;
+            }
+            #tp9-dashboard .tp9-hero-meta,
+            #tp9-dashboard .tp9-hero-live .tp9-hero-meta,
+            #tp9-dashboard .tp9-hero-direct .tp9-hero-meta {
+                flex: none;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: var(--tg-text);
+                font-size: 12px;
+                font-weight: 600;
+                font-variant-numeric: tabular-nums;
+            }
+
+            /* Modes */
+            #tp9-dashboard .tp9-block {
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-mode-block {
+                flex: none;
+                padding: 8px 12px 0;
+            }
+            #tp9-dashboard .tp9-mode-switch {
+                height: 40px;
+                padding: 3px;
+                gap: 0;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-sunken);
+            }
+            #tp9-dashboard .tp9-mode-switch::before,
+            #tp9-dashboard .tp9-mode-switch.tp9-mode-adblock::before,
+            #tp9-dashboard .tp9-mode-switch.tp9-mode-off::before {
+                border-radius: 6px;
+                background: var(--tg-accent);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-mode-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 5px;
+                min-width: 0;
+                padding: 0;
+                color: var(--tg-muted);
+                font-size: 12.5px;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            #tp9-dashboard .tp9-mode-btn:hover:not(.tp9-mode-active) {
+                color: var(--tg-text);
+            }
+            #tp9-dashboard .tp9-mode-btn.tp9-mode-active {
+                color: #fff;
+            }
+
+            /* Interrupteurs */
+            #tp9-dashboard .tp9-toggle-row {
+                min-height: 36px;
+                margin: 0;
+                padding: 0 2px;
+                gap: 10px;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-toggle-row:hover {
+                background: none;
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-toggle-label {
+                min-width: 0;
+                gap: 0;
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 400;
+            }
+            #tp9-dashboard .tp9-proxy-ads-row {
+                margin-top: 2px;
+                min-height: 38px;
+            }
+            #tp9-dashboard .tp9-switch {
+                flex: none;
+                width: 34px;
+                height: 20px;
+            }
+            #tp9-dashboard .tp9-switch-track {
+                border: 0;
+                border-radius: 10px;
+                background: var(--tg-off);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-switch-track::before {
+                top: 2px;
+                left: 2px;
+                width: 16px;
+                height: 16px;
+                background: #fff;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-switch input:checked + .tp9-switch-track {
+                background: var(--tg-accent);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-switch input:checked + .tp9-switch-track::before {
+                transform: translateX(14px);
+            }
+
+            /* Bloc Adblock */
+            #tp9-dashboard .tp9-sans-proxy-card,
+            #tp9-dashboard .tp9-mode-block .tp9-sans-proxy-card {
+                margin: 8px -12px 0;
+                padding: 12px 12px 12px;
+                border: 0;
+                border-top: 1px solid var(--tg-line);
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-sans-proxy-title {
+                display: none;
+            }
+            #tp9-dashboard .tp9-ab-live .tp9-sans-proxy-title {
+                display: block;
+                margin: 0 0 8px;
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-ab-stats {
+                gap: 6px;
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-ab-stat {
+                padding: 9px 4px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-surface);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-ab-value {
+                color: var(--tg-text);
+                font-size: 17px;
+                font-weight: 700;
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+            }
+            #tp9-dashboard .tp9-ab-label,
+            #tp9-dashboard .tp9-ab-sub {
+                color: var(--tg-muted);
+                font-size: 11.5px;
+                text-transform: none;
+                letter-spacing: 0;
+            }
+            #tp9-dashboard .tp9-ab-ratio {
+                margin: 8px 0 0;
+                padding: 10px 12px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-surface);
+            }
+            #tp9-dashboard .tp9-ab-ratio-text {
+                color: var(--tg-text);
+                font-size: 12.5px;
+            }
+            #tp9-dashboard .tp9-ab-ratio-text b {
+                color: var(--tg-text);
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-ab-ratio-pct {
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-ab-ratio-medal {
+                display: none;
+            }
+            #tp9-dashboard .tp9-ab-ratio-bar {
+                height: 5px;
+                margin-top: 8px;
+                border-radius: 3px;
+                background: var(--tg-sunken);
+            }
+            #tp9-dashboard .tp9-ab-ratio-fill,
+            #tp9-dashboard .tp9-ab-ratio-high .tp9-ab-ratio-fill {
+                border-radius: 3px;
+                background: var(--tg-accent);
+            }
+            #tp9-dashboard .tp9-ab-ratio-high .tp9-ab-ratio-pct {
+                color: #ffb020;
+            }
+            #tp9-dashboard .tp9-ab-ratio-note {
+                margin-top: 6px;
+                color: var(--tg-muted);
+                font-size: 12px;
+            }
+            #tp9-dashboard .tp9-sans-proxy-notes {
+                margin: 8px 0 0;
+                padding: 0 2px;
+                gap: 3px;
+                border: 0;
+            }
+            #tp9-dashboard .tp9-sans-proxy-note {
+                color: var(--tg-muted);
+                font-size: 12px;
+            }
+
+            /* Mode désactivé */
+            #tp9-dashboard .tp9-off-card {
+                margin: 12px -12px 0;
+                padding: 16px 24px 20px;
+                border: 0;
+                border-top: 1px solid var(--tg-line);
+                border-radius: 0;
+                background: none;
+                text-align: center;
+            }
+            #tp9-dashboard .tp9-off-title {
+                margin: 0 0 8px;
+                color: var(--tg-text);
+                font-size: 14px;
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-off-text {
+                color: var(--tg-muted);
+                font-size: 12.5px;
+                line-height: 1.5;
+            }
+
+            /* Proxys */
+            #tp9-dashboard .tp9-proxy-block {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+                margin-top: 4px;
+                border-top: 1px solid var(--tg-line);
+            }
+            .tp9-proxy-head {
+                flex: none;
+                height: 38px;
+                padding: 0 8px 0 14px;
+                display: flex;
+                align-items: center;
+                gap: 2px;
+            }
+            .tp9-proxy-heading {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                align-items: baseline;
+                gap: 6px;
+                white-space: nowrap;
+            }
+            .tp9-proxy-heading-name {
+                font-size: 13px;
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-proxy-count {
+                margin: 0;
+                padding: 0;
+                border: 0;
+                background: none;
+                color: var(--tg-muted);
+                font-size: 12px;
+                font-weight: 400;
+                font-variant-numeric: tabular-nums;
+                letter-spacing: 0;
+            }
+            #tp9-dashboard .tp9-proxy-head .tp9-icon-btn {
+                width: 28px;
+                height: 28px;
+            }
+            #tp9-dashboard .tp9-proxy-search {
+                display: none;
+                flex: 1;
+                min-width: 0;
+                width: auto;
+                height: 28px;
+                margin: 0 2px 0 -4px;
+                padding: 0 8px;
+                border: 1px solid var(--tg-off);
+                border-radius: 6px;
+                outline: none;
+                background: var(--tg-sunken);
+                box-shadow: none;
+                color: var(--tg-text);
+                font-family: inherit;
+                font-size: 12.5px;
+            }
+            #tp9-dashboard .tp9-proxy-search:focus {
+                border-color: var(--tg-accent);
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-proxy-search::placeholder {
+                color: var(--tg-muted);
+            }
+            .tp9-proxy-head.tp9-searching .tp9-proxy-heading {
+                display: none;
+            }
+            #tp9-dashboard .tp9-proxy-head.tp9-searching .tp9-proxy-search {
+                display: block;
+            }
+            #tp9-dashboard .tp9-proxy-warning {
+                flex: none;
+                margin: 0 12px 6px;
+                padding: 6px 10px;
+                border: 0;
+                border-radius: 6px;
+                background: #3a2a12;
+                box-shadow: none;
+                color: #ffd28a;
+                font-size: 12px;
+            }
+            #tp9-dashboard .tp9-proxy-warning-icon {
+                display: none;
+            }
+            .tp9-proxy-scroll {
+                flex: 1;
+                min-height: 60px;
+                padding: 0 12px;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: var(--tg-off) transparent;
+            }
+            #tp9-dashboard .tp9-group {
+                margin: 0;
+                border: 0;
+                background: none;
+            }
+            #tp9-dashboard .tp9-group-head {
+                height: 30px;
+                margin: 0;
+                padding: 0 2px;
+                gap: 6px;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-group-head:hover {
+                background: none;
+            }
+            #tp9-dashboard .tp9-group-caret {
+                flex: none;
+                width: 13px;
+                height: 13px;
+                display: flex;
+                color: var(--tg-muted);
+                font-size: 0;
+            }
+            #tp9-dashboard .tp9-group-name {
+                color: var(--tg-text);
+                font-size: 12.5px;
+                font-weight: 500;
+                letter-spacing: 0;
+                text-transform: none;
+            }
+            #tp9-dashboard .tp9-group-count {
+                height: 22px;
+                padding: 0 7px;
+                border: 0;
+                border-radius: 11px;
+                background: var(--tg-raised);
+                box-shadow: none;
+                color: var(--tg-muted);
+                font-size: 11.5px;
+                font-weight: 400;
+            }
+            #tp9-dashboard .tp9-group-count:hover {
+                background: var(--tg-button);
+                color: var(--tg-text);
+            }
+            #tp9-dashboard .tp9-group-body {
+                margin: 0;
+                padding: 0;
+                border: 0;
+            }
+            #tp9-dashboard .tp9-proxy {
+                position: relative;
+                min-height: 32px;
+                margin: 0;
+                padding: 0 2px 0 21px;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-proxy:hover {
+                background: none;
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-proxy-disabled {
+                opacity: .6;
+            }
+            #tp9-dashboard .tp9-proxy-main {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                width: 100%;
+                min-height: 32px;
+                padding: 0;
+                cursor: pointer;
+            }
+            #tp9-dashboard .tp9-enabled {
+                flex: none;
+                width: 14px;
+                height: 14px;
+                margin: 0;
+                accent-color: var(--tg-accent);
+                cursor: pointer;
+            }
+            .tp9-proxy-dot {
+                flex: none;
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                background: #7a7a85;
+            }
+            .tp9-proxy-ok .tp9-proxy-dot {
+                background: #3bd671;
+            }
+            .tp9-proxy-error .tp9-proxy-dot {
+                background: #ff6b6b;
+            }
+            #tp9-dashboard .tp9-proxy-quarantined .tp9-proxy-dot {
+                background: #ffb020;
+            }
+            #tp9-dashboard .tp9-proxy-info {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            #tp9-dashboard .tp9-proxy-name {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                margin: 0;
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 400;
+            }
+            .tp9-proxy-name-text {
+                min-width: 0;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #tp9-dashboard .tp9-custom {
+                flex: none;
+                margin: 0;
+                padding: 0 4px;
+                border: 0;
+                border-radius: 4px;
+                background: var(--tg-raised);
+                color: var(--tg-muted);
+                font-size: 10.5px;
+                font-weight: 600;
+            }
+            #tp9-dashboard .tp9-status,
+            #tp9-dashboard .tp9-status-ok,
+            #tp9-dashboard .tp9-status-error,
+            #tp9-dashboard .tp9-status-never,
+            #tp9-dashboard .tp9-status-quarantine {
+                flex: none;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+                color: var(--tg-muted);
+                font-size: 12px;
+                font-weight: 400;
+                font-variant-numeric: tabular-nums;
+                white-space: nowrap;
+            }
+            #tp9-dashboard .tp9-proxy-current .tp9-status {
+                color: #bf94ff;
+            }
+            #tp9-dashboard .tp9-proxy-current .tp9-status::before {
+                content: attr(data-current);
+            }
+            #tp9-dashboard .tp9-move {
+                position: absolute;
+                top: 3px;
+                right: 0;
+                display: none;
+                gap: 2px;
+                margin: 0;
+                padding-left: 6px;
+                background: var(--tg-bg);
+            }
+            #tp9-dashboard .tp9-proxy:hover .tp9-move,
+            #tp9-dashboard .tp9-proxy:focus-within .tp9-move {
+                display: flex;
+            }
+            #tp9-dashboard .tp9-move button {
+                width: 26px;
+                height: 26px;
+                min-width: 0;
+                margin: 0;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 0;
+                border-radius: 6px;
+                background: var(--tg-raised);
+                box-shadow: none;
+                color: var(--tg-text);
+                transform: none;
+            }
+            #tp9-dashboard .tp9-move button:hover {
+                background: var(--tg-button);
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-move button:disabled {
+                opacity: .4;
+            }
+            #tp9-dashboard .tp9-empty {
+                padding: 16px 0;
+                color: var(--tg-muted);
+                font-size: 12.5px;
+                text-align: center;
+            }
+
+            /* Boutons du bas */
+            #tp9-dashboard .tp9-main-actions {
+                flex: none;
+                margin: 0;
+                padding: 8px 12px;
+                border-top: 1px solid var(--tg-line);
+            }
+            #tp9-dashboard .tp9-actions button {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 7px;
+                height: 36px;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-button);
+                box-shadow: none;
+                color: var(--tg-text);
+                font-family: inherit;
+                font-size: 13px;
+                font-weight: 600;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-actions button:hover {
+                background: #3a3a42;
+                box-shadow: none;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-actions button:active {
+                background: var(--tg-raised);
+                transform: none;
+            }
+            #tp9-dashboard .tp9-test {
+                width: 100%;
+                border: 0 !important;
+                background: var(--tg-button) !important;
+                box-shadow: none;
+                color: var(--tg-text);
+            }
+            #tp9-dashboard .tp9-actions button:disabled {
+                opacity: 1;
+                color: var(--tg-muted);
+                cursor: default;
+            }
+            #tp9-dashboard .tp9-test:hover {
+                background: #3a3a42 !important;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-btn-icon {
+                display: inline-flex;
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-spin {
+                width: 13px;
+                height: 13px;
+                border: 2px solid rgba(255,255,255,.3);
+                border-top-color: #fff;
+                border-radius: 50%;
+                font-size: 0;
+            }
+
+            /* Ajout d'un proxy */
+            /* Le formulaire couvre le menu sous l'en-tête : dans la
+               liste, il n'aurait que quelques lignes de hauteur. */
+            #tp9-dashboard .tp9-add-container {
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-add-container:not(:empty) {
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 48px;
+                bottom: 0;
+                z-index: 3;
+                padding: 12px;
+                overflow-y: auto;
+                background: var(--tg-bg);
+                scrollbar-width: thin;
+                scrollbar-color: var(--tg-off) transparent;
+            }
+            #tp9-dashboard .tp9-add-form {
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 0;
+                background: none;
+                box-shadow: none;
+            }
+            #tp9-dashboard .tp9-add-form-header {
+                margin: 0 0 8px;
+            }
+            #tp9-dashboard .tp9-add-form-title {
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 600;
+                letter-spacing: 0;
+                text-transform: none;
+            }
+            #tp9-dashboard .tp9-add-field label {
+                color: var(--tg-muted);
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0;
+                text-transform: none;
+            }
+            #tp9-dashboard .tp9-add-field input {
+                border: 1px solid var(--tg-off);
+                border-radius: 6px;
+                background: var(--tg-sunken);
+                box-shadow: none;
+                color: var(--tg-text);
+                font-family: inherit;
+            }
+            #tp9-dashboard .tp9-add-form-actions button {
+                height: 30px;
+                padding: 0 10px;
+                border: 0;
+                border-radius: 6px;
+                background: var(--tg-button);
+                box-shadow: none;
+                color: var(--tg-text);
+                font-family: inherit;
+                font-weight: 600;
+                transform: none;
+            }
+            #tp9-dashboard .tp9-add-form-actions .tp9-confirm-add {
+                background: var(--tg-accent);
+                color: #fff;
+            }
+
+            /* Réglages */
+            #tp9-dashboard .tp9-screen-settings .tp9-block {
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-section-title,
+            #tp9-dashboard .tp9-block .tp9-section-title {
+                display: block;
+                margin: 14px 0 2px;
+                padding: 0;
+                color: var(--tg-muted);
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0;
+                text-transform: none;
+            }
+            #tp9-dashboard .tp9-settings-list {
+                display: block;
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-screen-settings .tp9-toggle-row,
+            #tp9-dashboard .tp9-select-field,
+            #tp9-dashboard .tp9-lang-row {
+                min-height: 34px;
+            }
+            #tp9-dashboard .tp9-toggle-row.tp9-toggle-locked .tp9-toggle-label::after {
+                background: #2a2140;
+                color: #cdb4ff;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            #tp9-dashboard .tp9-select-grid {
+                display: block;
+                margin: 0;
+            }
+            #tp9-dashboard .tp9-select-field {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                min-height: 36px;
+                margin: 0;
+                padding: 0 2px;
+            }
+            #tp9-dashboard .tp9-select-label {
+                margin: 0;
+                color: var(--tg-text);
+                font-size: 13px;
+                font-weight: 400;
+                letter-spacing: 0;
+                text-transform: none;
+            }
+            #tp9-dashboard .tp9-select-field select {
+                flex: none;
+                width: 92px;
+                height: 28px;
+                padding: 0 6px;
+                border: 0;
+                border-radius: 6px;
+                background: var(--tg-raised);
+                box-shadow: none;
+                color: var(--tg-text);
+                color-scheme: dark;
+                font-family: inherit;
+                font-size: 12.5px;
+            }
+            .tp9-lang-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                min-height: 36px;
+                padding: 0 2px;
+                font-size: 13px;
+            }
+            .tp9-lang-seg {
+                flex: none;
+                display: flex;
+                gap: 2px;
+                padding: 2px;
+                border-radius: 6px;
+                background: var(--tg-sunken);
+            }
+            #tp9-dashboard .tp9-lang-btn {
+                width: 40px;
+                height: 24px;
+                margin: 0;
+                padding: 0;
+                border: 0;
+                border-radius: 4px;
+                background: transparent;
+                color: var(--tg-muted);
+                font-family: inherit;
+                font-size: 12px;
+                font-weight: 600;
+                opacity: 1;
+                cursor: pointer;
+            }
+            #tp9-dashboard .tp9-lang-btn.tp9-lang-on {
+                background: var(--tg-accent);
+                color: #fff;
+            }
+            #tp9-dashboard .tp9-data-actions {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 6px;
+                margin: 8px 0 0;
+                padding: 0;
+            }
+            #tp9-dashboard .tp9-data-actions button {
+                height: 34px;
+                font-size: 12.5px;
+            }
+            #tp9-dashboard .tp9-data-actions .tp9-reset {
+                color: #ff8a8a;
+            }
+            #tp9-dashboard .tp9-stats-ask {
+                margin: 4px 0;
+                padding: 10px;
+                border: 0;
+                border-radius: 8px;
+                background: var(--tg-surface);
+            }
+
+            /* Nouveautés */
+            #tp9-dashboard .tp9-changelog-list {
+                flex: 1;
+                min-height: 0;
+                padding: 4px 14px 12px;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: var(--tg-off) transparent;
+            }
+            .tp9-changelog-version {
+                margin-top: 12px;
+            }
+            .tp9-changelog-head {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            .tp9-changelog-tag {
+                padding: 1px 7px;
+                border-radius: 10px;
+                background: #2a2140;
+                color: #cdb4ff;
+                font-size: 11.5px;
+                font-weight: 400;
+            }
+            .tp9-changelog-item {
+                display: flex;
+                gap: 8px;
+                margin-top: 6px;
+                color: #d3d3da;
+                font-size: 12.5px;
+                line-height: 1.45;
+            }
+            .tp9-changelog-item::before {
+                content: '';
+                flex: none;
+                width: 4px;
+                height: 4px;
+                margin-top: 7px;
+                border-radius: 50%;
+                background: var(--tg-accent);
+            }
+            #tp9-dashboard .tp9-changelog-actions {
+                flex: none;
+                margin: 0;
+                padding: 8px 12px;
+                border-top: 1px solid var(--tg-line);
+            }
+            #tp9-dashboard .tp9-changelog-actions button {
+                width: 100%;
+                background: var(--tg-accent);
+                color: #fff;
+            }
+            #tp9-dashboard .tp9-changelog-actions button:hover {
+                background: #a970ff;
             }
 
         `;
@@ -33310,7 +34655,7 @@ dashboardButton.style.visibility =
         button.disabled = true;
 
         button.innerHTML =
-            '<span class="tp9-btn-icon tp9-spin">⏳</span> ' +
+            '<span class="tp9-btn-icon tp9-spin"></span> ' +
             escapeHTML(busyLabel);
 
     }
@@ -33423,7 +34768,7 @@ dashboardButton.style.visibility =
 
                 updateProxyStatus(
                     proxy.id,
-                    tt('🟡 test...', '🟡 testing...')
+                    tt('Test…', 'Testing…')
                 );
 
             }
@@ -33459,9 +34804,8 @@ dashboardButton.style.visibility =
                 updateProxyStatus(
                     proxy.id,
                     result.ok
-                        ? '🟢 OK · ' + result.latency + ' ms'
-                        : '🔴 ' + result.status +
-                            (result.latency ? ' · ' + result.latency + ' ms' : '')
+                        ? result.latency + ' ms'
+                        : result.status
                 );
 
                 setTestProgress(i + 1, list.length);
@@ -38157,8 +39501,8 @@ dashboardButton.style.visibility =
         var live = !!(spAd.active && spAd.channel && spAd.channel === getTestChannel());
         card.classList.toggle('tp9-ab-live', live);
         card.querySelector('.tp9-sans-proxy-title').textContent = live
-            ? tt('🛡️ Pub en cours de blocage…', '🛡️ Blocking an ad…')
-            : tt('🛡️ Bloqueur de pub actif', '🛡️ Ad blocker active');
+            ? tt('Pub en cours de blocage…', 'Blocking an ad…')
+            : tt('Bloqueur de pub actif', 'Ad blocker active');
         card.querySelector('.tp9-ab-count').textContent =
             current ? (spStreamStats.pubs || 0) : 0;
         card.querySelector('.tp9-ab-count-sub').textContent =
@@ -38192,7 +39536,7 @@ dashboardButton.style.visibility =
                 watchMs < 1000
                     ? ''
                     : medal
-                        ? (medal.icon ? medal.icon + ' ' : '') + medalLabel(medal) + tt(' sur cette chaîne', ' on this channel')
+                        ? medalLabel(medal) + tt(' sur cette chaîne', ' on this channel')
                         : tt('Médaille dans ', 'Medal in ') +
                             Math.max(1, Math.ceil((AD_MEDAL_MIN_WATCH_MS - watchMs) / 60000)) + ' min';
             ratio.querySelector('.tp9-ab-ratio-pct').textContent = formatAdShare(pct);
