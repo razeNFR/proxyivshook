@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.10
+// @version      1.10.1
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,8 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.10.1
+// - Le menu s'ouvre au-dessus du bouclier, comme les menus de Twitch || The menu opens above the shield, like Twitch menus
 // 1.10
 // - Nouveau menu : plus clair, mieux rangé, avec des icônes dessinées || New menu: clearer, better organised, with drawn icons
 // - Écran Nouveautés pour voir ce qui change avant de mettre à jour || What's new screen to see the changes before updating
@@ -39,7 +41,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.10';
+    var CURRENT_VERSION = '1.10.1';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -19551,6 +19553,38 @@ dashboardButton.style.visibility =
 
     }
 
+    // Comme les menus de Twitch : au-dessus du bouton, bord droit calé
+    // sur le sien. Sans la place au-dessus, le menu passe dessous, et
+    // dans tous les cas il reste dans la fenêtre.
+    function placeDashboardOnButton() {
+
+        var gap = 8;
+        var box = dashboardButton.getBoundingClientRect();
+        var width = dashboard.offsetWidth || 340;
+        var height = dashboard.offsetHeight || 520;
+        var top = box.top - height - gap;
+
+        if (
+            top < gap &&
+            box.bottom + gap + height <= window.innerHeight - gap
+        ) {
+            top = box.bottom + gap;
+        }
+
+        dashboard.style.position = 'fixed';
+
+        dashboard.style.left = Math.max(
+            gap,
+            Math.min(box.right - width, window.innerWidth - width - gap)
+        ) + 'px';
+
+        dashboard.style.top = Math.max(
+            gap,
+            Math.min(top, window.innerHeight - height - gap)
+        ) + 'px';
+
+    }
+
     function positionPlayerUI() {
 
         if (!dashboardButton) {
@@ -19697,24 +19731,7 @@ dashboardButton.style.visibility =
 
             if (dashboardVisible) {
 
-                dashboard.style.position =
-                    'fixed';
-
-
-                dashboard.style.left =
-                    (
-                        followRect.left -
-                        392
-                    ) + 'px';
-
-
-                dashboard.style.top =
-                    Math.max(8,
-                        followRect.bottom -
-                        // Calé sur sa vraie hauteur (plus courte en mode
-                        // Désactivé) pour rester sur le bouton.
-                        (dashboard.offsetHeight || 520)
-                    ) + 'px';
+                placeDashboardOnButton();
 
             }
 
@@ -19901,6 +19918,7 @@ dashboardButton.style.visibility =
         var scroller = dashboard.querySelector('.tp9-screen-' + name);
         if (scroller) scroller.scrollTop = 0;
         hideTooltip();
+        positionPlayerUI();
     }
 
     function showDashboard() {
@@ -22300,7 +22318,7 @@ dashboardButton.style.visibility =
 
                 from {
                     opacity: 0;
-                    transform: translateY(-6px) scale(.985);
+                    transform: translateY(6px) scale(.985);
                 }
 
                 to {
@@ -25018,11 +25036,11 @@ dashboardButton.style.visibility =
                 border: 0 !important;
                 background: var(--tg-button) !important;
                 box-shadow: none;
-                color: var(--tg-text);
+                color: var(--tg-text) !important;
             }
             #tp9-dashboard .tp9-actions button:disabled {
                 opacity: 1;
-                color: var(--tg-muted);
+                color: var(--tg-muted) !important;
                 cursor: default;
             }
             #tp9-dashboard .tp9-test:hover {
