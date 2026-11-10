@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11
+// @version      1.11.1
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,11 +13,13 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.1
+// - Fiabilité & Correctifs globaux : protection complète des flux verticaux 9:16 et des clips contre le filtre SDA, persistance exacte du mode Muet et des volumes fins (0.10 %), recherche étendue à toutes les options du menu, auto-complétion Tab/@pseudo préservée, émotes de chaîne appliquées aux premiers messages, et fiabilisation des points de chaîne, Drops, Anti-Raid et aperçus vidéo || Global reliability & bug fixes: full protection of 9:16 vertical streams and clips from SDA filtering, exact persistence of Mute mode and fine volume steps (0.10%), menu search extended to all controls, preserved Tab/@username autocomplete, channel emotes applied to initial messages, and hardened Channel Points, Drops, Anti-Raid, and video previews
 // 1.11
 // - Nouvelle interface Twitch Guard : menu unifié par onglets avec barre de recherche instantanée, icônes dédiées et sélecteur de langue FR / EN complet || New Twitch Guard interface: unified tabbed menu with instant search bar, dedicated icons, and full FR / EN language selector
 // - Intégration complète de BetterTTV, 7TV & FrankerFaceZ : émotes globales et de chaîne (animées, statiques et Zero-Width), menu d'émotes intégré, auto-complétion (Tab et :code), aperçu au survol, rendu des émotes dans la zone de saisie et mode émotes/émojis géants 100 % || Full BetterTTV, 7TV & FrankerFaceZ integration: global and channel emotes (animated, static, and Zero-Width), built-in emote picker, Tab & :code autocomplete, hover preview, live emote rendering in chat input, and 100% giant emotes/emojis mode
 // - Améliorations du Tchat & Filtres : mode tchat anonyme, tchat à gauche du lecteur, lignes alternées (Split Chat), couleurs de pseudos lisibles, conservation des messages supprimés, pause au survol, historique avec ↑, double-clic pour répondre, surlignage par rôles/mots-clés et liste noire || Chat & Filters enhancements: anonymous chat mode, chat on left of player, alternating lines (Split Chat), readable username colors, keep deleted messages, pause on hover, ↑ message history, double-click to reply, role/keyword highlights, and keyword blacklist
-// - Contrôles avancés du Lecteur & Son : volume à la molette sur le lecteur (avec réglage précis par paliers de 0.10 % entre 0 % et 1 %), clic sur la vidéo pour mettre en pause/reprendre, mémorisation du volume par streamer, boost audio jusqu'à 300 %, boutons Capture PNG & Picture-in-Picture, et barre de progression VOD même sur les VOD non publiées || Advanced Player & Audio controls: mouse wheel volume on player (with fine 0.10% steps between 0% and 1%), click video to pause/resume, per-streamer volume memory, audio boost up to 300%, PNG Screenshot & Picture-in-Picture buttons, and VOD progress bar recovery even on unpublished VODs
+// - Contrôles avancés du Lecteur & Son : volume à la molette sur le lecteur (avec réglage précis par paliers de 0.10 % entre 0 % et 1 %), clic sur la vidéo pour mettre en pause/reprendre, mémorisation du volume par streamer, boost audio jusqu'à 200 %, boutons Capture PNG & Picture-in-Picture, et barre de progression VOD même sur les VOD non publiées || Advanced Player & Audio controls: mouse wheel volume on player (with fine 0.10% steps between 0% and 1%), click video to pause/resume, per-streamer volume memory, audio boost up to 200%, PNG Screenshot & Picture-in-Picture buttons, and VOD progress bar recovery even on unpublished VODs
 // - Automatisation & Navigation : récupération automatique des coffres de points de chaîne et des Drops Twitch, anti-raid automatique, fermeture automatique des bannières (Train de la Hype, sondages, prédictions, classements), aperçu vidéo en direct sans pub au survol de la barre latérale et dépliage automatique des chaînes suivies || Automation & Navigation: auto-claim channel points chests and Twitch Drops, auto anti-raid, auto-close chat banners (Hype Train, polls, predictions, leaderboards), ad-free live video preview on sidebar hover, and auto-expand followed channels
 // - Blocage publicitaire amélioré : contournement automatique des erreurs 403 des proxys sur les flux protégés/2K (bascule transparente en Relais Adblock VAFT), blocage des bannières publicitaires à côté du lecteur (Stream Display Ads) et reprise instantanée du direct sans décalage après une pub || Enhanced ad blocking: automatic bypass for proxy 403 errors on protected/2K streams (seamless fallback to VAFT Adblock Relay), side-by-side player ad banner blocking (Stream Display Ads), and instant lag-free live recovery after ads
 // 1.10.1
@@ -48,7 +50,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11';
+    var CURRENT_VERSION = '1.11.1';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -678,6 +680,10 @@
         'Clique automatiquement sur « Afficher plus » dans la barre latérale gauche.': 'Automatically clicks "Show More" in the left sidebar.',
         'Déplier toute la liste des chaînes suivies': 'Expand full followed channels list',
         'Ouvre automatiquement « Afficher plus » à gauche': 'Automatically expands "Show More" on the left',
+        'Cacher les chaînes hors ligne': 'Hide offline channels',
+        'Masque les chaînes « Déconnecté(e) » dans la liste des chaînes suivies à gauche.': 'Hides "Offline" channels in the followed channels list on the left.',
+        'Cacher les chaînes suivies hors ligne': 'Hide offline followed channels',
+        'N\'affiche que les chaînes actuellement en direct à gauche': 'Only shows channels currently live on the left',
         'Cacher chaînes recommandées': 'Hide recommended channels',
         'Masque les sections Recommandé et les extensions vidéo.': 'Hides Recommended sections and video extensions.',
         'Cacher chaînes recommandées & extensions': 'Hide recommended channels & extensions',
@@ -859,6 +865,7 @@
         closeBanners: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><polyline points="9 15 12 12 15 15"/>',
         sidebarPreview: '<rect x="2" y="4" width="20" height="16" rx="2"/><line x1="8" y1="4" x2="8" y2="20"/><polygon points="13 9 18 12 13 15 13 9"/>',
         expandSidebar: '<polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/>',
+        hideOffline: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="18" y1="8" x2="23" y2="13"/><line x1="23" y1="8" x2="18" y2="13"/>',
         hideRecom: '<circle cx="12" cy="12" r="9"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/><line x1="2" y1="2" x2="22" y2="22"/>',
         hideTurbo: '<polyline points="12.41 6.75 13 2 10.57 4.92"/><polyline points="18.57 12.91 21 10 15.66 10"/><polyline points="8 8 3 14 12 14 11 22 16 16"/><line x1="1" y1="1" x2="23" y2="23"/>',
         hideSubs: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/><line x1="2" y1="2" x2="22" y2="22"/>',
@@ -1258,6 +1265,7 @@
             closeBanners: false,
             sidebarPreview: true,
             autoExpandSidebar: false,
+            hideOfflineChannels: false,
             hideRecom: false,
             channelVolumes: {},
             lastGlobalVolume: null,
@@ -1431,7 +1439,7 @@
             'hoverPause', 'upArrowHistory', 'dblClickReply', 'hideBadges',
             'highlightKeywords', 'blacklistKeywords', 'autoPoints', 'autoDrops',
             'antiRaid', 'closeBanners', 'sidebarPreview', 'autoExpandSidebar',
-            'hideRecom'
+            'hideOfflineChannels', 'hideRecom'
         ].forEach(
             function (key) {
                 if (typeof parsed[key] === 'boolean') {
@@ -1444,19 +1452,19 @@
             Object.keys(parsed.channelVolumes).forEach(function (ch) {
                 var val = Number(parsed.channelVolumes[ch]);
                 if (Number.isFinite(val) && val >= 0 && val <= 2) {
-                    config.channelVolumes[ch.toLowerCase()] = Math.round(val * 100) / 100;
+                    config.channelVolumes[ch.toLowerCase()] = Math.round(val * 1000) / 1000;
                 }
             });
         }
 
         if (typeof parsed.lastGlobalVolume === 'number' && Number.isFinite(parsed.lastGlobalVolume) && parsed.lastGlobalVolume >= 0 && parsed.lastGlobalVolume <= 2) {
-            config.lastGlobalVolume = Math.round(parsed.lastGlobalVolume * 100) / 100;
+            config.lastGlobalVolume = Math.round(parsed.lastGlobalVolume * 1000) / 1000;
         }
 
         ['frequentEmotes', 'favoriteEmotes', 'highlightWords', 'blacklistWords'].forEach(function (arrKey) {
             if (Array.isArray(parsed[arrKey])) {
                 config[arrKey] = parsed[arrKey].filter(function (x) {
-                    return x && (typeof x === 'string' || typeof x === 'object');
+                    return typeof x === 'string' && x.trim().length > 0;
                 }).slice(0, 200);
             }
         });
@@ -1739,6 +1747,8 @@
                     pageConfig.proxiesEnabled !== false,
                 proxyAdsOnly:
                     !!pageConfig.proxyAdsOnly,
+                scriptOff:
+                    !!pageConfig.scriptOff,
 
                 hideTwitchSubButtons:
                     !!pageConfig.hideTwitchSubButtons,
@@ -1791,6 +1801,7 @@
                 closeBanners: !!pageConfig.closeBanners,
                 sidebarPreview: pageConfig.sidebarPreview !== false,
                 autoExpandSidebar: !!pageConfig.autoExpandSidebar,
+                hideOfflineChannels: !!pageConfig.hideOfflineChannels,
                 hideRecom: !!pageConfig.hideRecom,
                 channelVolumes: pageConfig.channelVolumes || {},
                 lastGlobalVolume: pageConfig.lastGlobalVolume,
@@ -1859,9 +1870,27 @@
                     pageConfig =
                         buildConfigFromParsed(parsed);
 
+                    if (!pageConfig.audioBoost && typeof currentAudioBoostLevel === 'number' && currentAudioBoostLevel > 1) {
+                        currentAudioBoostLevel = 1;
+                    }
+
                     saveConfig(pageConfig);
 
                     broadcastConfig();
+
+                    if (!!pageConfig.scriptOff !== SCRIPT_OFF_AT_LOAD) {
+                        alert(tt('Configuration importée avec succès. La page va être rechargée.', 'Configuration imported. Reloading page.'));
+                        location.reload();
+                        return;
+                    }
+
+                    if (typeof applyLanguage === 'function') applyLanguage();
+                    if (typeof applyTwitchUIClasses === 'function') applyTwitchUIClasses();
+                    if (typeof scheduleTwitchUIScan === 'function') scheduleTwitchUIScan();
+                    if (typeof applyCustomPlayerState === 'function') applyCustomPlayerState();
+                    if (typeof audioNormRefresh === 'function') audioNormRefresh();
+                    if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
+                    if (typeof updateBackupUI === 'function') updateBackupUI();
 
                     renderDashboard();
 
@@ -1889,6 +1918,11 @@
     // (Worker, fetch) se posent maintenant ou jamais, un changement
     // de mode recharge donc la page.
     var SCRIPT_OFF_AT_LOAD = pageConfig.scriptOff === true;
+    try {
+        if (document.documentElement) {
+            document.documentElement.setAttribute('data-tp9-off', SCRIPT_OFF_AT_LOAD ? '1' : '0');
+        }
+    } catch (e) {}
 
     function scriptIsOff() {
         return SCRIPT_OFF_AT_LOAD;
@@ -2007,6 +2041,27 @@
             typeof stats.totals.adPubsGlobal !== 'number'
         ) {
             stats.totals.adPubsGlobal = stats.totals.adsBlockedGlobal || 0;
+        }
+
+        if (
+            stats.totals &&
+            typeof stats.totals === 'object' &&
+            !stats.totals.channelPointsClaimed &&
+            Array.isArray(stats.logs)
+        ) {
+            var recoveredPts = 0;
+            var recoveredChests = 0;
+            stats.logs.forEach(function (entry) {
+                if (entry && typeof entry.msg === 'string' && entry.msg.indexOf('Coffre de points de chaîne') !== -1) {
+                    var m = entry.msg.match(/\+(\d+)\s*pts/i);
+                    recoveredPts += m ? parseInt(m[1], 10) : 50;
+                    recoveredChests += 1;
+                }
+            });
+            if (recoveredPts > 0) {
+                stats.totals.channelPointsClaimed = recoveredPts;
+                stats.totals.channelPointsChests = recoveredChests;
+            }
         }
 
         if (stats.streamers && typeof stats.streamers === 'object') {
@@ -2628,32 +2683,38 @@
     // l'onglet qui a lui-même écrit) pour resynchroniser partout.
     window.addEventListener('storage', function (event) {
 
-        // « Logs détaillés » se coche dans l'onglet dashboard : les
-        // onglets qui lisent un stream doivent le savoir sans F5.
+        // « Logs détaillés » et les autres réglages se modifient d'un onglet à l'autre :
+        // on resynchronise la configuration complète sans F5.
         if (event.key === STORAGE_KEY) {
+            if (!event.newValue) return;
             try {
-                var savedConfig = JSON.parse(event.newValue || '{}');
+                var savedConfig = JSON.parse(event.newValue);
+                if (!savedConfig || typeof savedConfig !== 'object') return;
 
-                if (savedConfig && typeof savedConfig.detailedLogs === 'boolean') {
-                    pageConfig.detailedLogs = savedConfig.detailedLogs;
+                var prevLang = pageConfig.lang;
+                var prevNorm = pageConfig.audioNormalize;
+                var prevBoost = pageConfig.audioBoost;
+
+                pageConfig = buildConfigFromParsed(savedConfig);
+
+                if (!pageConfig.audioBoost && typeof currentAudioBoostLevel === 'number' && currentAudioBoostLevel > 1) {
+                    currentAudioBoostLevel = 1;
                 }
-
-                if (savedConfig && typeof savedConfig.tooltips === 'boolean') {
-                    pageConfig.tooltips = savedConfig.tooltips;
+                if (!pageConfig.tooltips && typeof hideTooltip === 'function') {
+                    hideTooltip();
                 }
-
-                if (
-                    savedConfig &&
-                    typeof savedConfig.audioNormalize === 'boolean' &&
-                    savedConfig.audioNormalize !== pageConfig.audioNormalize
-                ) {
-                    pageConfig.audioNormalize = savedConfig.audioNormalize;
+                if (pageConfig.audioNormalize !== prevNorm || pageConfig.audioBoost !== prevBoost) {
                     audioNormRefresh();
                 }
-
-                if (savedConfig && typeof savedConfig.lang === 'string' && savedConfig.lang !== pageConfig.lang) {
-                    pageConfig.lang = savedConfig.lang;
+                if (pageConfig.lang !== prevLang) {
                     applyLanguage();
+                }
+                if (typeof applyTwitchUIClasses === 'function') applyTwitchUIClasses();
+                if (typeof scheduleTwitchUIScan === 'function') scheduleTwitchUIScan();
+                if (typeof applyCustomPlayerState === 'function') applyCustomPlayerState();
+                if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
+                if (dashboard && dashboardVisible) {
+                    renderDashboard();
                 }
             } catch (e) {}
 
@@ -3477,10 +3538,49 @@
         scheduleStatsSave();
     }
 
+    function isChatAutocompleteOpen() {
+        try {
+            if (
+                typeof bttvAcEl !== 'undefined' &&
+                bttvAcEl &&
+                bttvAcEl.style.display === 'flex' &&
+                typeof bttvAcMatches !== 'undefined' &&
+                bttvAcMatches.length > 0
+            ) {
+                return true;
+            }
+            var trays = document.querySelectorAll(
+                '.chat-input-tray__open, [data-a-target="autocomplete-match-list"], ' +
+                '[data-test-selector="autocomplete-tray-contents"], .chat-input [role="listbox"]'
+            );
+            for (var i = 0; i < trays.length; i++) {
+                var tr = trays[i];
+                if (
+                    tr &&
+                    !tr.classList.contains('tp9-hidden-native-ac') &&
+                    tr.offsetParent !== null &&
+                    tr.getBoundingClientRect().height > 8
+                ) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function readChatInputRawText(input) {
+        if (!input) return '';
+        if (typeof input.value === 'string') return input.value.trim();
+        return (input.innerText || input.textContent || '').trim();
+    }
+
     function setupChatSendDetection() {
         document.addEventListener(
             'keydown',
             function (event) {
+                if (scriptIsOff() || pageConfig.statsEnabled === false) {
+                    return;
+                }
                 if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
                     return;
                 }
@@ -3491,7 +3591,11 @@
                     return;
                 }
 
-                var text = (input.innerText || input.textContent || '').trim();
+                if (isChatAutocompleteOpen()) {
+                    return;
+                }
+
+                var text = readChatInputRawText(input);
 
                 if (!text) {
                     return;
@@ -3505,6 +3609,9 @@
         document.addEventListener(
             'click',
             function (event) {
+                if (scriptIsOff() || pageConfig.statsEnabled === false) {
+                    return;
+                }
                 var button = closestElement(event.target, CHAT_SEND_BUTTON_SELECTOR);
 
                 if (!button) {
@@ -3513,10 +3620,7 @@
 
                 var input = document.querySelector(CHAT_INPUT_SELECTOR);
 
-                var text =
-                    input
-                        ? (input.innerText || input.textContent || '').trim()
-                        : '';
+                var text = readChatInputRawText(input);
 
                 if (!text) {
                     return;
@@ -3969,13 +4073,198 @@
         }
     }
 
+    function isPreviewOrAuxiliaryVideo(video) {
+        if (!video) return false;
+        try {
+            if (video.classList && video.classList.contains('tp9-sidebar-preview-video')) {
+                return true;
+            }
+            if (video.closest && video.closest('#tp9-sidebar-preview-card, #side-nav, [data-a-target="side-nav-bar"], .side-nav')) {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    var lastVerifiedStreamVideo = null;
+    var SDA_BADGE_TEXT_RE = /\b(?:Pub|Ad|Publicité|Advertisement)\s*[:·-]?\s*\d+:\d+\b/i;
+
+    function isClipOrTrailerContext(video) {
+        try {
+            var host = (location.hostname || '').toLowerCase();
+            var path = location.pathname || '';
+            if (host.indexOf('clips.twitch.tv') >= 0 || /\/clip\//i.test(path)) {
+                return true;
+            }
+            if (
+                video &&
+                video.closest &&
+                video.closest(
+                    '.channel-trailer, [data-a-target="channel-home-tab-trailer"], [data-test-selector*="clip" i]'
+                )
+            ) {
+                return true;
+            }
+            var src = video ? String(video.currentSrc || video.src || '') : '';
+            if (src && /clips\.twitchcdn\.net|clips-media-assets|production\.assets\.clips/i.test(src)) {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function playerRootHasAdSignal(playerRoot) {
+        if (!playerRoot) return false;
+        try {
+            if (
+                playerRoot.querySelector(
+                    '[data-a-target="video-ad-label"], [data-a-target="video-ad-countdown"], ' +
+                    '[aria-label="Publicité"], [aria-label="Ad"], [data-a-target^="sda-"], ' +
+                    '[data-test-selector="sad-overlay"], [data-test-selector*="stream-display-ad"], ' +
+                    '[data-test-selector*="ad-banner"], [class*="stream-display-ad"]'
+                )
+            ) {
+                return true;
+            }
+            var nodes = playerRoot.querySelectorAll('span, div, p, strong, b');
+            for (var i = 0; i < nodes.length; i++) {
+                var n = nodes[i];
+                if (!n || n.children.length > 5) continue;
+                var txt = (n.textContent || '').trim();
+                if (txt.length >= 4 && txt.length <= 32 && SDA_BADGE_TEXT_RE.test(txt)) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function isAdVideoElement(video) {
+        if (!video || video.nodeType !== 1) return false;
+        if (isOwnPlayerVideo(video) || isPreviewOrAuxiliaryVideo(video) || isMiniPlayerVideo(video)) {
+            return false;
+        }
+        if (isClipOrTrailerContext(video)) {
+            return false;
+        }
+        try {
+            if (video.classList && video.classList.contains('tp9-sda-hidden')) {
+                return true;
+            }
+            if (
+                video.closest &&
+                video.closest(
+                    '.tp9-sda-hidden,[data-a-target^="sda-"],[data-test-selector="sad-overlay"],' +
+                    '[data-test-selector*="stream-display-ad"],[data-test-selector*="ad-banner"],[class*="stream-display-ad"]'
+                )
+            ) {
+                return true;
+            }
+            var src = String(video.currentSrc || video.src || '');
+            // Les flux live et VOD de Twitch utilisent toujours MediaSource (blob:).
+            // Hors clips/bandes-annonces déjà exclus plus haut, une URL directe http(s) est une pub.
+            if (src && src.indexOf('blob:') !== 0 && src.indexOf('data:') !== 0) {
+                return true;
+            }
+            var playerRoot = video.closest
+                ? video.closest('.video-player__default-player, .video-player, [data-a-target="video-player"]')
+                : null;
+            var otherStreamVid = null;
+            if (playerRoot) {
+                var allVids = playerRoot.querySelectorAll('video');
+                for (var i = 0; i < allVids.length; i++) {
+                    var v = allVids[i];
+                    if (v === video || isOwnPlayerVideo(v) || isPreviewOrAuxiliaryVideo(v)) continue;
+                    otherStreamVid = v;
+                    if (v === lastVerifiedStreamVideo || v === dvrLiveVideo) break;
+                }
+            }
+            var hasCorroboratingAdSignal = Boolean(otherStreamVid) || playerRootHasAdSignal(playerRoot);
+
+            // Vidéo publicitaire au format vertical (9:16, ex. "Pub 0:06") :
+            // exige un signal publicitaire ou une seconde vidéo afin de ne jamais couper un vrai live vertical 9:16.
+            if (hasCorroboratingAdSignal && video.videoWidth > 0 && video.videoHeight > video.videoWidth * 1.05) {
+                return true;
+            }
+            // Sur une chaîne en direct, une vidéo à durée courte finie (<= 180 s) accompagnée d'un signal pub / 2e vidéo est un spot pub
+            if (
+                hasCorroboratingAdSignal &&
+                getTestChannel() &&
+                typeof video.duration === 'number' &&
+                isFinite(video.duration) &&
+                video.duration > 0 &&
+                video.duration <= 180
+            ) {
+                return true;
+            }
+            if (playerRoot && otherStreamVid) {
+                var branch = video;
+                while (
+                    branch.parentElement &&
+                    branch.parentElement !== playerRoot &&
+                    !branch.parentElement.contains(otherStreamVid)
+                ) {
+                    branch = branch.parentElement;
+                }
+                if (branch && !branch.contains(otherStreamVid)) {
+                    var branchTxt = (branch.textContent || '').trim();
+                    if (SDA_BADGE_TEXT_RE.test(branchTxt)) {
+                        return true;
+                    }
+                    var rootRect = playerRoot.getBoundingClientRect();
+                    var bRect = branch.getBoundingClientRect();
+                    if (
+                        rootRect.width > 300 &&
+                        bRect.width > 40 &&
+                        bRect.width < rootRect.width * 0.48 &&
+                        bRect.height > bRect.width * 1.05
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
     function findPlaybackVideo() {
+        var mainVideos = document.querySelectorAll(
+            '.persistent-player .video-player video, [data-a-target="video-player"] video, .video-player video'
+        );
+        var bestMain = null;
+        var bestScore = -9999;
+        for (var m = 0; m < mainVideos.length; m++) {
+            var mv = mainVideos[m];
+            if (isOwnPlayerVideo(mv) || isPreviewOrAuxiliaryVideo(mv) || isMiniPlayerVideo(mv)) {
+                continue;
+            }
+            if (isAdVideoElement(mv)) {
+                continue;
+            }
+            var score = 0;
+            var src = String(mv.currentSrc || mv.src || '');
+            if (src.indexOf('blob:') === 0) score += 40;
+            if (mv === lastVerifiedStreamVideo || mv === dvrLiveVideo) score += 50;
+            if (mv.videoWidth > 0 && mv.videoWidth >= mv.videoHeight) score += 25;
+            if (!isFinite(mv.duration) || mv.duration > 300) score += 20;
+            if (score > bestScore) {
+                bestScore = score;
+                bestMain = mv;
+            }
+        }
+        if (bestMain) {
+            if (bestScore >= 40) {
+                lastVerifiedStreamVideo = bestMain;
+            }
+            return bestMain;
+        }
+
         var videos = document.querySelectorAll('video');
 
         var fallback = null;
 
         for (var i = 0; i < videos.length; i++) {
-            if (isOwnPlayerVideo(videos[i])) {
+            if (isOwnPlayerVideo(videos[i]) || isPreviewOrAuxiliaryVideo(videos[i]) || isAdVideoElement(videos[i])) {
                 continue;
             }
 
@@ -4185,6 +4474,11 @@
         }
 
         return mb.toFixed(1) + tt(' Mo', ' MB');
+    }
+
+    function formatNumber(n) {
+        var num = Number(n) || 0;
+        return num.toLocaleString(typeof uiLocale === 'function' ? uiLocale() : 'fr-FR');
     }
 
     function formatDuration(ms) {
@@ -5506,6 +5800,10 @@
         }
     }
 
+    var DASHBOARD_SEARCHABLE_ROW_SEL =
+        '.tp9-toggle-row, .tp9-step-row, .tp9-select-grid, .tp9-lang-row, ' +
+        '.tp9-data-actions, .tp9-vol-slider-wrap, .tp9-mode-switch, .tp9-kw-box';
+
     function filterDashboardOptions(rawQuery) {
         if (!dashboard) return;
         var q = (rawQuery || '').trim().toLowerCase();
@@ -5516,8 +5814,8 @@
             mainScreen.classList.remove('tp9-searching-all');
             panes.forEach(function (pane) {
                 pane.classList.toggle('tp9-pane-active', pane.getAttribute('data-pane') === activeDashboardTab);
-                pane.querySelectorAll('.tp9-bento-card, .tp9-toggle-row').forEach(function (el) {
-                    el.style.display = '';
+                pane.querySelectorAll('.tp9-search-hidden').forEach(function (el) {
+                    el.classList.remove('tp9-search-hidden');
                 });
             });
             return;
@@ -5526,21 +5824,27 @@
         panes.forEach(function (pane) {
             var hasMatch = false;
             pane.querySelectorAll('.tp9-bento-card').forEach(function (card) {
-                var rows = card.querySelectorAll('.tp9-toggle-row');
+                var rows = card.querySelectorAll(DASHBOARD_SEARCHABLE_ROW_SEL);
                 if (!rows.length) {
                     var matchCard = (card.textContent || '').toLowerCase().indexOf(q) !== -1;
-                    card.style.display = matchCard ? '' : 'none';
+                    card.classList.toggle('tp9-search-hidden', !matchCard);
                     if (matchCard) hasMatch = true;
                     return;
                 }
+                var headEl = card.querySelector('.tp9-bento-head');
+                var headMatch = !!(headEl && (headEl.textContent || '').toLowerCase().indexOf(q) !== -1);
                 var cardHasRow = false;
                 rows.forEach(function (r) {
-                    var txt = ((r.textContent || '') + ' ' + (r.getAttribute('data-tp9-tip') || '') + ' ' + (r.getAttribute('data-tp9-tip-sub') || '')).toLowerCase();
-                    var m = txt.indexOf(q) !== -1;
-                    r.style.display = m ? '' : 'none';
+                    var txt = (
+                        (r.textContent || '') + ' ' +
+                        (r.getAttribute('data-tp9-tip') || '') + ' ' +
+                        (r.getAttribute('data-tp9-tip-sub') || '')
+                    ).toLowerCase();
+                    var m = headMatch || txt.indexOf(q) !== -1;
+                    r.classList.toggle('tp9-search-hidden', !m);
                     if (m) cardHasRow = true;
                 });
-                card.style.display = cardHasRow ? '' : 'none';
+                card.classList.toggle('tp9-search-hidden', !cardHasRow);
                 if (cardHasRow) hasMatch = true;
             });
             pane.classList.toggle('tp9-pane-active', hasMatch);
@@ -5630,7 +5934,7 @@
         container.innerHTML = words.map(function (w, idx) {
             return '<span class="tp9-kw-tag ' + (isHl ? 'tp9-kw-hl' : 'tp9-kw-bl') + '">' +
                 escapeHTML(String(w)) +
-                '<button type="button" class="tp9-kw-del" data-idx="' + idx + '" aria-label="Supprimer">×</button>' +
+                '<button type="button" class="tp9-kw-del" data-idx="' + idx + '" aria-label="' + tt('Supprimer', 'Delete') + '">×</button>' +
             '</span>';
         }).join('');
         container.querySelectorAll('.tp9-kw-del').forEach(function (btn) {
@@ -6155,7 +6459,7 @@
                                         <span>Lignes alternées (Split Chat)</span>
                                     </span>
                                     <span class="tp9-row-controls">
-                                        <input type="color" class="tp9-color-pick tp9-split-color" value="#9147ff" title="Couleur des lignes alternées">
+                                        <input type="color" class="tp9-color-pick tp9-split-color" value="#9147ff" data-tp9-tip="Couleur des lignes alternées" aria-label="Couleur des lignes alternées">
                                         <label class="tp9-switch">
                                             <input type="checkbox" class="tp9-split-chat">
                                             <span class="tp9-switch-track"></span>
@@ -6345,7 +6649,7 @@
                                         <span>Mots-clés surlignés (Highlight)</span>
                                     </span>
                                     <span class="tp9-row-controls">
-                                        <input type="color" class="tp9-color-pick tp9-hl-color" value="#9147ff" title="Couleur du surlignage">
+                                        <input type="color" class="tp9-color-pick tp9-hl-color" value="#9147ff" data-tp9-tip="Couleur du surlignage" aria-label="Couleur du surlignage">
                                         <label class="tp9-switch">
                                             <input type="checkbox" class="tp9-highlight-kw">
                                             <span class="tp9-switch-track"></span>
@@ -6510,6 +6814,19 @@
                                     </span>
                                     <span class="tp9-switch">
                                         <input type="checkbox" class="tp9-expand-sidebar">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+                                <label class="tp9-toggle-row"
+                                    data-tp9-tip="Cacher les chaînes hors ligne"
+                                    data-tp9-tip-sub="Masque les chaînes « Déconnecté(e) » dans la liste des chaînes suivies à gauche.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.hideOffline)}
+                                        <span>Cacher les chaînes suivies hors ligne</span>
+                                        <span class="tp9-toggle-sub">N'affiche que les chaînes actuellement en direct à gauche</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-hide-offline">
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
@@ -6789,7 +7106,8 @@
         var volSlider = dashboard.querySelector('.tp9-vol-slider');
         if (volSlider) {
             volSlider.addEventListener('input', function (e) {
-                var pct = parseInt(e.target.value, 10) || 0;
+                var pct = parseFloat(e.target.value);
+                if (!Number.isFinite(pct)) pct = 0;
                 var level = pct / 100;
                 var ch = (getTestChannel() || '').toLowerCase();
                 dvrWheelTargetPct = pct;
@@ -6879,6 +7197,7 @@
             ['.tp9-close-banners', 'closeBanners'],
             ['.tp9-sidebar-preview', 'sidebarPreview'],
             ['.tp9-expand-sidebar', 'autoExpandSidebar'],
+            ['.tp9-hide-offline', 'hideOfflineChannels'],
             ['.tp9-hide-recom', 'hideRecom']
         ].forEach(function (pair) {
             var el = dashboard.querySelector(pair[0]);
@@ -6987,6 +7306,7 @@
                 .addEventListener('change', function (event) {
                     pageConfig[pair[1]] = event.target.checked;
                     saveConfig(pageConfig);
+                    broadcastConfig();
                     applyTwitchUIClasses();
                     scheduleTwitchUIScan();
                 });
@@ -7004,6 +7324,7 @@
             .addEventListener('change', function (event) {
                 pageConfig.tooltips = event.target.checked;
                 saveConfig(pageConfig);
+                broadcastConfig();
                 if (!pageConfig.tooltips) hideTooltip();
             });
 
@@ -7162,8 +7483,19 @@
                     pageConfig = buildConfigFromParsed(null);
                     pageConfig.statsEnabled = keepStats;
                     pageConfig.lang = keepLang;
+                    if (typeof currentAudioBoostLevel === 'number' && currentAudioBoostLevel > 1) {
+                        currentAudioBoostLevel = 1;
+                    }
                     saveConfig(pageConfig);
                     broadcastConfig();
+                    if (!!pageConfig.scriptOff !== SCRIPT_OFF_AT_LOAD) {
+                        location.reload();
+                        return;
+                    }
+                    if (typeof applyCustomPlayerState === 'function') applyCustomPlayerState();
+                    if (typeof scheduleTwitchUIScan === 'function') scheduleTwitchUIScan();
+                    if (typeof audioNormRefresh === 'function') audioNormRefresh();
+                    if (typeof updateBackupUI === 'function') updateBackupUI();
                     renderDashboard();
                     applyTwitchUIClasses();
                     if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
@@ -8036,6 +8368,8 @@
             statsOn && !(statsAskBox && statsAskBox.style.display === 'block');
         var openStatsButton = dashboard.querySelector('.tp9-open-stats');
         if (openStatsButton) openStatsButton.style.display = statsOn ? '' : 'none';
+        var openStatsBigBtn = dashboard.querySelector('.tp9-open-stats-big');
+        if (openStatsBigBtn) openStatsBigBtn.style.display = statsOn ? '' : 'none';
         var backupRow = dashboard.querySelector('.tp9-auto-backup-row');
         if (backupRow) backupRow.style.display = statsOn ? '' : 'none';
         dashboard.querySelector('.tp9-hide-turbo').checked = !!pageConfig.hideTwitchTurbo;
@@ -8131,6 +8465,7 @@
             ['.tp9-close-banners', !!pageConfig.closeBanners],
             ['.tp9-sidebar-preview', pageConfig.sidebarPreview !== false],
             ['.tp9-expand-sidebar', !!pageConfig.autoExpandSidebar],
+            ['.tp9-hide-offline', !!pageConfig.hideOfflineChannels],
             ['.tp9-hide-recom', !!pageConfig.hideRecom]
         ].forEach(function (pair) {
             var el = dashboard.querySelector(pair[0]);
@@ -10895,6 +11230,21 @@ function showAddProxyForm() {
         );
     }
 
+    function dvrFetchWithTimeout(url, init, timeoutMs) {
+        var opts = Object.assign({}, init || {});
+        if (typeof AbortController === 'function') {
+            var ctrl = new AbortController();
+            opts.signal = ctrl.signal;
+            var tid = setTimeout(function () {
+                try { ctrl.abort(); } catch (e) {}
+            }, timeoutMs || 10000);
+            return fetch(url, opts).finally(function () {
+                clearTimeout(tid);
+            });
+        }
+        return fetch(url, opts);
+    }
+
     function dvrProbeRenditions(base, index, id) {
         if (index >= DVR_VOD_RENDITIONS.length) {
             dvrMarkVodBlocked(id);
@@ -10904,7 +11254,7 @@ function showAddProxyForm() {
 
         var url = base + '/' + DVR_VOD_RENDITIONS[index] + '/index-dvr.m3u8';
 
-        fetch(url, { method: 'GET' })
+        dvrFetchWithTimeout(url, { method: 'GET' }, 8000)
             .then(function (response) {
                 if (!response.ok) {
                     dvrProbeRenditions(base, index + 1, id);
@@ -11090,7 +11440,7 @@ function showAddProxyForm() {
     }
 
     function dvrGql(query, variables, done, fail) {
-        fetch('https://gql.twitch.tv/gql', {
+        dvrFetchWithTimeout('https://gql.twitch.tv/gql', {
             method: 'POST',
 
             headers: {
@@ -11102,7 +11452,7 @@ function showAddProxyForm() {
                 query: query,
                 variables: variables
             })
-        })
+        }, 10000)
             .then(function (response) {
                 return response.json();
             })
@@ -11851,6 +12201,7 @@ function showAddProxyForm() {
 
         // Le choix de rendu appartient à la source qu'on quitte.
         dvrManualLevel = -1;
+        dvrSwitching = false;
 
         if (dvrHls) {
             try {
@@ -12137,12 +12488,20 @@ function showAddProxyForm() {
         var bridge = dvrAudioBridge;
         if (!bridge) return;
         dvrAudioBridge = null;
-        ['volume', 'muted'].forEach(function (key) {
-            if (bridge.own[key]) Object.defineProperty(bridge.video, key, bridge.own[key]);
-            else delete bridge.video[key];
-        });
-        bridge.descriptors.volume.set.call(bridge.video, bridge.volume);
-        bridge.descriptors.muted.set.call(bridge.video, bridge.muted);
+        dvrAllowDirectVolumeWrite = true;
+        try {
+            ['volume', 'muted'].forEach(function (key) {
+                if (bridge.own[key]) Object.defineProperty(bridge.video, key, bridge.own[key]);
+                else delete bridge.video[key];
+            });
+            if (bridge.descriptors.volume && bridge.descriptors.volume.set) {
+                bridge.descriptors.volume.set.call(bridge.video, bridge.volume);
+            }
+            if (bridge.descriptors.muted && bridge.descriptors.muted.set) {
+                bridge.descriptors.muted.set.call(bridge.video, bridge.muted);
+            }
+        } catch (e) {}
+        dvrAllowDirectVolumeWrite = false;
     }
 
     function dvrSyncVolumeFromPlayer() {
@@ -12151,7 +12510,12 @@ function showAddProxyForm() {
             dvrReleaseAudioBridge();
             return;
         }
-        if (dvrAudioBridge && dvrAudioBridge.video === dvrLiveVideo) return;
+        if (dvrAudioBridge && dvrAudioBridge.video === dvrLiveVideo) {
+            if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                try { nativeMediaMutedDesc.set.call(dvrLiveVideo, true); } catch (e) {}
+            }
+            return;
+        }
         dvrReleaseAudioBridge();
         var video = dvrLiveVideo;
         if (!video) return;
@@ -12159,14 +12523,17 @@ function showAddProxyForm() {
         var keys = ['volume', 'muted'];
         keys.forEach(function (key) {
             bridge.own[key] = Object.getOwnPropertyDescriptor(video, key);
-            bridge.descriptors[key] = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, key);
+            bridge.descriptors[key] = (key === 'volume' && nativeMediaVolumeDesc)
+                ? nativeMediaVolumeDesc
+                : ((key === 'muted' && nativeMediaMutedDesc)
+                    ? nativeMediaMutedDesc
+                    : Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, key));
         });
         // Leave non-configurable properties installed by other extensions alone.
         if (keys.some(function (key) { return bridge.own[key] && !bridge.own[key].configurable; })) return;
         function syncReplay() {
             if (!dvrVideo) return;
-            dvrVideo.volume = bridge.volume;
-            dvrVideo.muted = bridge.muted;
+            setVideoVolumeRaw(dvrVideo, bridge.volume, bridge.muted);
         }
         keys.forEach(function (key) {
             Object.defineProperty(video, key, {
@@ -12175,11 +12542,28 @@ function showAddProxyForm() {
                 get: function () { return bridge[key]; },
                 set: function (value) {
                     // The media setter validates volume; physical mute stays on.
+                    if (!dvrAllowDirectVolumeWrite && !isNativeVolumeUserActive()) {
+                        var savedBg = getSavedChannelVolume(getTestChannel());
+                        if (savedBg !== null) {
+                            var expBg = Math.max(0, Math.min(1, savedBg));
+                            bridge.descriptors.volume.set.call(video, expBg);
+                            if (bridge.descriptors.muted && bridge.descriptors.muted.set) {
+                                bridge.descriptors.muted.set.call(video, true);
+                            }
+                            bridge.volume = expBg;
+                            bridge.muted = Boolean(dvrUserExplicitMuted || expBg === 0);
+                            syncReplay();
+                            return;
+                        }
+                    }
                     if (key === 'volume') {
                         bridge.descriptors.volume.set.call(video, value);
                         value = bridge.descriptors.volume.get.call(video);
                     } else {
                         value = Boolean(value);
+                    }
+                    if (bridge.descriptors.muted && bridge.descriptors.muted.set) {
+                        bridge.descriptors.muted.set.call(video, true);
                     }
                     if (bridge[key] === value) return;
                     bridge[key] = value;
@@ -12189,7 +12573,9 @@ function showAddProxyForm() {
             });
         });
         dvrAudioBridge = bridge;
-        bridge.descriptors.muted.set.call(video, true);
+        if (bridge.descriptors.muted && bridge.descriptors.muted.set) {
+            bridge.descriptors.muted.set.call(video, true);
+        }
         syncReplay();
     }
 
@@ -12306,7 +12692,11 @@ function showAddProxyForm() {
     var dvrAllowDirectVolumeWrite = false;
     var dvrNativeUserVolumeUntil = 0;
     var dvrNativeSliderDragging = false;
-    var dvrUserExplicitMuted = false;
+    var dvrUserExplicitMuted = (function () {
+        try { return localStorage.getItem('muted') === 'true'; } catch (e) { return false; }
+    })();
+    var dvrExplicitMutedChannel = '';
+    var dvrLastNativeMuteClickAt = 0;
     var nativeMediaVolumeDesc = (typeof HTMLMediaElement !== 'undefined' && HTMLMediaElement.prototype)
         ? Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume')
         : null;
@@ -12318,8 +12708,19 @@ function showAddProxyForm() {
         return dvrNativeSliderDragging || Date.now() < dvrNativeUserVolumeUntil;
     }
 
+    function isDvrBackgroundLiveVideo(video) {
+        return Boolean(
+            video &&
+            dvrOverlay &&
+            dvrVideo &&
+            !dvrIsLive() &&
+            video !== dvrVideo
+        );
+    }
+
     function setVideoVolumeRaw(video, vol, muted) {
         if (!video) return;
+        var isBgLive = isDvrBackgroundLiveVideo(video);
         dvrAllowDirectVolumeWrite = true;
         try {
             if (typeof vol === 'number' && Number.isFinite(vol)) {
@@ -12329,13 +12730,36 @@ function showAddProxyForm() {
                 } else {
                     video.volume = clampedVol;
                 }
+                if (isBgLive && dvrAudioBridge && dvrAudioBridge.video === video) {
+                    dvrAudioBridge.volume = clampedVol;
+                }
+                if (isBgLive && dvrVideo) {
+                    if (nativeMediaVolumeDesc && nativeMediaVolumeDesc.set) {
+                        nativeMediaVolumeDesc.set.call(dvrVideo, clampedVol);
+                    } else {
+                        dvrVideo.volume = clampedVol;
+                    }
+                }
             }
             if (typeof muted === 'boolean') {
+                var physicalMute = isBgLive ? true : muted;
                 if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
-                    nativeMediaMutedDesc.set.call(video, muted);
+                    nativeMediaMutedDesc.set.call(video, physicalMute);
                 } else {
-                    video.muted = muted;
+                    video.muted = physicalMute;
                 }
+                if (isBgLive && dvrAudioBridge && dvrAudioBridge.video === video) {
+                    dvrAudioBridge.muted = muted;
+                }
+                if (isBgLive && dvrVideo) {
+                    if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                        nativeMediaMutedDesc.set.call(dvrVideo, muted);
+                    } else {
+                        dvrVideo.muted = muted;
+                    }
+                }
+            } else if (isBgLive && nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                nativeMediaMutedDesc.set.call(video, true);
             }
         } catch (e) {}
         dvrAllowDirectVolumeWrite = false;
@@ -12354,8 +12778,12 @@ function showAddProxyForm() {
         try {
             var lsVol = parseFloat(localStorage.getItem('volume'));
             if (Number.isFinite(lsVol) && lsVol >= 0 && lsVol <= 1) {
-                var lsMuted = localStorage.getItem('muted') === 'true';
-                return lsMuted ? 0 : lsVol;
+                if (dvrUserExplicitMuted && localStorage.getItem('muted') === 'true') {
+                    return 0;
+                }
+                if (lsVol > 0) {
+                    return lsVol;
+                }
             }
         } catch (e) {}
         return null;
@@ -12366,6 +12794,7 @@ function showAddProxyForm() {
         level = Math.max(0, Math.min(maxLevel, Math.round(level * 1000) / 1000));
         var ch = (channel || getTestChannel() || '').toLowerCase();
         dvrUserExplicitMuted = (level === 0);
+        dvrExplicitMutedChannel = (level === 0) ? ch : '';
         pageConfig.lastGlobalVolume = level;
         if (!pageConfig.channelVolumes || typeof pageConfig.channelVolumes !== 'object') {
             pageConfig.channelVolumes = {};
@@ -12443,6 +12872,10 @@ function showAddProxyForm() {
     function enforceSavedVolumeOnVideoSync(video) {
         if (scriptIsOff() || !video || !(video instanceof HTMLVideoElement)) return;
         if (isMiniPlayerVideo(video) || isOwnPlayerVideo(video)) return;
+        if (isAdVideoElement(video)) {
+            setVideoVolumeRaw(video, 0, true);
+            return;
+        }
         var saved = getSavedChannelVolume(getTestChannel());
         if (saved === null) return;
         var expectedBase = Math.max(0, Math.min(1, saved));
@@ -12479,19 +12912,39 @@ function showAddProxyForm() {
                         var num = Number(val);
                         if (!Number.isFinite(num)) return;
                         var clamped = Math.max(0, Math.min(1, num));
+                        if (!scriptIsOff() && (this instanceof HTMLVideoElement) && isAdVideoElement(this)) {
+                            nativeMediaVolumeDesc.set.call(this, 0);
+                            if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                                nativeMediaMutedDesc.set.call(this, true);
+                            }
+                            return;
+                        }
                         if (
                             !scriptIsOff() &&
                             !dvrAllowDirectVolumeWrite &&
                             (this instanceof HTMLVideoElement) &&
                             !isMiniPlayerVideo(this) &&
-                            !isOwnPlayerVideo(this)
+                            !isOwnPlayerVideo(this) &&
+                            !isPreviewOrAuxiliaryVideo(this)
                         ) {
+                            var bgLiveVol = isDvrBackgroundLiveVideo(this);
                             if (isNativeVolumeUserActive()) {
+                                var curChVol = (getTestChannel() || '').toLowerCase();
+                                var isMuteBtnZero = (clamped === 0 && (Date.now() - dvrLastNativeMuteClickAt) < 450);
                                 dvrUserExplicitMuted = (clamped === 0);
+                                dvrExplicitMutedChannel = dvrUserExplicitMuted ? curChVol : '';
                                 nativeMediaVolumeDesc.set.call(this, clamped);
-                                saveChannelVolume(getTestChannel(), clamped);
+                                if (bgLiveVol && nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                                    nativeMediaMutedDesc.set.call(this, true);
+                                }
+                                if (isMuteBtnZero) {
+                                    try { localStorage.setItem('muted', 'true'); } catch (e) {}
+                                    if (typeof updateMenuVolumeUI === 'function') updateMenuVolumeUI(0, curChVol);
+                                } else {
+                                    saveChannelVolume(curChVol, clamped);
+                                }
                                 if (typeof audioNormSyncVolumeGain === 'function') {
-                                    audioNormSyncVolumeGain(this);
+                                    audioNormSyncVolumeGain(bgLiveVol ? dvrVideo : this);
                                 }
                                 return;
                             }
@@ -12500,16 +12953,30 @@ function showAddProxyForm() {
                                 var expectedBase = Math.max(0, Math.min(1, saved));
                                 nativeMediaVolumeDesc.set.call(this, expectedBase);
                                 if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
-                                    nativeMediaMutedDesc.set.call(this, dvrUserExplicitMuted || expectedBase === 0);
+                                    nativeMediaMutedDesc.set.call(this, bgLiveVol ? true : (dvrUserExplicitMuted || expectedBase === 0));
                                 }
                                 if (typeof audioNormSyncVolumeGain === 'function') {
-                                    audioNormSyncVolumeGain(this);
+                                    audioNormSyncVolumeGain(bgLiveVol ? dvrVideo : this);
                                 }
+                                return;
+                            }
+                            // Empêche une mise à 0 % silencieuse par Twitch (ex: survol barre latérale)
+                            var curVol = nativeMediaVolumeDesc.get.call(this);
+                            if (clamped === 0 && curVol > 0 && !dvrUserExplicitMuted) {
                                 return;
                             }
                         }
                         nativeMediaVolumeDesc.set.call(this, clamped);
-                        if (typeof audioNormSyncVolumeGain === 'function' && (this instanceof HTMLVideoElement)) {
+                        if (isDvrBackgroundLiveVideo(this) && nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                            nativeMediaMutedDesc.set.call(this, true);
+                        }
+                        if (
+                            typeof audioNormSyncVolumeGain === 'function' &&
+                            (this instanceof HTMLVideoElement) &&
+                            !isPreviewOrAuxiliaryVideo(this) &&
+                            !isMiniPlayerVideo(this) &&
+                            (!isOwnPlayerVideo(this) || this === dvrVideo)
+                        ) {
                             audioNormSyncVolumeGain(this);
                         }
                     }
@@ -12527,16 +12994,45 @@ function showAddProxyForm() {
                     },
                     set: function (val) {
                         var boolVal = !!val;
+                        if (!scriptIsOff() && (this instanceof HTMLVideoElement) && isAdVideoElement(this)) {
+                            nativeMediaMutedDesc.set.call(this, true);
+                            return;
+                        }
+                        if (isDvrBackgroundLiveVideo(this)) {
+                            if (isNativeVolumeUserActive()) {
+                                dvrUserExplicitMuted = boolVal;
+                                dvrExplicitMutedChannel = boolVal ? (getTestChannel() || '').toLowerCase() : '';
+                                try { localStorage.setItem('muted', String(boolVal)); } catch (e) {}
+                                if (dvrVideo) {
+                                    nativeMediaMutedDesc.set.call(dvrVideo, boolVal);
+                                }
+                            }
+                            nativeMediaMutedDesc.set.call(this, true);
+                            return;
+                        }
                         if (
                             !scriptIsOff() &&
                             !dvrAllowDirectVolumeWrite &&
                             (this instanceof HTMLVideoElement) &&
                             !isMiniPlayerVideo(this) &&
-                            !isOwnPlayerVideo(this)
+                            !isOwnPlayerVideo(this) &&
+                            !isPreviewOrAuxiliaryVideo(this)
                         ) {
                             if (isNativeVolumeUserActive()) {
+                                var curChMute = (getTestChannel() || '').toLowerCase();
                                 dvrUserExplicitMuted = boolVal;
+                                dvrExplicitMutedChannel = boolVal ? curChMute : '';
+                                try { localStorage.setItem('muted', String(boolVal)); } catch (e) {}
                                 nativeMediaMutedDesc.set.call(this, boolVal);
+                                if (!boolVal) {
+                                    var unmutedSaved = getSavedChannelVolume(curChMute);
+                                    if (unmutedSaved && unmutedSaved > 0 && nativeMediaVolumeDesc && nativeMediaVolumeDesc.set) {
+                                        nativeMediaVolumeDesc.set.call(this, Math.min(1, unmutedSaved));
+                                    }
+                                }
+                                if (typeof updateMenuVolumeUI === 'function') {
+                                    updateMenuVolumeUI(boolVal ? 0 : undefined, curChMute);
+                                }
                                 if (typeof audioNormSyncVolumeGain === 'function') {
                                     audioNormSyncVolumeGain(this);
                                 }
@@ -12553,6 +13049,11 @@ function showAddProxyForm() {
                                 if (typeof audioNormSyncVolumeGain === 'function') {
                                     audioNormSyncVolumeGain(this);
                                 }
+                                return;
+                            }
+                            // Empêche Twitch de couper le son du lecteur principal lors du survol d'un aperçu dans la barre latérale
+                            if (boolVal && !dvrUserExplicitMuted) {
+                                nativeMediaMutedDesc.set.call(this, false);
                                 return;
                             }
                         }
@@ -12572,7 +13073,23 @@ function showAddProxyForm() {
                         !isMiniPlayerVideo(this) &&
                         !isOwnPlayerVideo(this)
                     ) {
-                        enforceSavedVolumeOnVideoSync(this);
+                        var selfVid = this;
+                        if (!selfVid.__tp9SdaMetaHooked) {
+                            selfVid.__tp9SdaMetaHooked = true;
+                            selfVid.addEventListener('loadedmetadata', function () {
+                                if (typeof sweepStreamDisplayAds === 'function') {
+                                    sweepStreamDisplayAds();
+                                }
+                            });
+                        }
+                        if (typeof sweepStreamDisplayAds === 'function') {
+                            sweepStreamDisplayAds();
+                        }
+                        if (isAdVideoElement(selfVid)) {
+                            setVideoVolumeRaw(selfVid, 0, true);
+                        } else {
+                            enforceSavedVolumeOnVideoSync(selfVid);
+                        }
                     }
                     return nativePlay.apply(this, arguments);
                 };
@@ -12582,16 +13099,33 @@ function showAddProxyForm() {
 
     function scheduleVolumeRestore(channel, lockMs) {
         if (scriptIsOff()) return;
-        dvrUserExplicitMuted = false;
+        var targetCh = (channel || getTestChannel() || '').toLowerCase();
+        if (
+            dvrUserExplicitMuted &&
+            pageConfig.perStreamerVolume !== false &&
+            targetCh &&
+            dvrExplicitMutedChannel &&
+            targetCh !== dvrExplicitMutedChannel &&
+            pageConfig.channelVolumes &&
+            typeof pageConfig.channelVolumes[targetCh] === 'number' &&
+            pageConfig.channelVolumes[targetCh] > 0
+        ) {
+            dvrUserExplicitMuted = false;
+            dvrExplicitMutedChannel = '';
+        }
         var saved = getSavedChannelVolume(channel);
         if (saved === null) return;
+        if (saved === 0) {
+            dvrUserExplicitMuted = true;
+            dvrExplicitMutedChannel = targetCh;
+        }
         dvrVolumeRestoreLockUntil = Date.now() + (lockMs || 2200);
         while (dvrVolumeRestoreTimers.length) {
             clearTimeout(dvrVolumeRestoreTimers.pop());
         }
         dvrWheelTargetPct = Math.round(saved * 1000) / 10;
         dvrWheelTargetTime = Date.now();
-        dvrWheelTargetChannel = (channel || getTestChannel() || '').toLowerCase();
+        dvrWheelTargetChannel = targetCh;
         applyVolumeLevelToPlayer(saved, false);
         [30, 90, 220, 500, 1000, 1800].forEach(function (delay) {
             var tid = setTimeout(function () {
@@ -12928,13 +13462,16 @@ function showAddProxyForm() {
             if (!event || !event.isTrusted) return;
             var t = event.target && event.target.nodeType === 3 ? event.target.parentElement : event.target;
             if (!t || !t.closest) return;
+            var isMuteBtn = Boolean(t.closest('[data-a-target="player-mute-unmute-button"]'));
             if (
+                isMuteBtn ||
                 t.closest('[data-a-target="player-volume-slider"]') ||
-                t.closest('[data-a-target="player-mute-unmute-button"]') ||
                 t.closest('.player-controls__volume-control')
             ) {
                 dvrNativeUserVolumeUntil = Date.now() + 600;
-                if (event.type === 'pointerdown' || event.type === 'mousedown') {
+                if (isMuteBtn) {
+                    dvrLastNativeMuteClickAt = Date.now();
+                } else if (event.type === 'pointerdown' || event.type === 'mousedown') {
                     dvrNativeSliderDragging = true;
                 }
             }
@@ -12962,6 +13499,9 @@ function showAddProxyForm() {
                 ) && (!active.matches || !active.matches('[data-a-target="player-volume-slider"]'));
                 if (!inInput) {
                     dvrNativeUserVolumeUntil = Date.now() + 500;
+                    if (key === 'm' || key === 'M') {
+                        dvrLastNativeMuteClickAt = Date.now();
+                    }
                 }
             }
         }, true);
@@ -13004,9 +13544,15 @@ function showAddProxyForm() {
 
         document.addEventListener('volumechange', function (event) {
             if (scriptIsOff() || dvrSuppressNativeVolumeTrack || dvrAllowDirectVolumeWrite) return;
-            if (isNativeVolumeUserActive()) return;
             var v = event.target;
             if (!(v instanceof HTMLVideoElement) || isMiniPlayerVideo(v) || isOwnPlayerVideo(v)) return;
+            if (isDvrBackgroundLiveVideo(v)) {
+                if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                    try { nativeMediaMutedDesc.set.call(v, true); } catch (e) {}
+                }
+                return;
+            }
+            if (isNativeVolumeUserActive()) return;
             var saved = getSavedChannelVolume(getTestChannel());
             if (saved === null) return;
             var expectedBase = Math.max(0, Math.min(1, saved));
@@ -13410,6 +13956,23 @@ function showAddProxyForm() {
         if (!document.body) {
             return;
         }
+        if (document.documentElement) {
+            document.documentElement.setAttribute('data-tp9-off', scriptIsOff() ? '1' : '0');
+        }
+        if (scriptIsOff()) {
+            [
+                'tp9-hide-turbo', 'tp9-hide-subs', 'tp9-hide-promo', 'tp9-wheel-lock-on',
+                'tp9-bttv-split-chat', 'tp9-bttv-chat-left', 'tp9-bttv-reverse-chat',
+                'tp9-bttv-big-emotes', 'tp9-bttv-hide-badges', 'tp9-bttv-hide-notices',
+                'tp9-bttv-hide-offline', 'tp9-bttv-hide-recom', 'tp9-bttv-close-banners',
+                'tp9-bttv-role-hl', 'tp9-bttv-chat-ts', 'tp9-bttv-bot-badges',
+                'tp9-bttv-hide-bots', 'tp9-bttv-hl-kw'
+            ].forEach(function (cls) {
+                document.body.classList.remove(cls);
+            });
+            syncChatOnLeftLayout();
+            return;
+        }
         document.body.classList.toggle('tp9-hide-turbo', !!pageConfig.hideTwitchTurbo);
         document.body.classList.toggle('tp9-hide-subs', !!pageConfig.hideTwitchSubButtons);
         document.body.classList.toggle('tp9-hide-promo', !!pageConfig.hideTwitchPromo);
@@ -13420,6 +13983,7 @@ function showAddProxyForm() {
         document.body.classList.toggle('tp9-bttv-big-emotes', !!pageConfig.bigEmotes);
         document.body.classList.toggle('tp9-bttv-hide-badges', !!pageConfig.hideBadges);
         document.body.classList.toggle('tp9-bttv-hide-notices', !!pageConfig.hideChatNotices);
+        document.body.classList.toggle('tp9-bttv-hide-offline', !!pageConfig.hideOfflineChannels);
         document.body.classList.toggle('tp9-bttv-hide-recom', !!pageConfig.hideRecom);
         document.body.classList.toggle('tp9-bttv-close-banners', !!pageConfig.closeBanners);
         document.body.classList.toggle('tp9-bttv-role-hl', pageConfig.roleHighlights !== false);
@@ -13432,6 +13996,9 @@ function showAddProxyForm() {
         syncChatOnLeftLayout();
         if (typeof sweepChatTopBanners === 'function') {
             sweepChatTopBanners();
+        }
+        if (typeof sweepOfflineSidebarChannels === 'function') {
+            sweepOfflineSidebarChannels();
         }
     }
 
@@ -13461,7 +14028,7 @@ function showAddProxyForm() {
     var twitchUIScanLast = 0;
 
     function scheduleTwitchUIScan(records) {
-        if (twitchUIScanPending) {
+        if (scriptIsOff() || twitchUIScanPending) {
             return;
         }
         if (mutationsOnlyInChat(records)) {
@@ -13471,7 +14038,8 @@ function showAddProxyForm() {
             !pageConfig.hideTwitchTurbo &&
             !pageConfig.hideTwitchSubButtons &&
             !pageConfig.hideTwitchPromo &&
-            !pageConfig.closeBanners
+            !pageConfig.closeBanners &&
+            !pageConfig.hideOfflineChannels
         ) {
             return;
         }
@@ -13485,6 +14053,9 @@ function showAddProxyForm() {
                     scanTwitchUI();
                     if (typeof sweepChatTopBanners === 'function') {
                         sweepChatTopBanners();
+                    }
+                    if (typeof sweepOfflineSidebarChannels === 'function') {
+                        sweepOfflineSidebarChannels();
                     }
                 } catch (e) {}
             });
@@ -13912,17 +14483,27 @@ function showAddProxyForm() {
         }
         if (isProtectedPlayerUiBranch(branch)) return false;
         var newlyHidden = !branch.classList.contains('tp9-sda-hidden');
+        branch.classList.remove('tp9-sda-unshrunk');
+        node.classList.remove('tp9-sda-unshrunk');
         branch.classList.add('tp9-sda-hidden');
         node.classList.add('tp9-sda-hidden');
         try {
+            var unshrunkDesc = branch.querySelectorAll('.tp9-sda-unshrunk');
+            for (var u = 0; u < unshrunkDesc.length; u++) {
+                unshrunkDesc[u].classList.remove('tp9-sda-unshrunk');
+            }
             var mediaEls = branch.querySelectorAll('video, audio');
             for (var i = 0; i < mediaEls.length; i++) {
                 var m = mediaEls[i];
                 if (m === mainVideo || m === dvrVideo) continue;
                 try {
-                    m.muted = true;
+                    m.classList.remove('tp9-sda-unshrunk');
+                    m.classList.add('tp9-sda-hidden');
+                    setVideoVolumeRaw(m, 0, true);
                     m.pause();
-                    if (m.src) m.removeAttribute('src');
+                    if (m.src && String(m.src).indexOf('blob:') !== 0) {
+                        m.removeAttribute('src');
+                    }
                 } catch (e) {}
             }
             var iframes = branch.querySelectorAll('iframe');
@@ -13939,10 +14520,10 @@ function showAddProxyForm() {
     }
 
     // Bloque les Stream Display Ads (SDA : bannières/vidéos verticales ou en L glissées
-    // à côté du lecteur, ex. "Pub 0:02") et force le conteneur vidéo principal à garder
-    // 100 % de la surface du lecteur sans rétrécissement.
+    // à côté du lecteur, ex. "Pub 0:06") et force le conteneur vidéo principal à garder
+    // 100 % de la surface du lecteur sans jamais étirer le conteneur publicitaire.
     function sweepStreamDisplayAds() {
-        if (scriptIsOff()) return false;
+        if (scriptIsOff() || isClipOrTrailerContext(null)) return false;
         var playerRoot = document.querySelector('.video-player__default-player, .video-player, [data-a-target="video-player"]');
         if (!playerRoot) return false;
         if (
@@ -13955,7 +14536,36 @@ function showAddProxyForm() {
         }
 
         var mainVideo = findPlaybackVideo();
+        if (mainVideo && isAdVideoElement(mainVideo)) {
+            mainVideo = null;
+        }
         var blockedAny = false;
+
+        // 0. Nettoyage immédiat de tout .tp9-sda-unshrunk posé par erreur sur une branche ne contenant pas mainVideo,
+        // et retrait de tout .tp9-sda-hidden résiduel sur la branche contenant désormais mainVideo.
+        try {
+            if (mainVideo && playerRoot.contains(mainVideo)) {
+                var anc = mainVideo;
+                while (anc && anc !== playerRoot && anc !== document.body) {
+                    if (anc.classList && anc.classList.contains('tp9-sda-hidden')) {
+                        anc.classList.remove('tp9-sda-hidden');
+                    }
+                    anc = anc.parentElement;
+                }
+            }
+            var prevUnshrunk = playerRoot.querySelectorAll('.tp9-sda-unshrunk');
+            for (var uIdx = 0; uIdx < prevUnshrunk.length; uIdx++) {
+                var uEl = prevUnshrunk[uIdx];
+                if (
+                    !mainVideo ||
+                    (uEl !== mainVideo && !uEl.contains(mainVideo)) ||
+                    uEl.classList.contains('tp9-sda-hidden') ||
+                    (uEl.closest && uEl.closest('.tp9-sda-hidden'))
+                ) {
+                    uEl.classList.remove('tp9-sda-unshrunk');
+                }
+            }
+        } catch (e) {}
 
         // 1. Masquage de tous les conteneurs SDA explicites
         try {
@@ -13967,73 +14577,107 @@ function showAddProxyForm() {
             }
         } catch (e) {}
 
-        // 2. Détection d'une éventuelle seconde balise <video> publicitaire à côté du flux
-        if (mainVideo) {
-            try {
-                var allVideos = playerRoot.querySelectorAll('video');
-                for (var vIdx = 0; vIdx < allVideos.length; vIdx++) {
-                    var vid = allVideos[vIdx];
-                    if (
-                        vid !== mainVideo &&
-                        vid !== dvrVideo &&
-                        !isOwnPlayerVideo(vid) &&
-                        !(vid.classList && vid.classList.contains('tp9-sidebar-preview-video'))
-                    ) {
-                        if (neutralizeSdaBranch(vid, playerRoot, mainVideo)) {
-                            blockedAny = true;
-                        }
-                    }
+        // 2. Détection de toute balise <video> publicitaire (format 9:16 vertical, URL directe, durée courte ou seconde vidéo)
+        try {
+            var allVideos = playerRoot.querySelectorAll('video');
+            for (var vIdx = 0; vIdx < allVideos.length; vIdx++) {
+                var vid = allVideos[vIdx];
+                if (
+                    vid === dvrVideo ||
+                    isOwnPlayerVideo(vid) ||
+                    (vid.classList && vid.classList.contains('tp9-sidebar-preview-video'))
+                ) {
+                    continue;
                 }
-            } catch (e) {}
-        }
-
-        // 3. Détection des badges "Pub 0:02" / "Publicité" placés dans un panneau latéral
-        // (en dehors de la branche contenant la vidéo principale du stream)
-        if (mainVideo) {
-            try {
-                var badges = playerRoot.querySelectorAll(
-                    '[data-a-target="video-ad-label"], [data-a-target="video-ad-countdown"], [aria-label="Publicité"], [aria-label="Ad"]'
+                var isSoleStreamCandidate = (
+                    allVideos.length === 1 &&
+                    String(vid.currentSrc || vid.src || '').indexOf('blob:') === 0 &&
+                    !(vid.closest && vid.closest(SDA_SELECTORS))
                 );
-                for (var bIdx = 0; bIdx < badges.length; bIdx++) {
-                    var b = badges[bIdx];
-                    if (!b || b.contains(mainVideo) || isProtectedPlayerUiBranch(b)) continue;
-                    if (neutralizeSdaBranch(b, playerRoot, mainVideo)) {
+                if (isSoleStreamCandidate) {
+                    continue;
+                }
+                if (isAdVideoElement(vid) || (mainVideo && vid !== mainVideo)) {
+                    try {
+                        setVideoVolumeRaw(vid, 0, true);
+                        vid.pause();
+                    } catch (e2) {}
+                    if (neutralizeSdaBranch(vid, playerRoot, mainVideo)) {
                         blockedAny = true;
                     }
                 }
-            } catch (e) {}
-        }
+            }
+        } catch (e) {}
 
-        // 4. Si le conteneur vidéo a été rétréci ("squeeze-back", ex. ~68 % de la largeur du lecteur)
-        // pour loger une pub verticale à droite comme "Pub 0:02", on masque le panneau latéral pub
-        // et on rétablit la vidéo à 100 %.
-        if (mainVideo && playerRoot.contains(mainVideo)) {
+        // 3. Détection des badges "Pub 0:06" / "Pub 0:02" / "Publicité" placés dans un panneau ou calque pub
+        try {
+            var badges = playerRoot.querySelectorAll(
+                '[data-a-target="video-ad-label"], [data-a-target="video-ad-countdown"], [aria-label="Publicité"], [aria-label="Ad"]'
+            );
+            for (var bIdx = 0; bIdx < badges.length; bIdx++) {
+                var b = badges[bIdx];
+                if (!b || (mainVideo && b.contains(mainVideo)) || isProtectedPlayerUiBranch(b)) continue;
+                if (neutralizeSdaBranch(b, playerRoot, mainVideo)) {
+                    blockedAny = true;
+                }
+            }
+            var textCandidates = playerRoot.querySelectorAll('span, div, p, strong, b');
+            for (var tIdx = 0; tIdx < textCandidates.length; tIdx++) {
+                var tc = textCandidates[tIdx];
+                if (!tc || tc.children.length > 5) continue;
+                if ((mainVideo && tc.contains(mainVideo)) || isProtectedPlayerUiBranch(tc)) continue;
+                if (tc.closest && tc.closest('.tp9-sda-hidden')) continue;
+                var rawTxt = (tc.textContent || '').trim();
+                if (rawTxt.length >= 4 && rawTxt.length <= 30 && /^(?:Pub|Ad|Publicité|Advertisement)\s*[:·-]?\s*\d+:\d+/i.test(rawTxt)) {
+                    if (neutralizeSdaBranch(tc, playerRoot, mainVideo)) {
+                        blockedAny = true;
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // 4. Si le conteneur vidéo du flux principal a été rétréci ("squeeze-back", ex. ~65 % de la largeur/hauteur)
+        // pour loger une pub verticale à droite comme "Pub 0:06", on masque la branche latérale pub
+        // et on rétablit uniquement la branche du flux principal à 100 %.
+        if (mainVideo && !isAdVideoElement(mainVideo) && playerRoot.contains(mainVideo)) {
             var rootRect = playerRoot.getBoundingClientRect();
             if (rootRect.width > 300 && rootRect.height > 180) {
                 var vidRect = mainVideo.getBoundingClientRect();
-                if (vidRect.width > 100 && vidRect.width < rootRect.width * 0.92) {
+                var isShrunk = (
+                    vidRect.width > 80 &&
+                    (vidRect.width < rootRect.width * 0.96 || vidRect.height < rootRect.height * 0.96)
+                );
+                if (isShrunk || blockedAny) {
                     var cur = mainVideo;
                     while (cur && cur !== playerRoot && cur !== document.body) {
-                        var r = cur.getBoundingClientRect();
-                        if (r.width > 0 && r.width < rootRect.width * 0.92) {
-                            cur.classList.add('tp9-sda-unshrunk');
-                            if (cur.parentElement && cur.parentElement !== document.body && playerRoot.contains(cur.parentElement)) {
-                                var siblings = cur.parentElement.children;
-                                for (var sIdx = 0; sIdx < siblings.length; sIdx++) {
-                                    var sib = siblings[sIdx];
-                                    if (sib === cur || sib.contains(mainVideo) || isProtectedPlayerUiBranch(sib)) continue;
-                                    var sibRect = sib.getBoundingClientRect();
-                                    var sibTxt = (sib.textContent || '').trim();
-                                    var looksLikeAdPanel = (
-                                        /(\bPub\s+\d+:\d+|\bPublicité\b|\bAd\s+\d+:\d+)/i.test(sibTxt) ||
-                                        !!sib.querySelector('iframe, video, img, [data-a-target*="ad"], [data-test-selector*="ad"]')
-                                    );
-                                    if (looksLikeAdPanel && sibRect.width > 40 && sibRect.height > 40 && sibRect.left >= r.right - 12) {
-                                        if (neutralizeSdaBranch(sib, playerRoot, mainVideo)) {
-                                            blockedAny = true;
-                                        }
+                        if (cur.parentElement && cur.parentElement !== document.body && playerRoot.contains(cur.parentElement)) {
+                            var siblings = cur.parentElement.children;
+                            for (var sIdx = 0; sIdx < siblings.length; sIdx++) {
+                                var sib = siblings[sIdx];
+                                if (sib === cur || sib.contains(mainVideo) || isProtectedPlayerUiBranch(sib)) continue;
+                                if (sib.classList.contains('tp9-sda-hidden')) continue;
+                                var sibTxt = (sib.textContent || '').trim();
+                                var looksLikeAdPanel = (
+                                    SDA_BADGE_TEXT_RE.test(sibTxt) ||
+                                    /\b(?:Publicité|Advertisement|Sponsorisé|Sponsored)\b/i.test(sibTxt) ||
+                                    !!sib.querySelector(
+                                        'iframe:not(.extension-view__iframe), video, ' +
+                                        '[data-a-target^="sda-"], [data-a-target*="video-ad"], ' +
+                                        '[data-test-selector*="stream-display-ad"], [data-test-selector*="ad-banner"], ' +
+                                        '[data-test-selector="sad-overlay"]'
+                                    )
+                                );
+                                if (looksLikeAdPanel) {
+                                    if (neutralizeSdaBranch(sib, playerRoot, mainVideo)) {
+                                        blockedAny = true;
                                     }
                                 }
+                            }
+                        }
+                        var r = cur.getBoundingClientRect();
+                        if (r.width > 0 && (r.width < rootRect.width * 0.96 || r.height < rootRect.height * 0.96)) {
+                            if (!cur.classList.contains('tp9-sda-unshrunk')) {
+                                cur.classList.add('tp9-sda-unshrunk');
                             }
                         }
                         cur = cur.parentElement;
@@ -14044,7 +14688,7 @@ function showAddProxyForm() {
 
         if (blockedAny && (Date.now() - lastSdaBlockedLogAt) > 8000) {
             lastSdaBlockedLogAt = Date.now();
-            logEvent('info', '🛡️ Bannière publicitaire à côté du lecteur (SDA) bloquée et taille 100 % rétablie');
+            logEvent('info', '🛡️ Bannière/vidéo publicitaire à côté du lecteur (SDA) bloquée et taille 100 % rétablie');
         }
         return blockedAny;
     }
@@ -14234,10 +14878,21 @@ function showAddProxyForm() {
     // cherché faute de sélecteur connu (non vérifié sur le vrai Twitch).
     function adCleanOfflineShown(video) {
         try {
+            if (video && !video.paused && !video.ended && video.readyState >= 2) {
+                return false;
+            }
             var box = video
                 ? video.closest('[data-a-target="video-player"], .video-player')
                 : document.querySelector('[data-a-target="video-player"], .video-player');
-            return !!(box && /hors ligne|\boffline\b/i.test(box.innerText || ''));
+            if (!box) return false;
+            var statusNode = box.querySelector(
+                '.player-streamstatus__label, [data-a-target="player-overlay-content-gate"], ' +
+                '[class*="offline-embeds"], [class*="channel-status-info--offline"]'
+            );
+            if (statusNode && /hors ligne|\boffline\b/i.test(statusNode.textContent || '')) {
+                return true;
+            }
+            return false;
         } catch (e) {
             return false;
         }
@@ -14263,7 +14918,8 @@ function showAddProxyForm() {
             return;
         }
         var now = Date.now();
-        if (getWatchedChannel() !== w.channel) {
+        var currentCh = getTestChannel() || getWatchedChannel();
+        if (currentCh !== w.channel) {
             adCleanWatch = null;
             return;
         }
@@ -14365,17 +15021,19 @@ function showAddProxyForm() {
         );
         setAdCleanOff(w.channel);
         watchdogLastRescue = now;
-        if (!reloadTwitchPlayer()) {
-            logEvent('error', 'Relance du lecteur impossible sur ' + w.channel + ' : recharge la page (F5)');
-            return;
-        }
-        showToast({
-            icon: '🔄',
-            title: tt('Lecture relancée', 'Playback restarted'),
-            text: tt('Le nettoyage des pubs a bloqué le lecteur : il est coupé 30 min sur cette chaîne.', 'Ad cleaning blocked the player: it is off for 30 min on this channel.'),
-            ok: true,
-            duration: 6000
-        });
+        setTimeout(function () {
+            if (!reloadTwitchPlayer()) {
+                logEvent('error', 'Relance du lecteur impossible sur ' + w.channel + ' : recharge la page (F5)');
+                return;
+            }
+            showToast({
+                icon: '🔄',
+                title: tt('Lecture relancée', 'Playback restarted'),
+                text: tt('Le nettoyage des pubs a bloqué le lecteur : il est coupé 30 min sur cette chaîne.', 'Ad cleaning blocked the player: it is off for 30 min on this channel.'),
+                ok: true,
+                duration: 6000
+            });
+        }, 100);
     }
 
         // ------------------------------------------------------------
@@ -15107,14 +15765,15 @@ function showAddProxyForm() {
             watchdogReset();
             return;
         }
-        var channel = getWatchedChannel();
-        if (channel !== watchdogChannel) {
-            watchdogChannel = channel;
+        var routeChannel = getTestChannel() || getWatchedChannel();
+        if (routeChannel !== watchdogChannel) {
+            watchdogChannel = routeChannel;
             watchdogRescues = [];
             watchdogGaveUp = false;
             watchdogStarted = false;
             watchdogReset();
         }
+        var channel = getWatchedChannel();
         if (!channel || isRealDocumentHidden()) {
             watchdogReset();
             return;
@@ -15212,19 +15871,27 @@ function showAddProxyForm() {
             (proxy ? ' (proxy ' + proxy.name + ')' : '') + ' : relance du lecteur'
         );
 
-        if (!reloadTwitchPlayer()) {
-            return;
-        }
+        var runReload = function () {
+            if (!reloadTwitchPlayer()) {
+                return;
+            }
 
-        showToast({
-            icon: '🔄',
-            title: tt('Lecture relancée', 'Playback restarted'),
-            text: proxy
-                ? tt('L\'image était figée sur ' + proxy.name + ' : le flux passe par un autre proxy.', 'The picture was frozen on ' + proxy.name + ': the stream now goes through another proxy.')
-                : tt('L\'image était figée : le lecteur a été relancé.', 'The picture was frozen: the player was restarted.'),
-            ok: true,
-            duration: 5000
-        });
+            showToast({
+                icon: '🔄',
+                title: tt('Lecture relancée', 'Playback restarted'),
+                text: proxy
+                    ? tt('L\'image était figée sur ' + proxy.name + ' : le flux passe par un autre proxy.', 'The picture was frozen on ' + proxy.name + ': the stream now goes through another proxy.')
+                    : tt('L\'image était figée : le lecteur a été relancé.', 'The picture was frozen: the player was restarted.'),
+                ok: true,
+                duration: 5000
+            });
+        };
+
+        if (proxy) {
+            setTimeout(runReload, 100);
+        } else {
+            runReload();
+        }
     }
 
     // ------------------------------------------------------------
@@ -18519,7 +19186,13 @@ function showAddProxyForm() {
         if (!audioNormPreGain || !audioNormPostGain) {
             return;
         }
-        var video = targetVideo || ((!dvrIsLive() && dvrVideo) ? dvrVideo : findPlaybackVideo());
+        var validTarget = (
+            targetVideo &&
+            !isPreviewOrAuxiliaryVideo(targetVideo) &&
+            !isMiniPlayerVideo(targetVideo) &&
+            (!isOwnPlayerVideo(targetVideo) || targetVideo === dvrVideo)
+        ) ? targetVideo : null;
+        var video = validTarget || ((!dvrIsLive() && dvrVideo) ? dvrVideo : findPlaybackVideo());
         var saved = getSavedChannelVolume(getTestChannel());
         var savedBase = (saved !== null && Number.isFinite(saved)) ? Math.max(0, Math.min(1, saved)) : null;
         var vol = (video && typeof video.volume === 'number')
@@ -18616,12 +19289,14 @@ function showAddProxyForm() {
     // Les aperçus muets des vignettes restent en dehors.
     function audioNormIsTarget(video) {
         if (!video) return false;
-        if (video.classList && video.classList.contains('tp9-sidebar-preview-video')) {
+        if (isPreviewOrAuxiliaryVideo(video) || isMiniPlayerVideo(video)) {
+            return false;
+        }
+        if (isOwnPlayerVideo(video) && video !== dvrVideo) {
             return false;
         }
         if (
             video === dvrVideo ||
-            isOwnPlayerVideo(video) ||
             video === findPlaybackVideo()
         ) {
             return true;
@@ -19054,7 +19729,7 @@ function showAddProxyForm() {
 
     // Mount rewind as soon as the native live player is ready.
     function ensureDvrControls(channel) {
-        if (dvrOverlay || !isCustomPlayerOn() || !channel || !getWatchedChannel() || !dvrSupported()) return;
+        if (scriptIsOff() || dvrOverlay || !isCustomPlayerOn() || !channel || !getWatchedChannel() || !dvrSupported()) return;
         var video = findPlaybackVideo();
         var player = video && video.closest('.video-player');
         if (!player || !player.querySelector('[data-a-target="player-controls"]')) return;
@@ -22760,6 +23435,7 @@ dashboardButton.style.visibility = 'hidden';
             #tp9-dashboard .tp9-hero-meta,
             #tp9-dashboard .tp9-hero-live .tp9-hero-meta,
             #tp9-dashboard .tp9-hero-direct .tp9-hero-meta {
+                position: static;
                 flex: none;
                 margin: 0;
                 padding: 0;
@@ -23721,6 +24397,11 @@ dashboardButton.style.visibility = 'hidden';
                 padding: 0 !important;
                 overflow: hidden !important;
             }
+            #tp9-dashboard.tp9-on-sub .tp9-unified-body,
+            #tp9-dashboard .tp9-unified-body[style*="display: none"],
+            #tp9-dashboard .tp9-unified-body[style*="display:none"] {
+                display: none !important;
+            }
             #tp9-dashboard .tp9-rail {
                 background: rgba(0, 0, 0, 0.26);
                 border-right: 1px solid rgba(255, 255, 255, 0.07);
@@ -23893,6 +24574,11 @@ dashboardButton.style.visibility = 'hidden';
             }
             #tp9-dashboard .tp9-toggle-row:last-child {
                 border-bottom: 0 !important;
+            }
+            #tp9-dashboard .tp9-search-hidden,
+            #tp9-dashboard .tp9-toggle-row[style*="display: none"],
+            #tp9-dashboard .tp9-toggle-row[style*="display:none"] {
+                display: none !important;
             }
             #tp9-dashboard .tp9-toggle-label,
             #tp9-dashboard .tp9-step-lbl,
@@ -24272,6 +24958,12 @@ dashboardButton.style.visibility = 'hidden';
             body.tp9-bttv-hide-badges img.chat-badge:not([alt*="Broadcaster" i]):not([alt*="Diffuseur" i]):not([alt*="Moderator" i]):not([alt*="Modérateur" i]):not([alt*="VIP" i]):not([alt*="Subscriber" i]):not([alt*="Abonné" i]):not([alt*="Founder" i]):not([alt*="Fondateur" i]):not([alt*="Verified" i]):not([alt*="Vérifié" i]):not([alt*="Partner" i]):not([alt*="Partenaire" i]):not([alt*="Staff" i]) {
                 display: none !important;
             }
+            body.tp9-bttv-hide-offline .tp9-offline-channel-hidden,
+            body.tp9-bttv-hide-offline .side-nav-card:has(.side-nav-card__avatar--offline),
+            body.tp9-bttv-hide-offline .tw-transition:has(> .side-nav-card .side-nav-card__avatar--offline),
+            body.tp9-bttv-hide-offline [data-test-selector="followed-channel"]:has(.side-nav-card__avatar--offline) {
+                display: none !important;
+            }
             body.tp9-bttv-hide-recom [aria-label*="Chaînes recommandées" i],
             body.tp9-bttv-hide-recom [aria-label*="Recommended Channels" i],
             body.tp9-bttv-hide-recom .side-nav [aria-label="Chaînes en live" i],
@@ -24422,6 +25114,10 @@ dashboardButton.style.visibility = 'hidden';
             }
             body.tp9-bttv-chat-ts .tp9-chat-ts-tag {
                 display: inline-block;
+            }
+            body.tp9-bttv-chat-ts .chat-line__timestamp,
+            body.tp9-bttv-chat-ts [data-a-target="chat-timestamp"] {
+                display: none !important;
             }
             /* Masquage du tiroir d'auto-complétion natif de Twitch quand notre menu :émote est ouvert */
             body.tp9-colon-ac-open .chat-input-tray__open,
@@ -24949,9 +25645,7 @@ dashboardButton.style.visibility = 'hidden';
                 pointer-events: none !important;
                 overflow: hidden !important;
             }
-            html:not([data-tp9-off="1"]) .tp9-sda-unshrunk,
-            html:not([data-tp9-off="1"]) .video-player:not([data-a-player-state="mini"]) .video-player__container:not(.video-player__container--mini),
-            html:not([data-tp9-off="1"]) .video-player:not([data-a-player-state="mini"]) .video-player__container:not(.video-player__container--mini) .video-ref {
+            html:not([data-tp9-off="1"]) .tp9-sda-unshrunk:not(.tp9-sda-hidden) {
                 width: 100% !important;
                 height: 100% !important;
                 max-width: 100% !important;
@@ -27915,6 +28609,10 @@ dashboardButton.style.visibility = 'hidden';
 
         document.addEventListener('keydown', function (event) {
             if (event.key === 'Escape' && statsDashboardVisible) {
+                if (typeof chatHistoryModal !== 'undefined' && chatHistoryModal && chatHistoryModal.style.display === 'flex') {
+                    hideChatHistoryModal();
+                    return;
+                }
                 hideStatsDashboard();
             }
         });
@@ -28227,6 +28925,10 @@ dashboardButton.style.visibility = 'hidden';
 
     function hideStatsDashboard() {
         statsDashboardVisible = false;
+
+        if (typeof hideChatHistoryModal === 'function') {
+            hideChatHistoryModal();
+        }
 
         if (statsDashboard) {
             statsDashboard.style.display = 'none';
@@ -29280,8 +29982,15 @@ dashboardButton.style.visibility = 'hidden';
             );
         }).join('');
 
+        var labelStep = points.length > 14 ? Math.ceil(points.length / 7) : 1;
         var labelsSVG = showLabels
-            ? points.map(function (p) {
+            ? points.map(function (p, idx) {
+                if (labelStep > 1 && (idx % labelStep !== 0) && idx !== points.length - 1) {
+                    return '';
+                }
+                if (labelStep > 1 && idx === points.length - 1 && ((idx % labelStep) < Math.ceil(labelStep / 2))) {
+                    return '';
+                }
                 return (
                     '<text x="' + p.x + '" y="' + (CHART_HEIGHT - 6) +
                     '" class="tp9s-chart-axis-label" text-anchor="middle">' +
@@ -34051,22 +34760,51 @@ dashboardButton.style.visibility = 'hidden';
                 }, 400);
             }
             // Garde uniquement les N derniers segments d'une playlist de secours
-            // (tout en avançant #EXT-X-MEDIA-SEQUENCE du nombre de vieux segments
-            // retirés) afin que le lecteur ne reparte jamais 8 à 12 s en arrière
-            // au moment où le bloqueur prend le relais au début d'une pub.
-            function __sp_trimToLiveEdge(text, maxSegments){
+            // en ancrant le premier segment conservé par son #EXT-X-PROGRAM-DATE-TIME
+            // (info.adBackupMinPdt) afin que #EXT-X-MEDIA-SEQUENCE reste 100 % monotone
+            // sans jamais reculer ni sauter pendant toute la durée de la pub.
+            function __sp_trimToLiveEdge(text, maxSegments, info){
                 maxSegments = maxSegments || 3;
                 var lines = __sp_lines(text);
                 var segIndices = [];
+                var segPdts = [];
+                var curPdt = 0;
                 for (var i = 0; i < lines.length - 1; i++) {
-                    if (lines[i].indexOf("#EXTINF") === 0) {
+                    if (lines[i].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        curPdt = Date.parse(lines[i].substring(25).trim()) || 0;
+                    } else if (lines[i].indexOf("#EXTINF") === 0) {
                         segIndices.push(i);
+                        segPdts.push(curPdt);
+                        curPdt = 0;
                     }
                 }
-                if (segIndices.length <= maxSegments) {
+                if (segIndices.length <= 1) {
                     return text;
                 }
-                var dropCount = segIndices.length - maxSegments;
+                var dropCount = 0;
+                if (info && info.adBackupMinPdt > 0) {
+                    for (var s = 0; s < segIndices.length - 1; s++) {
+                        if (segPdts[s] > 0 && segPdts[s] < info.adBackupMinPdt - 50) {
+                            dropCount++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    if (segIndices.length <= maxSegments) {
+                        if (info && segPdts[0] > 0) {
+                            info.adBackupMinPdt = segPdts[0];
+                        }
+                        return text;
+                    }
+                    dropCount = segIndices.length - maxSegments;
+                    if (info && segPdts[dropCount] > 0) {
+                        info.adBackupMinPdt = segPdts[dropCount];
+                    }
+                }
+                if (dropCount <= 0) {
+                    return text;
+                }
                 var keepFromLine = segIndices[dropCount];
                 // Recule d'une ou deux lignes pour conserver le #EXT-X-PROGRAM-DATE-TIME
                 // associé au premier segment conservé
@@ -34352,13 +35090,20 @@ dashboardButton.style.visibility = 'hidden';
                     var text = await response.text();
                     var info = __sp_streams[channel];
                     if (info) {
-                        // Le stream a pu redémarrer : l'ancienne liste
-                        // ne répond plus, on repart de la nouvelle.
-                        var alive = false;
-                        try {
-                            alive = info.list.length > 0 &&
-                                (await __tp_originalFetch(info.list[0].url)).status === 200;
-                        } catch(e) {}
+                        // Si le flux vient d'être lu ou relancé après pub (< 45 s),
+                        // on évite un aller-retour réseau supplémentaire de 250–400 ms
+                        // pendant setSrc.
+                        var recentlyActive = (
+                            (info.lastReload && (Date.now() - info.lastReload) < 45000) ||
+                            (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000)
+                        );
+                        var alive = recentlyActive;
+                        if (!alive) {
+                            try {
+                                alive = info.list.length > 0 &&
+                                    (await __tp_originalFetch(info.list[0].url)).status === 200;
+                            } catch(e) {}
+                        }
                         if (!alive) {
                             __sp_forget(info);
                             info = null;
@@ -34774,22 +35519,50 @@ dashboardButton.style.visibility = 'hidden';
             // Coupure finie : on retire tous les repères ET tous les anciens
             // segments de pub qui traînent encore en haut de la fenêtre
             // glissante de Twitch (tout en gardant leurs URLs dans __sp_adSegs
-            // pour garantir 0 % de pub), et on avance #EXT-X-MEDIA-SEQUENCE
-            // du nombre de segments pub retirés. Ainsi, le lecteur relancé
-            // démarre directement sur les segments ,live du direct au lieu
-            // de lire d'anciens segments vides avec 8 à 14 s de retard.
-            function __sp_cleanAfter(text){
+            // pour garantir 0 % de pub), puis on ancre le premier segment ,live
+            // conservé sur le bord du direct (info.postAdMinPdt) pendant 45 s
+            // afin que le lecteur relancé démarre directement à ~1,5 s du direct
+            // sans que #EXT-X-MEDIA-SEQUENCE ne recule jamais.
+            function __sp_cleanAfter(text, info){
                 var lines = __sp_lines(text);
                 var now = Date.now();
+                var livePdts = [];
+                var scanPdt = 0;
+                for (var s = 0; s < lines.length - 1; s++) {
+                    if (lines[s].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        scanPdt = Date.parse(lines[s].substring(25).trim()) || 0;
+                    } else if (lines[s].indexOf("#EXTINF") === 0) {
+                        if (lines[s].indexOf(",live") >= 0 && scanPdt > 0) {
+                            livePdts.push(scanPdt);
+                        }
+                        scanPdt = 0;
+                    }
+                }
+                var lastLivePdt = livePdts.length ? livePdts[livePdts.length - 1] : 0;
+                if (info && !info.postAdReloadLocked && livePdts.length > 0) {
+                    var hasPrefetch = text.indexOf("#EXT-X-TWITCH-PREFETCH:") >= 0;
+                    var targetIdx = hasPrefetch ? (livePdts.length - 1) : Math.max(0, livePdts.length - 2);
+                    info.postAdMinPdt = livePdts[targetIdx];
+                    if (info.postAdReloadSeen || (info.lastEndAt && (now - info.lastEndAt) > 1200)) {
+                        info.postAdReloadLocked = true;
+                    }
+                }
+                var minKeepPdt = (info && info.postAdMinPdt > 0) ? info.postAdMinPdt : 0;
                 var out = [];
                 var droppedSegs = 0;
                 var pendingTagLines = [];
+                var pendingPdt = 0;
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
                     if (line.indexOf("#EXT-X-DATERANGE") === 0 && line.indexOf(__sp_MARK) >= 0) {
                         continue;
                     }
-                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 || line.indexOf("#EXT-X-DISCONTINUITY") === 0) {
+                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        pendingPdt = Date.parse(line.substring(25).trim()) || 0;
+                        pendingTagLines.push(line);
+                        continue;
+                    }
+                    if (line.indexOf("#EXT-X-DISCONTINUITY") === 0) {
                         pendingTagLines.push(line);
                         continue;
                     }
@@ -34802,13 +35575,27 @@ dashboardButton.style.visibility = 'hidden';
                             __sp_adSegs[segUrl] = now;
                             droppedSegs++;
                             pendingTagLines.length = 0;
+                            pendingPdt = 0;
                             i++; // saute aussi l'URL du segment de pub
+                            continue;
+                        }
+                        if (
+                            minKeepPdt > 0 &&
+                            pendingPdt > 0 &&
+                            pendingPdt < minKeepPdt - 50 &&
+                            (!lastLivePdt || pendingPdt < lastLivePdt - 50)
+                        ) {
+                            droppedSegs++;
+                            pendingTagLines.length = 0;
+                            pendingPdt = 0;
+                            i++; // saute ce vieux segment ,live antérieur au bord du direct
                             continue;
                         }
                         for (var p = 0; p < pendingTagLines.length; p++) {
                             out.push(pendingTagLines[p]);
                         }
                         pendingTagLines.length = 0;
+                        pendingPdt = 0;
                         out.push(line);
                         out.push(lines[i + 1]);
                         i++;
@@ -34819,6 +35606,7 @@ dashboardButton.style.visibility = 'hidden';
                             out.push(pendingTagLines[q]);
                         }
                         pendingTagLines.length = 0;
+                        pendingPdt = 0;
                     }
                     out.push(line);
                 }
@@ -34926,18 +35714,29 @@ dashboardButton.style.visibility = 'hidden';
             }
             function __sp_endAd(info, liveBack){
                 var wasModified = info.usingModified;
-                __sp_lastEndAt = Date.now();
+                var now = Date.now();
+                __sp_lastEndAt = now;
                 __sp_blankAfterEnd = 0;
+                info.lastEndAt = now;
+                info.postAdMinPdt = 0;
+                info.postAdReloadSeen = false;
+                info.postAdReloadLocked = false;
+                info.adBackupMinPdt = 0;
+                if (info.lastBackupEnd > 0 && info.lastBackupAt > 0) {
+                    info.resumeTargetPdt = info.lastBackupEnd - 2200 + Math.min(4000, Math.max(0, now - info.lastBackupAt));
+                } else {
+                    info.resumeTargetPdt = 0;
+                }
                 info.inAd = false;
                 info.stripping = false;
                 info.stripped = 0;
                 info.backupType = null;
                 info.backupName = null;
                 info.usingModified = false;
-                info.lastReload = Date.now();
+                info.lastReload = now;
                 __tp_postLog("info",
                     "🛡️ Fin de la pub sur " + info.channel + " (" +
-                    Math.round((Date.now() - info.adStart) / 1000) + " s) : " +
+                    Math.round((now - info.adStart) / 1000) + " s) : " +
                     "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : "") +
                     (liveBack ? " · direct revenu, sans attendre que Twitch efface ses repères" : ""));
                 __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
@@ -34947,6 +35746,9 @@ dashboardButton.style.visibility = 'hidden';
                 if (__sp_reloaded) {
                     __sp_reloaded = false;
                     info.lastReload = Date.now();
+                    if (info.lastEndAt && (Date.now() - info.lastEndAt) < 10000) {
+                        info.postAdReloadSeen = true;
+                    }
                 }
                 var marked = text.indexOf(__sp_MARK) >= 0;
                 // Direct revenu alors que Twitch garde encore ses repères :
@@ -34956,7 +35758,7 @@ dashboardButton.style.visibility = 'hidden';
                     if (info.inAd) {
                         __sp_endAd(info, true);
                     }
-                    return __sp_cleanAfter(text);
+                    return __sp_cleanAfter(text, info);
                 }
                 if (marked) {
                     info.midroll = text.indexOf('"MIDROLL"') >= 0 || text.indexOf('"midroll"') >= 0;
@@ -34969,6 +35771,10 @@ dashboardButton.style.visibility = 'hidden';
                         info.adIdsSeen = {};
                         info.adTimes = {};
                         info.edgeGaps = [];
+                        info.lastBackupEnd = 0;
+                        info.lastBackupAt = 0;
+                        info.resumeTargetPdt = 0;
+                        info.adBackupMinPdt = 0;
                         __tp_postLog("warn",
                             "🛡️ Pub " + (info.midroll ? "en cours de stream" : "de début de stream") +
                             " sur " + info.channel + " : recherche d'un flux sans pub");
@@ -35011,11 +35817,15 @@ dashboardButton.style.visibility = 'hidden';
                     // liste plus rapide) : annoncer une pub
                     // maintenant laisserait la page croire à une pub sans fin.
                     if (!info.inAd) {
-                        return __sp_cleanAfter(text);
+                        return __sp_cleanAfter(text, info);
                     }
                     if (backup.text) {
                         var mainEnd = __sp_listEnd(text);
                         var backupEnd = __sp_listEnd(backup.text);
+                        if (backupEnd > 0) {
+                            info.lastBackupEnd = backupEnd;
+                            info.lastBackupAt = Date.now();
+                        }
                         // 🔎 Un secours en retard sur le flux normal n'a
                         // rien de neuf à donner au lecteur, qui se vide.
                         var gapNote = "";
@@ -35030,7 +35840,7 @@ dashboardButton.style.visibility = 'hidden';
                                 info.edgeGaps.shift();
                             }
                         }
-                        text = __sp_trimToLiveEdge(backup.text, 3);
+                        text = __sp_trimToLiveEdge(backup.text, 3, info);
                         info.backupLabel = backup.label || "";
                         if (
                             info.backupType !== backup.type ||
@@ -35076,6 +35886,10 @@ dashboardButton.style.visibility = 'hidden';
                         // La relance remet tout à zéro (et rend la 2K/4K si
                         // le lecteur était passé en H.264).
                         __sp_endAd(info);
+                        return __sp_cleanAfter(text, info);
+                    }
+                    if (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000) {
+                        return __sp_cleanAfter(text, info);
                     }
                 }
                 return text;
@@ -35880,27 +36694,51 @@ dashboardButton.style.visibility = 'hidden';
         if (body.indexOf('PlaybackAccessToken') < 0) {
             return body;
         }
-        if (body.indexOf('picture-by-picture') >= 0) {
-            return '';
-        }
         try {
             var parsed = JSON.parse(body);
-            var changed = false;
-            (Array.isArray(parsed) ? parsed : [parsed]).forEach(function (item) {
-                if (
-                    item &&
-                    item.variables &&
-                    item.variables.playerType &&
-                    item.variables.playerType !== 'popout' &&
-                    item.variables.playerType !== 'autoplay' &&
-                    item.variables.playerType !== 'embed'
-                ) {
-                    item.variables.playerType = 'popout';
-                    changed = true;
+            if (Array.isArray(parsed)) {
+                var filtered = [];
+                var changedArr = false;
+                for (var i = 0; i < parsed.length; i++) {
+                    var entry = parsed[i];
+                    var pType = entry && entry.variables && entry.variables.playerType;
+                    if (pType === 'picture-by-picture') {
+                        changedArr = true;
+                        continue;
+                    }
+                    if (
+                        pType &&
+                        pType !== 'popout' &&
+                        pType !== 'autoplay' &&
+                        pType !== 'embed'
+                    ) {
+                        entry.variables.playerType = 'popout';
+                        changedArr = true;
+                    }
+                    filtered.push(entry);
                 }
-            });
-            return changed ? JSON.stringify(parsed) : body;
+                if (!filtered.length) return '';
+                return changedArr ? JSON.stringify(filtered) : body;
+            }
+            if (parsed && parsed.variables && parsed.variables.playerType === 'picture-by-picture') {
+                return '';
+            }
+            if (
+                parsed &&
+                parsed.variables &&
+                parsed.variables.playerType &&
+                parsed.variables.playerType !== 'popout' &&
+                parsed.variables.playerType !== 'autoplay' &&
+                parsed.variables.playerType !== 'embed'
+            ) {
+                parsed.variables.playerType = 'popout';
+                return JSON.stringify(parsed);
+            }
+            return body;
         } catch (e) {
+            if (body.indexOf('picture-by-picture') >= 0) {
+                return '';
+            }
             return body;
         }
     }
@@ -35911,10 +36749,14 @@ dashboardButton.style.visibility = 'hidden';
             var url = typeof input === 'string'
                 ? input
                 : (input && input.url) || '';
-            if (url.indexOf('gql.twitch.tv') >= 0 && init) {
+            if (url.indexOf('gql.twitch.tv') >= 0) {
                 isGql = true;
-                spNoteHeaders(init.headers);
-                if (directPlaybackOn() && typeof init.body === 'string') {
+                if (init && init.headers) {
+                    spNoteHeaders(init.headers);
+                } else if (input && input.headers) {
+                    spNoteHeaders(input.headers);
+                }
+                if (init && directPlaybackOn() && typeof init.body === 'string') {
                     var body = spRewriteTokenBody(init.body);
                     if (body !== init.body) {
                         init = Object.assign({}, init, { body: body });
@@ -35926,8 +36768,11 @@ dashboardButton.style.visibility = 'hidden';
         if (isGql && p && typeof p.then === 'function') {
             p.then(function (res) {
                 try {
-                    if (res && res.ok && typeof inspectGqlForAutoClaims === 'function') {
-                        res.clone().json().then(inspectGqlForAutoClaims).catch(function () {});
+                    if (res && res.ok && !res.__tp9GqlInspected && typeof inspectGqlForAutoClaims === 'function') {
+                        res.__tp9GqlInspected = true;
+                        var cloned = res.clone();
+                        cloned.__tp9GqlInspected = true;
+                        cloned.json().then(inspectGqlForAutoClaims).catch(function () {});
                     }
                 } catch (e) {}
             }).catch(function () {});
@@ -36081,7 +36926,7 @@ dashboardButton.style.visibility = 'hidden';
         }
         if (spRateCatchUpVideo) {
             try {
-                if (Math.abs(spRateCatchUpVideo.playbackRate - 1.06) < 0.02) {
+                if (Math.abs(spRateCatchUpVideo.playbackRate - 1.06) < 0.03) {
                     spRateCatchUpVideo.playbackRate = 1;
                 }
             } catch (e) {}
@@ -36089,13 +36934,16 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
-    function spStartSmoothRateCatchUp(video) {
+    function spStartSmoothRateCatchUp(video, targetLatency) {
         spStopSmoothRateCatchUp();
         if (!video) return;
         // Ne touche pas à la vitesse si l'utilisateur a choisi une vitesse manuelle (ex: 0.5x, 1.5x, 2x)
-        if (video.playbackRate !== 1 && Math.abs(video.playbackRate - 1.06) > 0.02) {
+        if (video.playbackRate !== 1 && Math.abs(video.playbackRate - 1.06) > 0.03) {
             return;
         }
+        var goalLat = (typeof targetLatency === 'number' && targetLatency >= 1.2 && targetLatency <= 3.0)
+            ? targetLatency
+            : SP_CATCHUP_TARGET_AHEAD;
         spRateCatchUpVideo = video;
         var startedAt = Date.now();
         try {
@@ -36110,16 +36958,31 @@ dashboardButton.style.visibility = 'hidden';
                 !spRateCatchUpVideo.isConnected ||
                 spRateCatchUpVideo.paused ||
                 (dvrOverlay && !dvrIsLive()) ||
-                (Date.now() - startedAt) > 14000
+                (Date.now() - startedAt) > 35000
             ) {
                 spStopSmoothRateCatchUp();
                 return;
             }
             var ahead = spAheadOf(spRateCatchUpVideo);
-            if (ahead <= SP_CATCHUP_TARGET_AHEAD) {
+            var parts = spPlayerParts(false);
+            var curLat = spLiveLatency(parts && parts.player);
+            // Si le lecteur a fini de mettre en tampon les segments suivants
+            // alors que la latence réelle (getLiveLatency) dépasse encore la
+            // cible de > 0,7 s, on saute immédiatement la différence disponible
+            if (curLat !== null && curLat > goalLat + 0.7 && ahead > 2.4) {
+                var extraJump = Math.min(curLat - goalLat, ahead - 1.85);
+                if (extraJump >= 0.4) {
+                    try {
+                        spRateCatchUpVideo.currentTime = spRateCatchUpVideo.currentTime + extraJump;
+                        ahead = spAheadOf(spRateCatchUpVideo);
+                    } catch (e) {}
+                }
+            }
+            var latOk = (curLat === null) || (curLat <= goalLat + 0.3) || (ahead < 0.85);
+            if (ahead <= SP_CATCHUP_TARGET_AHEAD && latOk) {
                 spStopSmoothRateCatchUp();
             }
-        }, 250);
+        }, 200);
     }
 
     // Maintient aussi le lecteur au plus près du direct PENDANT les
@@ -36196,6 +37059,7 @@ dashboardButton.style.visibility = 'hidden';
         spCatchUp = {
             channel: channel || getTestChannel(),
             at: Date.now(),
+            readySince: 0,
             latency: latency,
             edgeGap: typeof edgeGap === 'number' ? edgeGap : null,
             prevVideo: prevVideo,
@@ -36236,7 +37100,7 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         // Branche immédiatement les écouteurs loadeddata / canplay sur la
-        // nouvelle vidéo pour intercepter la toute 1re frame à 0 ms
+        // nouvelle vidéo
         if (video !== w.boundVideo) {
             if (w.boundVideo && w.onReady) {
                 try {
@@ -36245,13 +37109,12 @@ dashboardButton.style.visibility = 'hidden';
                 } catch (e) {}
             }
             w.boundVideo = video;
+            w.readySince = 0;
             try {
                 video.addEventListener('loadeddata', w.onReady, { once: true });
                 video.addEventListener('canplay', w.onReady, { once: true });
             } catch (e) {}
         }
-        // Dès que le premier segment est en tampon (readyState >= 2), on agit
-        // immédiatement AVANT que la vidéo ne joue les secondes en retard !
         if (video.paused || video.readyState < 2 || !video.buffered || video.buffered.length === 0) {
             return;
         }
@@ -36259,11 +37122,28 @@ dashboardButton.style.visibility = 'hidden';
         if (aheadNow <= 0.1) {
             return;
         }
-        spCatchUpStop();
+        if (!w.readySince) {
+            w.readySince = now;
+        }
         var parts = spPlayerParts(true);
         var after = spLiveLatency(parts && parts.player);
-        var repeat = (w.latency !== null && after !== null)
-            ? ((after - w.latency) - (now - w.at) / 1000)
+        var targetLat = (w.latency !== null && w.latency >= 1.1 && w.latency <= 3.0)
+            ? w.latency
+            : 1.8;
+        var latGap = (after !== null && after > targetLat) ? (after - targetLat) : 0;
+        // Si la latence réelle (getLiveLatency) est encore élevée (ex: 5,0 s)
+        // mais que seul le 1er segment de 2 s est dans video.buffered, on
+        // active tout de suite 1.06x et on attend (jusqu'à 900 ms) que le
+        // segment suivant entre dans video.buffered pour pouvoir sauter
+        if (aheadNow < 2.6 && ( (latGap > 0.6 && (now - w.readySince) < 900) || (now - w.readySince) < 280 )) {
+            try {
+                if (video.playbackRate === 1) video.playbackRate = 1.06;
+            } catch (e) {}
+            return;
+        }
+        spCatchUpStop();
+        var repeat = (after !== null)
+            ? (after - targetLat)
             : (aheadNow - SP_CATCHUP_TARGET_AHEAD);
         var summary = (w.latency !== null && after !== null)
             ? (' (retard sur le direct : ' + spSec(w.latency) + ' avant la relance, ' +
@@ -36274,7 +37154,10 @@ dashboardButton.style.visibility = 'hidden';
                     : '') +
                 ')')
             : '';
-        if (repeat < SP_CATCHUP_MIN && aheadNow <= 2.6) {
+        if (repeat < SP_CATCHUP_MIN && aheadNow <= 2.3) {
+            try {
+                if (Math.abs(video.playbackRate - 1.06) < 0.03) video.playbackRate = 1;
+            } catch (e) {}
             logEvent('info', 'Retour après pub sur ' + w.channel +
                 ' : déjà calé sur le direct' + summary, true);
             return;
@@ -36284,13 +37167,11 @@ dashboardButton.style.visibility = 'hidden';
                 ' revues, laissées telles quelles' + summary, true);
             return;
         }
-        // Saut immédiat dès la 1re frame décodée : on se place directement à
-        // 2,0 s du bord du tampon pour ne jamais entendre/voir le retour en arrière
-        var safeMargin = Math.min(SP_CATCHUP_MARGIN, 2.0);
-        var room = aheadNow - safeMargin;
+        var safeMargin = 1.85;
+        var room = Math.max(0, aheadNow - safeMargin);
         var wantedJump = Math.max(repeat, aheadNow - SP_CATCHUP_TARGET_AHEAD);
         var jump = Math.min(wantedJump, room);
-        if (jump >= 0.25) {
+        if (jump >= 0.35) {
             try {
                 video.currentTime = video.currentTime + jump;
             } catch (e) {
@@ -36298,19 +37179,20 @@ dashboardButton.style.visibility = 'hidden';
                     (e && e.message) + ')' + summary);
             }
         }
-        // Complète le recalage en douceur (1.06x) sans aucun second saut brusque
-        if (spAheadOf(video) > SP_CATCHUP_TARGET_AHEAD) {
-            spStartSmoothRateCatchUp(video);
+        var remainingLat = (after !== null) ? (after - Math.max(0, jump >= 0.35 ? jump : 0)) : 0;
+        // Complète le recalage en douceur (1.06x + saut dès que le segment suivant est en tampon)
+        if (spAheadOf(video) > SP_CATCHUP_TARGET_AHEAD + 0.1 || remainingLat > targetLat + 0.35) {
+            spStartSmoothRateCatchUp(video, targetLat);
         }
         var channel = w.channel;
-        var appliedJump = Math.max(0, jump);
+        var appliedJump = jump >= 0.35 ? jump : 0;
         setTimeout(function () {
             var check = spPlayerParts(false);
             var final = spLiveLatency(check && check.player);
             logEvent(
                 'success',
-                'Retour après pub sur ' + channel + ' : calé dès la 1re frame' +
-                (appliedJump >= 0.25 ? ' (saut initial de ' + spSec(appliedJump) + ' + lissage 1.06x)' : ' (lissage 1.06x)') +
+                'Retour après pub sur ' + channel + ' : transition fluide' +
+                (appliedJump >= 0.35 ? ' (recalage de ' + spSec(appliedJump) + ' + lissage 1.06x)' : ' (lissage 1.06x)') +
                 summary +
                 (final !== null ? ', ' + spSec(final) + ' maintenant' : '')
             );
@@ -37545,7 +38427,16 @@ dashboardButton.style.visibility = 'hidden';
         if (dashboardVisible) {
             renderDashboard();
         }
+        if (typeof hideSidebarLivePreview === 'function') {
+            hideSidebarLivePreview();
+        }
+        if (typeof bttvHoverCard !== 'undefined' && bttvHoverCard && bttvHoverCard.style.display !== 'none') {
+            bttvHoverCard.style.display = 'none';
+        }
         if (!channel) {
+            if (typeof onBttvChannelChange === 'function') {
+                onBttvChannelChange('');
+            }
             console.log('[TwitchProxy] Chaîne quittée, mémoire libérée');
 
             return;
@@ -37708,13 +38599,159 @@ dashboardButton.style.visibility = 'hidden';
         botrixoficial: true
     };
 
+    function attachTwitchPubsubListener(ws) {
+        if (!ws || ws.__tp9PubsubHooked) return;
+        if (ws.url && ws.url.indexOf('irc-ws') !== -1) return;
+        ws.__tp9PubsubHooked = true;
+        try {
+            ws.addEventListener('message', function (ev) {
+                if (ev && ev.__tp9MsgSeen) return;
+                if (ev) {
+                    try { ev.__tp9MsgSeen = true; } catch (e0) {}
+                }
+                if (typeof handleTwitchPubsubMessage === 'function') {
+                    handleTwitchPubsubMessage(ev);
+                }
+            });
+        } catch (e) {}
+    }
+
     function installAnonChatWebSocketHook() {
         if (bttvAnonWsHooked || typeof window.WebSocket !== 'function') return;
         bttvAnonWsHooked = true;
+
+        // 1. Intercepte MessageEvent.prototype.data pour capter les messages des WebSockets / Workers (Hermes / PubSub)
+        // même si Twitch a ouvert la connexion WebSocket AVANT l'injection du userscript ou dans un Worker
+        try {
+            if (typeof window.MessageEvent === 'function' && window.MessageEvent.prototype) {
+                var msgDataDesc = Object.getOwnPropertyDescriptor(window.MessageEvent.prototype, 'data');
+                if (msgDataDesc && typeof msgDataDesc.get === 'function' && !msgDataDesc.get.__tp9Hooked) {
+                    var origMsgDataGet = msgDataDesc.get;
+                    var hookedMsgDataGet = function () {
+                        var val = origMsgDataGet.call(this);
+                        try {
+                            if (this && !this.__tp9MsgSeen) {
+                                this.__tp9MsgSeen = true;
+                                if (typeof val === 'string') {
+                                    if (
+                                        val.indexOf('claim-available') !== -1 ||
+                                        val.indexOf('claim-claimed') !== -1 ||
+                                        val.indexOf('points-earned') !== -1 ||
+                                        val.indexOf('community-points') !== -1
+                                    ) {
+                                        if (typeof handleTwitchPubsubMessage === 'function') {
+                                            handleTwitchPubsubMessage({ data: val });
+                                        }
+                                    }
+                                } else if (val && typeof val === 'object' && typeof handleTwitchPubsubMessage === 'function') {
+                                    if (
+                                        val.type === 'claim-available' ||
+                                        val.type === 'claim-claimed' ||
+                                        val.type === 'points-earned' ||
+                                        (val.data && (val.data.claim || val.data.point_gain))
+                                    ) {
+                                        handleTwitchPubsubMessage({ data: JSON.stringify(val) });
+                                    }
+                                }
+                            }
+                        } catch (e) {}
+                        return val;
+                    };
+                    hookedMsgDataGet.__tp9Hooked = true;
+                    Object.defineProperty(window.MessageEvent.prototype, 'data', {
+                        configurable: true,
+                        enumerable: msgDataDesc.enumerable,
+                        get: hookedMsgDataGet
+                    });
+                }
+            }
+        } catch (e) {}
+
+        // 2. Intercepte Response.prototype.json et Response.prototype.text pour capter 100 % des réponses GraphQL
+        // même si le client Apollo de Twitch avait mis en cache window.fetch avant le chargement du script
+        try {
+            if (typeof window.Response === 'function' && window.Response.prototype) {
+                var origResJson = window.Response.prototype.json;
+                if (typeof origResJson === 'function' && !origResJson.__tp9Hooked) {
+                    var hookedResJson = function () {
+                        var selfRes = this;
+                        var p = origResJson.apply(this, arguments);
+                        if (selfRes && selfRes.__tp9GqlInspected) {
+                            return p;
+                        }
+                        if (selfRes) {
+                            try { selfRes.__tp9GqlInspected = true; } catch (e0) {}
+                        }
+                        if (p && typeof p.then === 'function') {
+                            p.then(function (data) {
+                                try {
+                                    var u = (selfRes && selfRes.url) || '';
+                                    if ((!u || u.indexOf('gql.twitch.tv') !== -1) && typeof inspectGqlForAutoClaims === 'function') {
+                                        inspectGqlForAutoClaims(data);
+                                    }
+                                } catch (e) {}
+                            }).catch(function () {});
+                        }
+                        return p;
+                    };
+                    hookedResJson.__tp9Hooked = true;
+                    window.Response.prototype.json = hookedResJson;
+                }
+                var origResText = window.Response.prototype.text;
+                if (typeof origResText === 'function' && !origResText.__tp9Hooked) {
+                    var hookedResText = function () {
+                        var selfRes = this;
+                        var p = origResText.apply(this, arguments);
+                        if (selfRes && selfRes.__tp9GqlInspected) {
+                            return p;
+                        }
+                        if (p && typeof p.then === 'function') {
+                            p.then(function (txt) {
+                                try {
+                                    if (selfRes && selfRes.__tp9GqlInspected) return;
+                                    var u = (selfRes && selfRes.url) || '';
+                                    if (
+                                        (!u || u.indexOf('gql.twitch.tv') !== -1) &&
+                                        typeof txt === 'string' &&
+                                        (txt.indexOf('CommunityPoints') !== -1 ||
+                                            txt.indexOf('communityPoints') !== -1 ||
+                                            txt.indexOf('availableClaim') !== -1 ||
+                                            txt.indexOf('dropCampaigns') !== -1 ||
+                                            txt.indexOf('dropCurrentSession') !== -1) &&
+                                        typeof inspectGqlForAutoClaims === 'function'
+                                    ) {
+                                        if (selfRes) {
+                                            try { selfRes.__tp9GqlInspected = true; } catch (e0) {}
+                                        }
+                                        inspectGqlForAutoClaims(JSON.parse(txt));
+                                    }
+                                } catch (e) {}
+                            }).catch(function () {});
+                        }
+                        return p;
+                    };
+                    hookedResText.__tp9Hooked = true;
+                    window.Response.prototype.text = hookedResText;
+                }
+            }
+        } catch (e) {}
+
         var origSend = window.WebSocket.prototype.send;
+        var origAddEv = window.WebSocket.prototype.addEventListener;
+        if (typeof origAddEv === 'function') {
+            window.WebSocket.prototype.addEventListener = function (type, listener, options) {
+                try {
+                    if (type === 'message') {
+                        attachTwitchPubsubListener(this);
+                    }
+                } catch (e) {}
+                return origAddEv.call(this, type, listener, options);
+            };
+        }
         if (typeof origSend !== 'function') return;
         window.WebSocket.prototype.send = function (data) {
             try {
+                attachTwitchPubsubListener(this);
                 if (this && this.url && this.url.indexOf('irc-ws') !== -1 && this.url.indexOf('twitch.tv') !== -1) {
                     if (bttvActiveIrcSockets.indexOf(this) === -1) {
                         bttvActiveIrcSockets.push(this);
@@ -37852,15 +38889,17 @@ dashboardButton.style.visibility = 'hidden';
         bttvSplitAlt = alt;
     }
 
+    var bttvEmoteMapRevision = 0;
+
     function rescanExistingChatForEmotes() {
-        if (!bttvEmoteMap.size) return;
+        if (!bttvEmoteMap.size || (pageConfig.bttvEmotes === false && pageConfig.stvEmotes === false)) return;
         var container = document.querySelector('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]');
         if (!container) return;
         var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
         for (var i = 0; i < msgs.length; i++) {
             var msgEl = msgs[i];
-            if (msgEl.__tp9EmotesParsed) continue;
-            msgEl.__tp9EmotesParsed = true;
+            if (msgEl.__tp9EmoteRev === bttvEmoteMapRevision) continue;
+            msgEl.__tp9EmoteRev = bttvEmoteMapRevision;
             var textFrags = msgEl.querySelectorAll('.text-fragment, [data-a-target="chat-message-text"]');
             textFrags.forEach(function (fragEl) {
                 var childNodes = Array.prototype.slice.call(fragEl.childNodes);
@@ -37870,9 +38909,9 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 });
             });
-            var bodyEl = msgEl.querySelector('[data-a-target="chat-line-message-body"], .chat-line__message-container');
-            if (bodyEl && bodyEl !== msgEl) {
-                msgEl.__tp9OrigBodyHtml = bodyEl.innerHTML;
+            var savedHtml = extractMessageOnlyHtml(msgEl);
+            if (savedHtml && !msgEl.__tp9DeletedRestored) {
+                msgEl.__tp9OrigBodyHtml = savedHtml;
             }
             updateMessageOnlyEmotesState(msgEl);
         }
@@ -37880,6 +38919,7 @@ dashboardButton.style.visibility = 'hidden';
 
     function rebuildBttvEmoteMap() {
         bttvEmoteMap.clear();
+        bttvEmoteMapRevision++;
         var allowBttv = pageConfig.bttvEmotes !== false;
         var allowStv = pageConfig.stvEmotes !== false;
 
@@ -38040,24 +39080,32 @@ dashboardButton.style.visibility = 'hidden';
     function loadBttvChannelEmotes(channel) {
         var login = (channel || '').trim().toLowerCase();
         if (!login) {
+            bttvCurrentChannel = null;
             bttvChannelEmotes = [];
             rebuildBttvEmoteMap();
             return;
         }
         bttvCurrentChannel = login;
 
-        // 0. Restauration instantanée (0 ms) depuis sessionStorage au refresh F5
+        // 0. Restauration instantanée (0 ms) depuis sessionStorage au refresh F5,
+        // ou purge immédiate des émotes de la chaîne précédente lors d'un changement de stream
         var cacheKey = 'tp9_emotes_ch_' + login;
+        var restoredFromCache = false;
         try {
             var rawChCache = sessionStorage.getItem(cacheKey);
             if (rawChCache) {
                 var parsedCh = JSON.parse(rawChCache);
                 if (parsedCh && Array.isArray(parsedCh.items)) {
                     bttvChannelEmotes = parsedCh.items;
+                    restoredFromCache = true;
                     rebuildBttvEmoteMap();
                 }
             }
         } catch (e) {}
+        if (!restoredFromCache && bttvChannelEmotes.length > 0) {
+            bttvChannelEmotes = [];
+            rebuildBttvEmoteMap();
+        }
 
         resolveTwitchChannelId(login).then(function (info) {
             if (bttvCurrentChannel !== login) return;
@@ -38455,20 +39503,70 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
+    function extractChatMessagePlainText(msgEl) {
+        if (!msgEl) return '';
+        var parts = [];
+        var bodyRoot = msgEl.querySelector('[data-a-target="chat-line-message-body"]');
+        if (bodyRoot) {
+            bodyRoot.childNodes.forEach(function (n) {
+                if (n.nodeType === 3) {
+                    parts.push(n.nodeValue || '');
+                } else if (n.nodeType === 1) {
+                    if (n.tagName === 'IMG') {
+                        parts.push(n.getAttribute('data-tp9-emote-code') || n.getAttribute('alt') || '');
+                    } else {
+                        var imgs = n.querySelectorAll ? n.querySelectorAll('img') : [];
+                        if (imgs.length) {
+                            n.childNodes.forEach(function (cn) {
+                                if (cn.nodeType === 3) parts.push(cn.nodeValue || '');
+                                else if (cn.nodeType === 1 && cn.tagName === 'IMG') {
+                                    parts.push(cn.getAttribute('data-tp9-emote-code') || cn.getAttribute('alt') || '');
+                                } else if (cn.nodeType === 1) {
+                                    parts.push(cn.textContent || '');
+                                }
+                            });
+                            for (var k = 0; k < imgs.length; k++) {
+                                var code = imgs[k].getAttribute('data-tp9-emote-code') || imgs[k].getAttribute('alt') || '';
+                                if (code) parts.push(code);
+                            }
+                        } else {
+                            parts.push(n.textContent || '');
+                        }
+                    }
+                }
+            });
+            return parts.join(' ').replace(/\s+/g, ' ').trim();
+        }
+        var frags = msgEl.querySelectorAll('.text-fragment, [data-a-target="chat-message-text"], img.tp9-emote, .chat-image__container img, img.chat-line__message--emote');
+        if (frags.length) {
+            for (var i = 0; i < frags.length; i++) {
+                var f = frags[i];
+                if (f.tagName === 'IMG') {
+                    parts.push(f.getAttribute('data-tp9-emote-code') || f.getAttribute('alt') || '');
+                } else {
+                    parts.push(f.textContent || '');
+                }
+            }
+            return parts.join(' ').replace(/\s+/g, ' ').trim();
+        }
+        return (msgEl.textContent || '').trim();
+    }
+
     function evaluateMessageDynamicRules(msgEl) {
         if (!msgEl || msgEl.nodeType !== 1) return false;
         var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
         var author = authorEl ? (authorEl.textContent || '').trim() : '';
+        var authorLogin = (msgEl.getAttribute('data-a-user') || (authorEl && authorEl.getAttribute('data-a-user')) || '').trim().toLowerCase();
         var authorLower = author.toLowerCase();
-        var rawText = (msgEl.textContent || '').trim();
-        var lowerText = rawText.toLowerCase();
+        var bodyText = extractChatMessagePlainText(msgEl);
+        var lowerBody = bodyText.toLowerCase();
 
-        // 1. Blacklist
+        // 1. Blacklist (corps du message + codes d'émotes + pseudo)
         var isBlacklisted = false;
         if (pageConfig.blacklistKeywords !== false && Array.isArray(pageConfig.blacklistWords) && pageConfig.blacklistWords.length) {
             for (var b = 0; b < pageConfig.blacklistWords.length; b++) {
                 var bw = String(pageConfig.blacklistWords[b] || '').trim().toLowerCase();
-                if (bw && (lowerText.indexOf(bw) !== -1 || authorLower === bw)) {
+                if (bw && (lowerBody.indexOf(bw) !== -1 || authorLower === bw || (authorLogin && authorLogin === bw))) {
                     isBlacklisted = true;
                     break;
                 }
@@ -38481,12 +39579,12 @@ dashboardButton.style.visibility = 'hidden';
             msgEl.style.display = '';
         }
 
-        // 2. Highlight mots-clés
+        // 2. Highlight mots-clés (uniquement sur le corps du message / émotes, jamais sur l'horodatage ou le badge BOT)
         var highlighted = false;
         if (pageConfig.highlightKeywords !== false && Array.isArray(pageConfig.highlightWords) && pageConfig.highlightWords.length) {
             for (var h = 0; h < pageConfig.highlightWords.length; h++) {
                 var hw = String(pageConfig.highlightWords[h] || '').trim().toLowerCase();
-                if (hw && lowerText.indexOf(hw) !== -1) {
+                if (hw && lowerBody.indexOf(hw) !== -1) {
                     highlighted = true;
                     break;
                 }
@@ -38534,21 +39632,16 @@ dashboardButton.style.visibility = 'hidden';
             }
         }
 
-        // 0c. Horodatage précis HH:MM:SS (toujours préparé, affiché via body.tp9-bttv-chat-ts)
+        // 0c. Horodatage précis HH:MM:SS (toujours préparé, affiché via body.tp9-bttv-chat-ts qui masque l'horodatage natif)
         if (!msgEl.querySelector('.tp9-chat-ts-tag')) {
-            var nativeTs = msgEl.querySelector('.chat-line__timestamp, [data-a-target="chat-timestamp"]');
             var d = new Date();
             var hh = String(d.getHours()).padStart(2, '0');
             var mm = String(d.getMinutes()).padStart(2, '0');
             var ss = String(d.getSeconds()).padStart(2, '0');
-            if (nativeTs && pageConfig.chatTimestamps) {
-                nativeTs.textContent = hh + ':' + mm + ':' + ss;
-            } else {
-                var tsSpan = document.createElement('span');
-                tsSpan.className = 'tp9-chat-ts-tag';
-                tsSpan.textContent = hh + ':' + mm + ':' + ss;
-                msgEl.insertBefore(tsSpan, msgEl.firstChild);
-            }
+            var tsSpan = document.createElement('span');
+            tsSpan.className = 'tp9-chat-ts-tag';
+            tsSpan.textContent = hh + ':' + mm + ':' + ss;
+            msgEl.insertBefore(tsSpan, msgEl.firstChild);
         }
 
         // 0d. Surlignage des rôles (Broadcaster, Modérateur, VIP, 1er message)
@@ -38576,7 +39669,7 @@ dashboardButton.style.visibility = 'hidden';
         // 4. Remplacement des émotes BTTV / 7TV / FFZ
         var textFrags = msgEl.querySelectorAll('.text-fragment, [data-a-target="chat-message-text"]');
         if ((pageConfig.bttvEmotes !== false || pageConfig.stvEmotes !== false) && bttvEmoteMap.size > 0) {
-            msgEl.__tp9EmotesParsed = true;
+            msgEl.__tp9EmoteRev = bttvEmoteMapRevision;
             textFrags.forEach(function (fragEl) {
                 var childNodes = Array.prototype.slice.call(fragEl.childNodes);
                 childNodes.forEach(function (node) {
@@ -38664,10 +39757,27 @@ dashboardButton.style.visibility = 'hidden';
 
         if (!container.__tp9HoverBound) {
             container.__tp9HoverBound = true;
+            var getChatScroller = function () {
+                var sc = container.closest('[data-a-target="chat-scroller"], .simplebar-scroll-content');
+                if (sc && sc !== container) return sc;
+                var p = container.parentElement;
+                while (p && p !== document.body) {
+                    if (p.scrollHeight > p.clientHeight + 4) return p;
+                    p = p.parentElement;
+                }
+                return container.parentElement;
+            };
             container.addEventListener('mouseenter', function () {
-                if (pageConfig.hoverPause === false) return;
-                var scroller = container.closest('[data-a-target="chat-scroller"], .chat-scrollable-area__message-container') || container.parentElement;
-                if (scroller && (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 30) {
+                if (scriptIsOff() || pageConfig.hoverPause === false) return;
+                var scroller = getChatScroller();
+                if (!scroller) return;
+                if (pageConfig.reverseChat) {
+                    if (scroller.scrollTop < 35) {
+                        bttvChatHoverPaused = true;
+                        scroller.scrollTop = scroller.scrollTop + 22;
+                        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    }
+                } else if ((scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 35) {
                     bttvChatHoverPaused = true;
                     scroller.scrollTop = Math.max(0, scroller.scrollTop - 22);
                     scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -38676,12 +39786,13 @@ dashboardButton.style.visibility = 'hidden';
             container.addEventListener('mouseleave', function () {
                 if (!bttvChatHoverPaused) return;
                 bttvChatHoverPaused = false;
-                var resumeBtn = document.querySelector('[data-a-target="chat-scroller-footer"] button, .chat-scrollable-area__message-container ~ div button');
+                var resumeBtn = document.querySelector('[data-a-target="chat-scroller-footer"] button');
                 if (resumeBtn) {
                     try { resumeBtn.click(); } catch (e) {}
-                } else {
-                    var scroller = container.closest('[data-a-target="chat-scroller"]') || container.parentElement;
-                    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+                }
+                var scroller = getChatScroller();
+                if (scroller) {
+                    scroller.scrollTop = pageConfig.reverseChat ? 0 : scroller.scrollHeight;
                 }
             });
         }
@@ -38733,7 +39844,12 @@ dashboardButton.style.visibility = 'hidden';
                 characterData: true,
                 subtree: true
             });
-            input.addEventListener('input', updateChatInputEmoteMirror);
+            input.addEventListener('input', function (ev) {
+                if (ev && ev.isTrusted) {
+                    bttvSentHistoryIdx = -1;
+                }
+                updateChatInputEmoteMirror();
+            });
             input.addEventListener('scroll', function () {
                 if (bttvInputMirrorEl) bttvInputMirrorEl.scrollTop = input.scrollTop;
             });
@@ -38743,6 +39859,7 @@ dashboardButton.style.visibility = 'hidden';
         if (!raw || !raw.trim()) {
             input.classList.remove('tp9-has-input-emotes');
             if (bttvInputMirrorEl) {
+                bttvInputMirrorEl.__tp9LastHtml = '';
                 bttvInputMirrorEl.innerHTML = '';
                 bttvInputMirrorEl.style.display = 'none';
             }
@@ -38760,6 +39877,7 @@ dashboardButton.style.visibility = 'hidden';
         if (!hasAnyEmote) {
             input.classList.remove('tp9-has-input-emotes');
             if (bttvInputMirrorEl) {
+                bttvInputMirrorEl.__tp9LastHtml = '';
                 bttvInputMirrorEl.innerHTML = '';
                 bttvInputMirrorEl.style.display = 'none';
             }
@@ -38818,7 +39936,10 @@ dashboardButton.style.visibility = 'hidden';
                 html += '<span class="tp9-cim-txt">' + escapeHTML(tok) + '</span>';
             }
         }
-        bttvInputMirrorEl.innerHTML = html;
+        if (bttvInputMirrorEl.__tp9LastHtml !== html) {
+            bttvInputMirrorEl.__tp9LastHtml = html;
+            bttvInputMirrorEl.innerHTML = html;
+        }
         bttvInputMirrorEl.style.display = 'block';
         bttvInputMirrorEl.scrollTop = input.scrollTop;
     }
@@ -39373,10 +40494,13 @@ dashboardButton.style.visibility = 'hidden';
         return urls;
     }
 
+    var bttvSidebarHoverSeq = 0;
+
     // Lance l'aperçu live dans la barre latérale sans aucune pub (autoplay VAFT -> embed -> proxy + blocage strict de stitched-ad)
-    function startSidebarAdFreeStream(login, videoEl) {
+    function startSidebarAdFreeStream(login, videoEl, hoverSeq) {
         stopSidebarAdFreeStream();
         if (!login || !videoEl) return;
+        var activeSeq = typeof hoverSeq === 'number' ? hoverSeq : bttvSidebarHoverSeq;
 
         var candidateTypes = ['autoplay', 'embed', 'popout'];
         var proxyUrls = getSidebarFallbackProxyUrls(login);
@@ -39384,12 +40508,20 @@ dashboardButton.style.visibility = 'hidden';
         var proxyIdx = 0;
         var streamCleanVerified = false;
 
+        function isSessionAlive() {
+            return (
+                bttvSidebarHoverSeq === activeSeq &&
+                bttvSidebarHoverLogin === login &&
+                Boolean(bttvSidebarCard && bttvSidebarCard.style.display !== 'none')
+            );
+        }
+
         function tryNextCandidate() {
-            if (bttvSidebarHoverLogin !== login || !bttvSidebarCard || bttvSidebarCard.style.display === 'none') return;
+            if (!isSessionAlive()) return;
             if (stepIdx < candidateTypes.length) {
                 var pType = candidateTypes[stepIdx++];
                 fetchSidebarTokenUsherUrl(login, pType).then(function (usherUrl) {
-                    if (bttvSidebarHoverLogin !== login) return;
+                    if (!isSessionAlive()) return;
                     if (!usherUrl) {
                         tryNextCandidate();
                         return;
@@ -39403,9 +40535,9 @@ dashboardButton.style.visibility = 'hidden';
         }
 
         function bootSidebarHlsOnUrl(sourceUrl) {
-            if (bttvSidebarHoverLogin !== login || !bttvSidebarCard || bttvSidebarCard.style.display === 'none') return;
+            if (!isSessionAlive()) return;
             if (bttvSidebarHls) {
-                try { bttvSidebarHls.destroy(); } catch (e) {}
+                try { bttvSidebarHls.stopLoad(); bttvSidebarHls.destroy(); } catch (e) {}
                 bttvSidebarHls = null;
             }
             streamCleanVerified = false;
@@ -39425,7 +40557,7 @@ dashboardButton.style.visibility = 'hidden';
                 hls.attachMedia(videoEl);
 
                 hls.on(HlsLib.Events.MANIFEST_PARSED, function () {
-                    if (bttvSidebarHoverLogin !== login) return;
+                    if (!isSessionAlive() || bttvSidebarHls !== hls) return;
                     if (hls.levels && hls.levels.length > 1) {
                         var targetLevel = 0;
                         for (var l = 0; l < hls.levels.length; l++) {
@@ -39440,7 +40572,7 @@ dashboardButton.style.visibility = 'hidden';
                 });
 
                 hls.on(HlsLib.Events.LEVEL_LOADED, function (ev, data) {
-                    if (bttvSidebarHoverLogin !== login) return;
+                    if (!isSessionAlive() || bttvSidebarHls !== hls) return;
                     var rawM3u8 = (data && data.details && data.details.m3u8) || '';
                     var hasAdMarker = rawM3u8.indexOf('stitched-ad') !== -1 || rawM3u8.indexOf('twitch-ad') !== -1;
                     if (!hasAdMarker && data && data.details && Array.isArray(data.details.fragments)) {
@@ -39454,9 +40586,11 @@ dashboardButton.style.visibility = 'hidden';
                         }
                     }
                     if (hasAdMarker) {
-                        // Cette source contient une pub : on garde la vidéo masquée et on bascule immédiatement sur la source de secours suivante
+                        // Cette source contient une pub : détruit l'instance HLS actuelle et bascule immédiatement sur la source de secours suivante
                         videoEl.style.opacity = '0';
                         try { videoEl.pause(); } catch (e) {}
+                        try { hls.stopLoad(); hls.destroy(); } catch (e2) {}
+                        if (bttvSidebarHls === hls) bttvSidebarHls = null;
                         tryNextCandidate();
                         return;
                     }
@@ -39470,13 +40604,15 @@ dashboardButton.style.visibility = 'hidden';
                 });
 
                 hls.on(HlsLib.Events.ERROR, function (ev, data) {
-                    if (data && data.fatal && bttvSidebarHoverLogin === login) {
+                    if (data && data.fatal && isSessionAlive() && bttvSidebarHls === hls) {
+                        try { hls.stopLoad(); hls.destroy(); } catch (e2) {}
+                        if (bttvSidebarHls === hls) bttvSidebarHls = null;
                         tryNextCandidate();
                     }
                 });
 
                 videoEl.onplaying = function () {
-                    if (bttvSidebarHoverLogin === login && streamCleanVerified) {
+                    if (isSessionAlive() && streamCleanVerified) {
                         videoEl.style.opacity = '1';
                     }
                 };
@@ -39487,6 +40623,7 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function hideSidebarLivePreview() {
+        bttvSidebarHoverSeq++;
         bttvSidebarHoverLogin = '';
         if (bttvSidebarIframeTimer) {
             clearTimeout(bttvSidebarIframeTimer);
@@ -39671,6 +40808,9 @@ dashboardButton.style.visibility = 'hidden';
                     var ch = bttvHoverCard.offsetHeight || 140;
                     bttvHoverCard.style.left = Math.max(8, Math.min(r.left + r.width / 2 - cw / 2, window.innerWidth - cw - 8)) + 'px';
                     bttvHoverCard.style.top = Math.max(8, r.top - ch - 8) + 'px';
+                    if (bttvSidebarHoverLogin) {
+                        hideSidebarLivePreview();
+                    }
                     return;
                 }
             }
@@ -39682,7 +40822,7 @@ dashboardButton.style.visibility = 'hidden';
             if (pageConfig.sidebarPreview !== false) {
                 var sideLink = t.closest('.side-nav-card__link, [data-test-selector="followed-channel"], [data-a-target="side-nav-card"]');
                 if (sideLink) {
-                    var isOffline = !!sideLink.querySelector('.side-nav-card__avatar--offline');
+                    var isOffline = isSidebarCardOffline(sideLink);
                     var href = sideLink.getAttribute('href') || (sideLink.querySelector('a') && sideLink.querySelector('a').getAttribute('href')) || '';
                     var m = href.match(/^\/([a-zA-Z0-9_]{2,30})$/);
                     if (m && !isOffline) {
@@ -39694,7 +40834,7 @@ dashboardButton.style.visibility = 'hidden';
                                 '<div class="tp9-sp-media">' +
                                     '<span class="tp9-sp-live-pill">LIVE</span>' +
                                     '<img src="" alt="">' +
-                                    '<video muted autoplay playsinline></video>' +
+                                    '<video class="tp9-sidebar-preview-video" muted autoplay playsinline></video>' +
                                 '</div>' +
                                 '<div class="tp9-sp-info"></div>';
                             document.body.appendChild(bttvSidebarCard);
@@ -39706,6 +40846,7 @@ dashboardButton.style.visibility = 'hidden';
 
                         if (bttvSidebarHoverLogin !== login) {
                             stopSidebarAdFreeStream();
+                            var seq = ++bttvSidebarHoverSeq;
                             bttvSidebarHoverLogin = login;
                             var cacheBust = Math.floor(Date.now() / 15000);
                             var imgEl = bttvSidebarCard.querySelector('img');
@@ -39720,10 +40861,10 @@ dashboardButton.style.visibility = 'hidden';
 
                             if (bttvSidebarIframeTimer) clearTimeout(bttvSidebarIframeTimer);
                             bttvSidebarIframeTimer = setTimeout(function () {
-                                if (bttvSidebarHoverLogin !== login || !bttvSidebarCard || bttvSidebarCard.style.display === 'none') return;
+                                if (bttvSidebarHoverSeq !== seq || bttvSidebarHoverLogin !== login || !bttvSidebarCard || bttvSidebarCard.style.display === 'none') return;
                                 var vid = bttvSidebarCard.querySelector('video');
                                 if (vid) {
-                                    startSidebarAdFreeStream(login, vid);
+                                    startSidebarAdFreeStream(login, vid, seq);
                                 }
                             }, 200);
                         }
@@ -39734,13 +40875,27 @@ dashboardButton.style.visibility = 'hidden';
             hideSidebarLivePreview();
         }, true);
 
+        var clearFloatingHoverCards = function () {
+            hideSidebarLivePreview();
+            if (bttvHoverCard && bttvHoverCard.style.display !== 'none') {
+                bttvHoverCard.style.display = 'none';
+            }
+        };
+        window.addEventListener('blur', clearFloatingHoverCards);
+        document.addEventListener('mouseleave', clearFloatingHoverCards);
+
         // 3. Double-clic sur un message pour @répondre
         document.addEventListener('dblclick', function (e) {
             if (scriptIsOff() || !pageConfig.dblClickReply) return;
-            var msgEl = e.target && e.target.closest && e.target.closest('.chat-line__message, [data-a-target="chat-line-message"]');
+            var t = e.target;
+            if (t && t.closest && t.closest('a, button')) return;
+            var msgEl = t && t.closest && t.closest('.chat-line__message, [data-a-target="chat-line-message"]');
             if (!msgEl) return;
             var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
-            var username = authorEl ? (authorEl.textContent || '').trim() : '';
+            var loginAttr = (msgEl.getAttribute('data-a-user') || (authorEl && authorEl.getAttribute('data-a-user')) || '').trim();
+            var rawDisplay = authorEl ? (authorEl.textContent || '').trim() : '';
+            var parenMatch = rawDisplay.match(/\(([a-zA-Z0-9_]+)\)\s*$/);
+            var username = loginAttr || (parenMatch ? parenMatch[1] : rawDisplay);
             if (username) {
                 insertTextIntoTwitchChat('@' + username, false);
             }
@@ -39805,35 +40960,51 @@ dashboardButton.style.visibility = 'hidden';
             if (e.key === 'Tab' && pageConfig.tabComplete !== false && bttvEmoteMap.size > 0) {
                 var words = currentText.trimEnd().split(/\s+/);
                 var lastWord = words[words.length - 1] || '';
+                if (lastWord.charAt(0) === '@' || lastWord.charAt(0) === '/') {
+                    bttvTabMatches = [];
+                    return;
+                }
                 var cleanPrefix = lastWord.replace(/^:/, '').toLowerCase();
                 if (cleanPrefix.length >= 2) {
-                    e.preventDefault();
-                    e.stopPropagation();
                     if (!bttvTabMatches.length || bttvTabPrefix !== cleanPrefix) {
-                        bttvTabPrefix = cleanPrefix;
-                        bttvTabIdx = 0;
-                        bttvTabMatches = [];
+                        var freshMatches = [];
                         bttvEmoteMap.forEach(function (em) {
                             if (em.code.toLowerCase().indexOf(cleanPrefix) === 0) {
-                                bttvTabMatches.push(em.code);
+                                freshMatches.push(em.code);
                             }
                         });
+                        if (!freshMatches.length) {
+                            bttvTabMatches = [];
+                            return;
+                        }
+                        bttvTabPrefix = cleanPrefix;
+                        bttvTabIdx = 0;
+                        bttvTabMatches = freshMatches;
                     } else {
-                        bttvTabIdx = (bttvTabIdx + 1) % bttvTabMatches.length;
+                        var delta = e.shiftKey ? -1 : 1;
+                        bttvTabIdx = (bttvTabIdx + delta + bttvTabMatches.length) % bttvTabMatches.length;
                     }
                     if (bttvTabMatches.length) {
+                        e.preventDefault();
+                        e.stopPropagation();
                         var chosen = bttvTabMatches[bttvTabIdx];
                         words[words.length - 1] = chosen;
                         bttvTabPrefix = chosen.toLowerCase();
                         insertTextIntoTwitchChat(words.join(' '), true);
+                        return;
                     }
                 }
                 return;
-            } else {
+            } else if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') {
                 bttvTabMatches = [];
             }
 
-            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && pageConfig.upArrowHistory !== false && bttvSentHistory.length > 0) {
+            if (
+                (e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+                pageConfig.upArrowHistory !== false &&
+                bttvSentHistory.length > 0 &&
+                !isChatAutocompleteOpen()
+            ) {
                 if (e.key === 'ArrowUp' && (!currentText.trim() || bttvSentHistoryIdx >= 0)) {
                     e.preventDefault();
                     bttvSentHistoryIdx = Math.min(bttvSentHistory.length - 1, bttvSentHistoryIdx + 1);
@@ -39851,34 +41022,149 @@ dashboardButton.style.visibility = 'hidden';
         }, true);
     }
 
-    // Suivi des IDs de coffres et Drops déjà réclamés pour éviter tout doublon entre DOM et GraphQL
+    // Suivi des IDs de coffres, soldes exacts par chaîne et Drops déjà réclamés (DOM + GraphQL + PubSub/Hermes)
     var bttvClaimedPointIds = {};
     var bttvClaimedDropIds = {};
     var bttvLastChestCreditAt = 0;
+    var bttvLastChestPointsAdded = 0;
+    var bttvLastPassiveCreditAt = 0;
+    var bttvLastPassivePointsAdded = 0;
+    var bttvBonusClickHooked = false;
+    var bttvBonusSummaryObserver = null;
+    var bttvBonusSummaryNode = null;
+    var bttvChannelPointBalances = {};
+    var bttvCreditedSinceLastGqlPoll = {};
+    var bttvLastGqlPointsPollAt = 0;
+    var bttvGqlPointsPollCount = 0;
+    var bttvGqlPointsPollInFlight = false;
+    var bttvServerAvailableClaimId = null;
 
-    function creditClaimedChannelPoints(sourceLabel) {
-        var now = Date.now();
-        // Évite de compter deux fois le même coffre si GQL et DOM se déclenchent en même temps
-        if (now - bttvLastChestCreditAt < 8000) return;
-        bttvLastChestCreditAt = now;
-        if (pageStats && pageStats.totals) {
-            pageStats.totals.channelPointsClaimed = (pageStats.totals.channelPointsClaimed || 0) + 50;
+    function addPointsToStatsTotals(pts, isChest) {
+        if (!pageStats || !pageStats.totals || !(pts > 0)) return;
+        pageStats.totals.channelPointsClaimed = (pageStats.totals.channelPointsClaimed || 0) + pts;
+        if (isChest) {
             pageStats.totals.channelPointsChests = (pageStats.totals.channelPointsChests || 0) + 1;
+        }
+        var ch = (getTestChannel() || '').toLowerCase();
+        if (ch) {
+            bttvCreditedSinceLastGqlPoll[ch] = (bttvCreditedSinceLastGqlPoll[ch] || 0) + pts;
+        }
+        saveStatsNow();
+        updateQuickStatsPane();
+    }
+
+    function creditChannelPointsGain(pointsAmount, isChest, sourceLabel, claimId, fromBalanceDelta) {
+        var pts = (typeof pointsAmount === 'number' && pointsAmount > 0) ? Math.round(pointsAmount) : (isChest ? 50 : 10);
+        if (pts <= 0 || pts > 10000) return;
+        var now = Date.now();
+
+        if (fromBalanceDelta) {
+            // Le delta serveur (communityPoints.balance) a déjà soustrait bttvCreditedSinceLastGqlPoll : on crédite directement la différence réelle
+            if (!pageStats || !pageStats.totals) return;
+            pageStats.totals.channelPointsClaimed = (pageStats.totals.channelPointsClaimed || 0) + pts;
+            if (isChest && (now - bttvLastChestCreditAt >= 12000)) {
+                bttvLastChestCreditAt = now;
+                bttvLastChestPointsAdded = pts;
+                pageStats.totals.channelPointsChests = (pageStats.totals.channelPointsChests || 0) + 1;
+                logEvent('success', '🎁 Coffre de points de chaîne récupéré (+' + pts + ' pts · GQL)');
+            } else {
+                bttvLastPassiveCreditAt = now;
+                bttvLastPassivePointsAdded = pts;
+            }
             saveStatsNow();
             updateQuickStatsPane();
+            return;
         }
-        logEvent('success', '🎁 Coffre de points de chaîne récupéré automatiquement (+50 pts' + (sourceLabel ? ' · ' + sourceLabel : '') + ')');
+
+        if (isChest) {
+            if (claimId && bttvClaimedPointIds[claimId] === 'credited') {
+                return;
+            }
+            if (now - bttvLastChestCreditAt < 12000) {
+                if (claimId) bttvClaimedPointIds[claimId] = 'credited';
+                if (pts > bttvLastChestPointsAdded) {
+                    var diff = pts - bttvLastChestPointsAdded;
+                    bttvLastChestPointsAdded = pts;
+                    addPointsToStatsTotals(diff, false);
+                }
+                return;
+            }
+            bttvLastChestCreditAt = now;
+            bttvLastChestPointsAdded = pts;
+            if (claimId) bttvClaimedPointIds[claimId] = 'credited';
+            addPointsToStatsTotals(pts, true);
+            logEvent('success', '🎁 Coffre de points de chaîne récupéré automatiquement (+' + pts + ' pts' + (sourceLabel ? ' · ' + sourceLabel : '') + ')');
+        } else {
+            if (now - bttvLastChestCreditAt < 10000) {
+                if (pts > bttvLastChestPointsAdded) {
+                    var chestDiff = pts - bttvLastChestPointsAdded;
+                    bttvLastChestPointsAdded = pts;
+                    addPointsToStatsTotals(chestDiff, false);
+                }
+                return;
+            }
+            if (now - bttvLastPassiveCreditAt < 8000) {
+                if (pts > bttvLastPassivePointsAdded) {
+                    var passDiff = pts - bttvLastPassivePointsAdded;
+                    bttvLastPassivePointsAdded = pts;
+                    addPointsToStatsTotals(passDiff, false);
+                }
+                return;
+            }
+            bttvLastPassiveCreditAt = now;
+            bttvLastPassivePointsAdded = pts;
+            addPointsToStatsTotals(pts, false);
+        }
+    }
+
+    function creditClaimedChannelPoints(sourceLabel, pointsAmount, claimId) {
+        creditChannelPointsGain(pointsAmount || 50, true, sourceLabel, claimId);
+    }
+
+    function getTwitchAuthHeaderFallback() {
+        if (spHeaders && spHeaders['Authorization']) return spHeaders['Authorization'];
+        try {
+            var twUser = localStorage.getItem('twilight.user');
+            if (twUser) {
+                var parsed = JSON.parse(twUser);
+                if (parsed && parsed.authToken) {
+                    return 'OAuth ' + parsed.authToken;
+                }
+            }
+        } catch (e) {}
+        try {
+            var m = document.cookie.match(/(?:^|;\s*)auth-token=([^;]+)/);
+            if (m && m[1]) {
+                return 'OAuth ' + decodeURIComponent(m[1]);
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function getTwitchDeviceIdFallback() {
+        if (spDeviceId) return spDeviceId;
+        try {
+            var lsId = localStorage.getItem('local_copy_unique_id');
+            if (lsId) return lsId.replace(/^"|"$/g, '');
+        } catch (e) {}
+        try {
+            var cm = document.cookie.match(/(?:^|;\s*)unique_id=([^;]+)/);
+            if (cm && cm[1]) return decodeURIComponent(cm[1]);
+        } catch (e2) {}
+        return null;
     }
 
     function sendAuthenticatedTwitchGql(bodyObj) {
-        if (!spHeaders || !spHeaders['Authorization']) return Promise.resolve(null);
+        var authHeader = getTwitchAuthHeaderFallback();
+        var devId = getTwitchDeviceIdFallback();
         var headers = {
             'Content-Type': 'text/plain;charset=UTF-8',
-            'Client-ID': spHeaders['Client-ID'] || SP_CLIENT_ID
+            'Client-ID': (spHeaders && spHeaders['Client-ID']) || SP_CLIENT_ID
         };
-        if (spDeviceId) headers['X-Device-Id'] = spDeviceId;
+        if (authHeader) headers['Authorization'] = authHeader;
+        if (devId) headers['X-Device-Id'] = devId;
         SP_HEADER_NAMES.forEach(function (name) {
-            if (spHeaders[name]) headers[name] = spHeaders[name];
+            if (spHeaders && spHeaders[name]) headers[name] = spHeaders[name];
         });
         return spNativeFetch('https://gql.twitch.tv/gql', {
             method: 'POST',
@@ -39887,9 +41173,368 @@ dashboardButton.style.visibility = 'hidden';
         }).then(function (r) { return r.json(); }).catch(function () { return null; });
     }
 
-    function claimChannelPointsViaGql(channelId, claimId) {
+    function isRightSideChatActionBtn(btn) {
+        if (!btn || btn.nodeType !== 1) return true;
+        if (btn.id && btn.id.indexOf('tp9') === 0) return true;
+        var dt = (btn.getAttribute('data-a-target') || '').toLowerCase();
+        if (
+            dt === 'chat-send-button' ||
+            dt === 'chat-settings' ||
+            dt === 'emote-picker-button' ||
+            dt.indexOf('badge') !== -1 ||
+            dt.indexOf('viewer-list') !== -1 ||
+            dt.indexOf('collapse') !== -1
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    // Trouve la barre d'outils inférieure du tchat (celle sous "Envoyer un message" contenant le solde [◊ 0  🟡 19,1 k] à gauche et [⚙️ Envoyer] à droite)
+    function findChatBottomBar() {
+        var sendBtn = document.querySelector('[data-a-target="chat-send-button"], [data-a-target="chat-settings"]');
+        var chatInput = document.querySelector('[data-a-target="chat-input"], .chat-input__textarea');
+        if (sendBtn) {
+            var cur = sendBtn;
+            while (cur.parentElement && (!chatInput || !cur.parentElement.contains(chatInput))) {
+                cur = cur.parentElement;
+                var r = cur.getBoundingClientRect();
+                if (r.width >= 180 && r.height > 0 && r.height <= 90) {
+                    if (chatInput && cur.parentElement && cur.parentElement.contains(chatInput)) {
+                        return cur;
+                    }
+                }
+            }
+            if (cur && cur !== sendBtn) return cur;
+        }
+        return document.querySelector('[data-test-selector="chat-input-buttons-container"], .chat-input__buttons-container, .chat-input');
+    }
+
+    // Localise le bouton de solde de Points de chaîne (ou bouton combiné Bits + Points [◊ 0  🟡 19,1 k]), qu'il ait une icône <img> custom ou <svg>
+    function findChannelPointsBalanceButton() {
+        var customIcon = document.querySelector('img[src*="channel-points-icons"], [data-test-selector="copo-balance-string"], .copo-balance-string');
+        if (customIcon && customIcon.closest('button')) {
+            return customIcon.closest('button');
+        }
+        var summary = document.querySelector('[data-test-selector="community-points-summary"], .community-points-summary');
+        if (summary) {
+            var firstBtn = summary.querySelector('button');
+            if (firstBtn) return firstBtn;
+        }
+        var bar = findChatBottomBar();
+        if (!bar) return null;
+        var btns = bar.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if (isRightSideChatActionBtn(b)) continue;
+            var aria = ((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).toLowerCase();
+            if (/points de cha|channel points|bits et points|bits and points|power-ups|récompenses|rewards|défis|challenges/i.test(aria) && !/bonus|réclamer|claim/i.test(aria)) {
+                return b;
+            }
+            var txt = (b.textContent || '').replace(/[\u00a0\u202f]/g, ' ').trim();
+            if (/\d/.test(txt) && !/^\+\s*\d+$/.test(txt) && (b.querySelector('img') || b.querySelector('svg'))) {
+                return b;
+            }
+        }
+        return null;
+    }
+
+    function findChannelPointsWidgetRoot() {
+        var summary = document.querySelector('[data-test-selector="community-points-summary"], .community-points-summary');
+        if (summary) return summary;
+        var bar = findChatBottomBar();
+        if (bar) return bar;
+        var balBtn = findChannelPointsBalanceButton();
+        return balBtn ? (balBtn.parentElement && balBtn.parentElement.parentElement) || balBtn.parentElement : null;
+    }
+
+    function isNonBonusMenuOrRewardButton(el) {
+        if (!el || el.nodeType !== 1) return true;
+        if (el.getAttribute('aria-haspopup') || el.getAttribute('aria-expanded') !== null) return true;
+        var aria = (
+            (el.getAttribute('aria-label') || '') + ' ' +
+            (el.getAttribute('title') || '') + ' ' +
+            (el.getAttribute('data-a-target') || '') + ' ' +
+            (el.getAttribute('data-test-selector') || '')
+        ).toLowerCase();
+        if (
+            /drops|bits|récompenses|rewards|points de cha|channel points|power-ups|défis|challenges|inventaire|inventory|pokémon|pokemon|échanger|extension|cadeau|gift|sub|abonner|celebration|célébration|hype/i.test(aria) &&
+            !/réclamer un bonus|récupérer un bonus|réclamer le bonus|récupérer le bonus|bonus spécial|claim bonus|claim special bonus/i.test(aria)
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    function isBonusChestButton(btn) {
+        if (!btn || btn.nodeType !== 1) return false;
+        var el = btn.tagName === 'BUTTON' ? btn : (btn.closest && btn.closest('button'));
+        if (!el || isRightSideChatActionBtn(el) || isNonBonusMenuOrRewardButton(el)) return false;
+        if (
+            el.querySelector('.claimable-bonus__icon, [class*="claimable-bonus" i], svg path[d="M13 12h-2v2h2v-2Z"]') ||
+            (el.matches && el.matches('[class*="claimable-bonus" i]'))
+        ) {
+            return true;
+        }
+        var aria = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '');
+        if (/réclamer un bonus|récupérer un bonus|réclamer le bonus|récupérer le bonus|bonus spécial|claim bonus|claim special bonus/i.test(aria)) {
+            return true;
+        }
+        var summary = el.closest('[data-test-selector="community-points-summary"], .community-points-summary');
+        if (summary) {
+            if (/bonus/i.test(aria) || /CoreButtonSuccess|ScCoreButtonSuccess/i.test(el.className || '')) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function findBonusChestButton() {
+        var candidates = document.querySelectorAll(
+            '.claimable-bonus__icon, ' +
+            '[class*="claimable-bonus" i], ' +
+            'svg path[d="M13 12h-2v2h2v-2Z"], ' +
+            'button[aria-label*="Réclamer un bonus" i], ' +
+            'button[aria-label*="Récupérer un bonus" i], ' +
+            'button[aria-label*="Réclamer le bonus" i], ' +
+            'button[aria-label*="Récupérer le bonus" i], ' +
+            'button[aria-label*="Bonus spécial" i], ' +
+            'button[aria-label*="Claim Bonus" i], ' +
+            'button[aria-label*="Claim Special Bonus" i], ' +
+            '[data-test-selector="community-points-summary"] button[aria-label*="bonus" i], ' +
+            '.community-points-summary button[aria-label*="bonus" i], ' +
+            '[data-test-selector="community-points-summary"] button[class*="CoreButtonSuccess"], ' +
+            '.community-points-summary button[class*="CoreButtonSuccess"], ' +
+            '[data-test-selector="community-points-summary"] button[class*="ScCoreButtonSuccess"], ' +
+            '.community-points-summary button[class*="ScCoreButtonSuccess"]'
+        );
+        for (var i = 0; i < candidates.length; i++) {
+            var c = candidates[i];
+            var btn = c.tagName === 'BUTTON' ? c : (c.closest('button') || c.querySelector('button') || c);
+            if (btn && !isRightSideChatActionBtn(btn) && !isNonBonusMenuOrRewardButton(btn)) {
+                var r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {
+                    return btn;
+                }
+            }
+        }
+        return null;
+    }
+
+    function getReactFiberFromDom(el) {
+        if (!el || typeof el !== 'object') return null;
+        try {
+            var keys = Object.keys(el);
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0) {
+                    return el[k];
+                }
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function updateChannelPointsExactBalance(chKey, exactBalance, hasAvailableClaim) {
+        if (!chKey || typeof exactBalance !== 'number' || !isFinite(exactBalance) || exactBalance < 0) return;
+        var prevBal = bttvChannelPointBalances[chKey];
+        var alreadyCredited = bttvCreditedSinceLastGqlPoll[chKey] || 0;
+        if (typeof prevBal === 'number') {
+            var delta = exactBalance - prevBal;
+            if (delta > alreadyCredited && delta <= 5000) {
+                var uncredited = delta - alreadyCredited;
+                var looksLikeChest = (uncredited >= 50 && uncredited <= 100 && !hasAvailableClaim);
+                creditChannelPointsGain(uncredited, looksLikeChest, 'Twitch', null, true);
+            }
+        }
+        bttvChannelPointBalances[chKey] = exactBalance;
+        bttvCreditedSinceLastGqlPoll[chKey] = 0;
+    }
+
+    // Inspecte directement les composants React de Twitch (CommunityPointsSummary / ClaimableBonus / RewardCenter)
+    function syncChannelPointsFromReactFiber() {
+        if (scriptIsOff()) return;
+        var chKey = (getTestChannel() || '').toLowerCase();
+        var rootEl = document.querySelector('[data-test-selector="community-points-summary"], .community-points-summary, [data-test-selector="copo-balance-string"]') || findChannelPointsBalanceButton();
+        if (!rootEl) return;
+
+        var balBtn = rootEl.tagName === 'BUTTON' ? rootEl : (rootEl.closest('button') || rootEl.querySelector('button'));
+        var startFiber = getReactFiberFromDom(rootEl) || (balBtn && getReactFiberFromDom(balBtn));
+        var foundExactFiberBalance = false;
+
+        if (startFiber) {
+            var visited = [];
+            var checkFiberNode = function (f) {
+                if (!f || visited.indexOf(f) !== -1) return;
+                visited.push(f);
+                try {
+                    var sn = f.stateNode;
+                    var mp = f.memoizedProps || (sn && sn.props);
+
+                    // A. Instance ClaimableBonus (module 310059 : stateNode.getClaim() & stateNode.onClick())
+                    if (sn && typeof sn.getClaim === 'function' && typeof sn.onClick === 'function') {
+                        var activeClaim = sn.getClaim();
+                        if (activeClaim && activeClaim.id && pageConfig.autoPoints !== false) {
+                            if (!bttvClaimedPointIds[activeClaim.id]) {
+                                var cPts = activeClaim.pointsEarnedTotal || activeClaim.pointsEarnedBaseline || 50;
+                                try { sn.onClick(); } catch (e) {}
+                                creditChannelPointsGain(cPts, true, 'React', activeClaim.id);
+                            }
+                        }
+                    }
+
+                    // B. Instance CommunityPointsSummary (module 924813 : stateNode.state.animationQueue & props.balance)
+                    if (sn && sn.state && Array.isArray(sn.state.animationQueue)) {
+                        var q = sn.state.animationQueue;
+                        for (var qi = 0; qi < q.length; qi++) {
+                            var anim = q[qi];
+                            if (anim && !anim.__tp9Counted && anim.type === 'add-points' && anim.event && anim.event.point_gain) {
+                                anim.__tp9Counted = true;
+                                var pg = anim.event.point_gain;
+                                var pgPts = pg.total_points || pg.baseline_points || 0;
+                                if (pgPts > 0) {
+                                    creditChannelPointsGain(pgPts, pg.reason_code === 'CLAIM', 'Twitch');
+                                }
+                            }
+                        }
+                    }
+
+                    // C. Solde exact en entier (props.balance ou context value.balance)
+                    if (chKey && mp) {
+                        var exactBal = (typeof mp.balance === 'number') ? mp.balance : (mp.value && typeof mp.value.balance === 'number' ? mp.value.balance : null);
+                        if (typeof exactBal === 'number' && exactBal >= 0) {
+                            var fiberCh = (mp.channelLogin || (mp.value && mp.value.channelLogin) || chKey).toLowerCase();
+                            if (fiberCh === chKey) {
+                                foundExactFiberBalance = true;
+                                updateChannelPointsExactBalance(chKey, exactBal, Boolean(sn && sn.state && sn.state.isClaimAvailable));
+                            }
+                        }
+                    }
+                } catch (e) {}
+            };
+
+            // Remonte les parents (CommunityPointsSummary / Context.Provider) et parcourt les enfants proches (ClaimableBonus)
+            var cur = startFiber;
+            for (var up = 0; up < 18 && cur; up++) {
+                checkFiberNode(cur);
+                cur = cur.return;
+            }
+            var rootSummaryFiber = visited[visited.length - 1] || startFiber;
+            var stack = [startFiber, rootSummaryFiber];
+            var steps = 0;
+            while (stack.length > 0 && steps < 60) {
+                steps++;
+                var node = stack.pop();
+                if (!node) continue;
+                checkFiberNode(node);
+                if (node.child && visited.indexOf(node.child) === -1) stack.push(node.child);
+                if (node.sibling && visited.indexOf(node.sibling) === -1) stack.push(node.sibling);
+            }
+        }
+
+        // Repli sur l'aria-label UNIQUEMENT si React Fiber n'a pas fourni le solde entier,
+        // et uniquement si le texte ne contient ni Bits ni abréviation k/M (ex: "19,1 k").
+        if (!foundExactFiberBalance && balBtn && chKey) {
+            var aria = balBtn.getAttribute('aria-label') || '';
+            if (!/\b(?:bits?|cheers?)\b/i.test(aria)) {
+                var ariaMatch = aria.match(/(?:vous avez|you have)\s+([\d\s\u00a0\u202f]+)(?!\s*[.,]\s*\d|\s*[kKmM]\b)/i);
+                if (ariaMatch && ariaMatch[1]) {
+                    var digitsOnly = ariaMatch[1].replace(/[^\d]/g, '');
+                    if (digitsOnly.length > 0) {
+                        var parsedAriaBal = parseInt(digitsOnly, 10);
+                        if (parsedAriaBal > 0) {
+                            updateChannelPointsExactBalance(chKey, parsedAriaBal, false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    function findAndClickBonusChestDOM(expectedPts) {
+        if (scriptIsOff() || pageConfig.autoPoints === false) return false;
+        syncChannelPointsFromReactFiber();
+        var clickable = findBonusChestButton();
+        if (!clickable) return false;
+        var now = Date.now();
+        if (!clickable.__tp9ClaimedAt || (now - clickable.__tp9ClaimedAt) > 5000) {
+            clickable.__tp9ClaimedAt = now;
+            bttvServerAvailableClaimId = null;
+            try { clickable.click(); } catch (e) {}
+            creditChannelPointsGain(expectedPts || 50, true, 'DOM');
+            return true;
+        }
+        return false;
+    }
+
+    // Détecte les animations natives "+10", "+50", etc. (texte "+10" dans CommunityPointsSummary ET bloc vert var(--color-text-success) + icône SVG "+" + "10" dans RewardCenter)
+    function scanChannelPointsWidgetForGains() {
+        if (scriptIsOff()) return;
+        syncChannelPointsFromReactFiber();
+        var root = findChannelPointsWidgetRoot();
+        if (!root) return;
+        var nodes = root.querySelectorAll('div, span, p, strong, b');
+        for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            if (el.__tp9PointsCounted) continue;
+            if (el.id && el.id.indexOf('tp9') === 0) continue;
+            var txt = (el.textContent || '').replace(/[\u00a0\u202f\s]/g, '').trim();
+            var m = txt.match(/^\+(\d{1,4})$/);
+            if (!m) {
+                var styleAttr = el.getAttribute('style') || '';
+                if (styleAttr.indexOf('--color-text-success') !== -1 && el.querySelector('svg')) {
+                    m = txt.match(/^\+?(\d{1,4})$/);
+                }
+            }
+            if (m) {
+                el.__tp9PointsCounted = true;
+                if (el.parentElement) el.parentElement.__tp9PointsCounted = true;
+                var sub = el.querySelectorAll('*');
+                for (var s = 0; s < sub.length; s++) sub[s].__tp9PointsCounted = true;
+                var val = parseInt(m[1], 10);
+                if (val > 0 && val <= 2500) {
+                    var isChestVal = (val >= 50 && val <= 100) && (Date.now() - bttvLastChestCreditAt < 10000);
+                    creditChannelPointsGain(val, isChestVal, 'DOM');
+                }
+            }
+        }
+    }
+
+    function ensureBonusPointsObserver() {
+        if (!bttvBonusClickHooked && typeof document !== 'undefined') {
+            bttvBonusClickHooked = true;
+            document.addEventListener('click', function (e) {
+                if (scriptIsOff()) return;
+                var t = e && e.target;
+                if (!t || !t.closest) return;
+                var btn = t.closest('button');
+                if (btn && isBonusChestButton(btn)) {
+                    creditChannelPointsGain(50, true, 'DOM');
+                }
+            }, true);
+        }
+        var summaryEl = findChannelPointsWidgetRoot();
+        if (summaryEl && summaryEl !== bttvBonusSummaryNode) {
+            if (bttvBonusSummaryObserver) {
+                try { bttvBonusSummaryObserver.disconnect(); } catch (e) {}
+            }
+            bttvBonusSummaryNode = summaryEl;
+            bttvBonusSummaryObserver = new MutationObserver(function () {
+                if (scriptIsOff()) return;
+                if (pageConfig.autoPoints !== false) {
+                    findAndClickBonusChestDOM();
+                }
+                scanChannelPointsWidgetForGains();
+            });
+            try {
+                bttvBonusSummaryObserver.observe(summaryEl, { childList: true, subtree: true, characterData: true });
+            } catch (e) {}
+        }
+    }
+
+    function claimChannelPointsViaGql(channelId, claimId, expectedPts) {
         if (!channelId || !claimId || bttvClaimedPointIds[claimId]) return;
-        bttvClaimedPointIds[claimId] = true;
+        bttvClaimedPointIds[claimId] = 'pending';
         sendAuthenticatedTwitchGql({
             operationName: 'ClaimCommunityPoints',
             variables: {
@@ -39905,10 +41550,74 @@ dashboardButton.style.visibility = 'hidden';
                 }
             }
         }).then(function (res) {
-            if (res && res.data && res.data.claimCommunityPoints && !res.data.claimCommunityPoints.error) {
-                creditClaimedChannelPoints('GQL');
+            var claimRes = res && res.data && res.data.claimCommunityPoints;
+            if (claimRes && !claimRes.error && (claimRes.claim || claimRes.currentPoints !== undefined)) {
+                var c = claimRes.claim;
+                var pts = (c && (c.pointsEarnedTotal || c.pointsEarnedBaseline)) || expectedPts || 50;
+                bttvServerAvailableClaimId = null;
+                creditChannelPointsGain(pts, true, 'GQL', claimId);
+            } else {
+                delete bttvClaimedPointIds[claimId];
+                findAndClickBonusChestDOM(expectedPts);
             }
         });
+    }
+
+    var bttvLastPubsubRaw = '';
+    var bttvLastPubsubAt = 0;
+
+    function handleTwitchPubsubMessage(ev) {
+        if (scriptIsOff() || !ev || typeof ev.data !== 'string') return;
+        var raw = ev.data;
+        if (
+            raw.indexOf('claim-available') === -1 &&
+            raw.indexOf('claim-claimed') === -1 &&
+            raw.indexOf('points-earned') === -1
+        ) {
+            return;
+        }
+        var now = Date.now();
+        if (raw === bttvLastPubsubRaw && now - bttvLastPubsubAt < 250) {
+            return;
+        }
+        bttvLastPubsubRaw = raw;
+        bttvLastPubsubAt = now;
+        try {
+            var outer = JSON.parse(raw);
+            var innerStr =
+                (outer && outer.data && outer.data.message) ||
+                (outer && outer.notification && outer.notification.pubsub) ||
+                null;
+            var msg = typeof innerStr === 'string' ? JSON.parse(innerStr) : outer;
+            if (!msg || !msg.type) return;
+
+            if (msg.type === 'claim-available' && msg.data && msg.data.claim) {
+                var claim = msg.data.claim;
+                var expectedPts = (claim.point_gain && (claim.point_gain.total_points || claim.point_gain.baseline_points)) || 50;
+                bttvServerAvailableClaimId = claim.id || 'avail';
+                if (pageConfig.autoPoints !== false) {
+                    setTimeout(function () { findAndClickBonusChestDOM(expectedPts); }, 120);
+                    setTimeout(function () { findAndClickBonusChestDOM(expectedPts); }, 400);
+                    setTimeout(function () {
+                        if (!findAndClickBonusChestDOM(expectedPts) && claim.channel_id && claim.id) {
+                            claimChannelPointsViaGql(claim.channel_id, claim.id, expectedPts);
+                        }
+                    }, 900);
+                }
+            } else if (msg.type === 'claim-claimed' && msg.data && msg.data.claim) {
+                var c = msg.data.claim;
+                var cPts = (c.point_gain && (c.point_gain.total_points || c.point_gain.baseline_points)) || 50;
+                bttvServerAvailableClaimId = null;
+                creditChannelPointsGain(cPts, true, 'PubSub', c.id);
+            } else if (msg.type === 'points-earned' && msg.data && msg.data.point_gain) {
+                var pg = msg.data.point_gain;
+                var earnedPts = pg.total_points || pg.baseline_points || 0;
+                if (earnedPts > 0) {
+                    var isChestReason = (pg.reason_code === 'CLAIM');
+                    creditChannelPointsGain(earnedPts, isChestReason, 'PubSub');
+                }
+            }
+        } catch (e) {}
     }
 
     function claimDropViaGql(dropInstanceId, dropName) {
@@ -39934,24 +41643,59 @@ dashboardButton.style.visibility = 'hidden';
         });
     }
 
-    function inspectGqlForAutoClaims(payload) {
+    function inspectGqlForAutoClaims(payload, polledChannelLogin) {
         if (scriptIsOff() || !payload) return;
         var items = Array.isArray(payload) ? payload : [payload];
         items.forEach(function (item) {
             var d = item && item.data;
             if (!d) return;
 
-            // 1. Détection GQL des coffres de points de chaîne (ChannelPointsContext)
-            if (pageConfig.autoPoints !== false) {
-                var chObj = (d.community && d.community.channel) || d.channel || d.user;
-                var selfPts = chObj && chObj.self && chObj.self.communityPoints;
-                var avail = selfPts && selfPts.availableClaim;
-                if (avail && avail.id && chObj.id) {
-                    claimChannelPointsViaGql(chObj.id, avail.id);
+            // 0. Réponse d'une réclamation de coffre de points (ClaimCommunityPoints) — crédite les points bonus exacts
+            if (d.claimCommunityPoints && d.claimCommunityPoints.claim && !d.claimCommunityPoints.error) {
+                var cObj = d.claimCommunityPoints.claim;
+                var earnedPts = (typeof cObj.pointsEarnedTotal === 'number' && cObj.pointsEarnedTotal > 0)
+                    ? cObj.pointsEarnedTotal
+                    : ((typeof cObj.pointsEarnedBaseline === 'number' && cObj.pointsEarnedBaseline > 0) ? cObj.pointsEarnedBaseline : 50);
+                bttvServerAvailableClaimId = null;
+                creditChannelPointsGain(earnedPts, true, 'GQL', cObj.id);
+            }
+
+            // 1. Détection GQL du solde exact (communityPoints.balance) et des coffres disponibles (availableClaim)
+            var userNode = d.user || d.community;
+            var chObj = (userNode && userNode.channel) || d.channel || userNode;
+            var selfPts = chObj && chObj.self && chObj.self.communityPoints;
+            if (selfPts) {
+                var payloadLogin =
+                    (userNode && userNode.login) ||
+                    (chObj && chObj.login) ||
+                    (chObj && chObj.name) ||
+                    (d.channel && (d.channel.login || d.channel.name)) ||
+                    '';
+                var chKey = (payloadLogin || polledChannelLogin || getTestChannel() || '').toLowerCase();
+                var currentCh = (getTestChannel() || '').toLowerCase();
+                var isCurrentWatchedChannel = Boolean(chKey && (!currentCh || chKey === currentCh));
+                if (isCurrentWatchedChannel && typeof selfPts.balance === 'number') {
+                    updateChannelPointsExactBalance(chKey, selfPts.balance, Boolean(selfPts.availableClaim && selfPts.availableClaim.id));
+                }
+
+                var avail = selfPts.availableClaim;
+                if (isCurrentWatchedChannel) {
+                    if (avail && avail.id) {
+                        bttvServerAvailableClaimId = avail.id;
+                        if (pageConfig.autoPoints !== false) {
+                            var availPts = avail.pointsEarnedTotal || avail.pointsEarnedBaseline ||
+                                (avail.pointGain && (avail.pointGain.totalPoints || avail.pointGain.baselinePoints)) || 50;
+                            if (!findAndClickBonusChestDOM(availPts) && chObj.id) {
+                                claimChannelPointsViaGql(chObj.id, avail.id, availPts);
+                            }
+                        }
+                    } else {
+                        bttvServerAvailableClaimId = null;
+                    }
                 }
             }
 
-            // 2. Détection GQL des Drops Twitch (DropCurrentSessionContext / Inventory / ViewerDropsDashboard)
+            // 2. Détection GQL des Drops Twitch (Inventory / dropCampaignsInProgress)
             if (pageConfig.autoDrops !== false && d.currentUser) {
                 var sess = d.currentUser.dropCurrentSession;
                 if (
@@ -39983,6 +41727,63 @@ dashboardButton.style.visibility = 'hidden';
                     });
                 }
             }
+        });
+    }
+
+    // Sondage GQL officiel (persistedQuery ChannelPointsContext + ViewerDropsDashboard) toutes les 15s
+    function pollChannelPointsAndDropsViaGql() {
+        if (scriptIsOff() || bttvGqlPointsPollInFlight) return;
+        var wantPoints = (pageConfig.autoPoints !== false) || (pageConfig.statsEnabled !== false);
+        var wantDrops = (pageConfig.autoDrops !== false);
+        if (!wantPoints && !wantDrops) return;
+        var now = Date.now();
+        if (now - bttvLastGqlPointsPollAt < 15000) return;
+        var ch = (getTestChannel() || '').toLowerCase();
+        if (!ch) return;
+        if (!getTwitchAuthHeaderFallback()) return;
+
+        bttvLastGqlPointsPollAt = now;
+        bttvGqlPointsPollInFlight = true;
+        bttvGqlPointsPollCount++;
+
+        var includeDrops = wantDrops && (bttvGqlPointsPollCount % 4 === 1);
+        var batchBody = [];
+        if (wantPoints) {
+            batchBody.push({
+                operationName: 'ChannelPointsContext',
+                variables: { channelLogin: ch },
+                extensions: {
+                    persistedQuery: {
+                        version: 1,
+                        sha256Hash: '374314de591e69925fce3ddc2bcf085796f56ebb8cad67a0daa3165c03adc345'
+                    }
+                }
+            });
+        }
+        if (includeDrops) {
+            batchBody.push({
+                operationName: 'ViewerDropsDashboard',
+                variables: { fetchRewardCampaigns: false },
+                extensions: {
+                    persistedQuery: {
+                        version: 1,
+                        sha256Hash: '5a4da2ab3d5b47c9f9ce864e727b2cb346af1e3ea8b897fe8f704a97ff017619'
+                    }
+                }
+            });
+        }
+        if (batchBody.length === 0) {
+            bttvGqlPointsPollInFlight = false;
+            return;
+        }
+
+        sendAuthenticatedTwitchGql(batchBody).then(function (res) {
+            bttvGqlPointsPollInFlight = false;
+            if (res) {
+                inspectGqlForAutoClaims(res, ch);
+            }
+        }).catch(function () {
+            bttvGqlPointsPollInFlight = false;
         });
     }
 
@@ -40189,37 +41990,26 @@ dashboardButton.style.visibility = 'hidden';
         if (pageConfig.autoExpandSidebar) {
             expandFollowedSidebarStep();
         }
+        sweepOfflineSidebarChannels();
 
-        // 1. Réclamation automatique des coffres de points de chaîne (+50 pts)
+        // 1. Réclamation et suivi automatique des coffres de points de chaîne (+50 pts / multiplicateur sub / gains +10/+20)
+        ensureBonusPointsObserver();
         if (pageConfig.autoPoints !== false) {
-            var bonusBtn = document.querySelector(
-                '.claimable-bonus__icon, ' +
-                'button[aria-label*="Réclamer un bonus" i], ' +
-                'button[aria-label*="Récupérer un bonus" i], ' +
-                'button[aria-label*="Claim Bonus" i], ' +
-                '[data-test-selector="community-points-summary"] button[class*="ScCoreButtonSuccess"], ' +
-                '[data-test-selector="community-points-summary"] > div:nth-child(2) button'
-            );
-            if (bonusBtn) {
-                var clickable = bonusBtn.closest('button') || bonusBtn;
-                if (!clickable.__tp9ClaimedAt || (Date.now() - clickable.__tp9ClaimedAt) > 5000) {
-                    clickable.__tp9ClaimedAt = Date.now();
-                    try { clickable.click(); } catch (e) {}
-                    creditClaimedChannelPoints('DOM');
-                }
-            }
+            findAndClickBonusChestDOM();
         }
+        scanChannelPointsWidgetForGains();
+        pollChannelPointsAndDropsViaGql();
 
-        // 2. Réclamation automatique des Drops Twitch (DOM + bannière de notification tchat)
+        // 2. Réclamation automatique des Drops Twitch (DOM + bannière de notification tchat + page inventaire)
         if (pageConfig.autoDrops !== false) {
             var dropBtns = document.querySelectorAll(
                 'button[data-test-selector="DropsCampaignInProgressRewardPresentation-claim-button"], ' +
                 '[data-test-selector="chat-private-callout-queue__callout-container"] button, ' +
-                '.chat-line__message button[aria-label*="Drop" i]'
+                'button[aria-label*="Réclamer le drop" i], ' +
+                'button[aria-label*="Claim Drop" i]'
             );
             dropBtns.forEach(function (dropBtn) {
                 if (dropBtn.__tp9DropClaimed) return;
-                // Pour les bannières du tchat, vérifie qu'il s'agit bien d'un bouton de réclamation de Drop
                 if (dropBtn.closest('[data-test-selector="chat-private-callout-queue__callout-container"]')) {
                     var cardText = (dropBtn.closest('[data-test-selector="chat-private-callout-queue__callout-container"]').textContent || '').toLowerCase();
                     var btnText = ((dropBtn.textContent || '') + ' ' + (dropBtn.getAttribute('aria-label') || '')).toLowerCase();
@@ -40231,6 +42021,19 @@ dashboardButton.style.visibility = 'hidden';
                 try { dropBtn.click(); } catch (e) {}
                 logEvent('success', '🏆 Drop Twitch réclamé automatiquement');
             });
+            if ((location.pathname || '').indexOf('/drops/inventory') === 0) {
+                var invBtns = document.querySelectorAll('main button');
+                for (var dIdx = 0; dIdx < invBtns.length; dIdx++) {
+                    var ib = invBtns[dIdx];
+                    if (ib.__tp9DropClaimed || ib.disabled) continue;
+                    var ibTxt = (ib.textContent || '').trim();
+                    if (/^(réclamer|réclamer maintenant|claim|claim now)$/i.test(ibTxt)) {
+                        ib.__tp9DropClaimed = true;
+                        try { ib.click(); } catch (e) {}
+                        logEvent('success', '🏆 Drop Twitch réclamé automatiquement (Inventaire)');
+                    }
+                }
+            }
         }
 
         // 2b. Fermer/masquer les bannières du haut du tchat (Hype Train, Classement, Sondages, Prédictions, Messages épinglés)
@@ -40238,15 +42041,27 @@ dashboardButton.style.visibility = 'hidden';
 
         // 3. Anti-Raid automatique
         if (pageConfig.antiRaid) {
-            var raidCancelBtn = document.querySelector(
-                '[data-test-selector="raid-banner"] button, ' +
+            var raidCandidates = document.querySelectorAll(
                 'button[aria-label*="Quitter le raid" i], ' +
-                'button[aria-label*="Leave raid" i]'
+                'button[aria-label*="Leave raid" i], ' +
+                '[data-test-selector="raid-banner"] button'
             );
-            if (raidCancelBtn && !raidCancelBtn.__tp9RaidCancelled) {
-                raidCancelBtn.__tp9RaidCancelled = true;
-                try { raidCancelBtn.click(); } catch (e) {}
-                logEvent('info', '🛑 Raid entrant annulé automatiquement (Anti-Raid)');
+            for (var rIdx = 0; rIdx < raidCandidates.length; rIdx++) {
+                var rBtn = raidCandidates[rIdx];
+                if (!rBtn || rBtn.__tp9RaidCancelled || rBtn.disabled) continue;
+                var rLabel = (
+                    (rBtn.textContent || '') + ' ' +
+                    (rBtn.getAttribute('aria-label') || '') + ' ' +
+                    (rBtn.getAttribute('data-a-target') || '') + ' ' +
+                    (rBtn.getAttribute('data-test-selector') || '')
+                ).trim();
+                if (/rejoindre|join|raid\s*now|maintenant/i.test(rLabel)) continue;
+                if (/quitter|annuler|leave|cancel|rester|stay|fermer|close/i.test(rLabel)) {
+                    rBtn.__tp9RaidCancelled = true;
+                    try { rBtn.click(); } catch (e) {}
+                    logEvent('info', '🛑 Raid entrant annulé automatiquement (Anti-Raid)');
+                    break;
+                }
             }
         }
 
@@ -40368,12 +42183,89 @@ dashboardButton.style.visibility = 'hidden';
         return null;
     }
 
+    function isSidebarCardOffline(card) {
+        if (!card) return false;
+        if (card.querySelector('.side-nav-card__avatar--offline')) {
+            return true;
+        }
+        // Si un point rouge ou indicateur live est présent, la chaîne est en direct
+        if (
+            card.querySelector(
+                '.tw-channel-status-indicator, ' +
+                '[class*="channel-status-indicator"], ' +
+                '[data-a-target="side-nav-live-status"] .tw-channel-status-indicator'
+            )
+        ) {
+            return false;
+        }
+        var statusNode = card.querySelector(
+            '[data-a-target="side-nav-live-status"], ' +
+            '.side-nav-card__live-status, ' +
+            '.side-nav-card__metadata'
+        );
+        if (statusNode) {
+            var txt = (statusNode.textContent || '').trim();
+            if (/^(déconnecté(?:\(e\))?|hors\s*ligne|offline)$/i.test(txt)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function sweepOfflineSidebarChannels() {
+        var sideNav = document.querySelector('[data-a-target="side-nav-bar"], .side-nav, #side-nav');
+        if (!sideNav) return;
+
+        if (!pageConfig.hideOfflineChannels) {
+            var prevHidden = sideNav.querySelectorAll('.tp9-offline-channel-hidden');
+            for (var p = 0; p < prevHidden.length; p++) {
+                prevHidden[p].classList.remove('tp9-offline-channel-hidden');
+            }
+            return;
+        }
+
+        var cards = sideNav.querySelectorAll(
+            '.side-nav-card, ' +
+            '[data-test-selector="followed-channel"], ' +
+            '[data-a-target="side-nav-card"]'
+        );
+        for (var i = 0; i < cards.length; i++) {
+            var card = cards[i];
+            var offline = isSidebarCardOffline(card);
+            var wrap = (
+                card.parentElement &&
+                card.parentElement.classList &&
+                card.parentElement.classList.contains('tw-transition') &&
+                card.parentElement.children.length === 1
+            ) ? card.parentElement : card;
+
+            card.classList.toggle('tp9-offline-channel-hidden', offline);
+            if (wrap !== card) {
+                wrap.classList.toggle('tp9-offline-channel-hidden', offline);
+            }
+        }
+    }
+
     function expandFollowedSidebarStep() {
         var sideNav = document.querySelector('[data-a-target="side-nav-bar"], .side-nav, #side-nav');
         if (!sideNav) return false;
 
         var secRoot = getFollowedSectionRoot() || sideNav;
-        var cardCount = secRoot.querySelectorAll('.side-nav-card, [data-test-selector="side-nav-card"]').length;
+        var cards = secRoot.querySelectorAll('.side-nav-card, [data-test-selector="side-nav-card"]');
+        var cardCount = cards.length;
+
+        // Si l'utilisateur masque les chaînes hors ligne et qu'au moins une chaîne hors ligne
+        // est déjà chargée dans la liste (Twitch trie toujours les lives en premier),
+        // inutile de continuer à cliquer sur « Afficher plus » pour charger d'autres chaînes hors ligne.
+        if (pageConfig.hideOfflineChannels && cardCount > 0) {
+            for (var cIdx = 0; cIdx < cardCount; cIdx++) {
+                if (isSidebarCardOffline(cards[cIdx])) {
+                    bttvSidebarStagnantCount = 0;
+                    sweepOfflineSidebarChannels();
+                    return false;
+                }
+            }
+        }
 
         var btn = findSidebarShowMoreOrLessButton(false);
         if (!btn) {
@@ -40445,6 +42337,8 @@ dashboardButton.style.visibility = 'hidden';
         bttvLastSpamNorm = '';
         bttvLastSpamEl = null;
         bttvLastSpamCount = 1;
+        bttvServerAvailableClaimId = null;
+        bttvLastGqlPointsPollAt = 0;
         loadBttvChannelEmotes(channel);
     }
 
