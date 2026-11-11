@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.1
+// @version      1.11.2
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,8 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.2
+// - Fix le bloquage de pub qui pouvais se retrouver bloquer et faire planter le lecteur || Fixes an issue where the ad blocker could get stuck, causing the player to crash.
 // 1.11.1
 // - Fiabilité & Correctifs globaux : protection complète des flux verticaux 9:16 et des clips contre le filtre SDA, persistance exacte du mode Muet et des volumes fins (0.10 %), recherche étendue à toutes les options du menu, auto-complétion Tab/@pseudo préservée, émotes de chaîne appliquées aux premiers messages, et fiabilisation des points de chaîne, Drops, Anti-Raid et aperçus vidéo || Global reliability & bug fixes: full protection of 9:16 vertical streams and clips from SDA filtering, exact persistence of Mute mode and fine volume steps (0.10%), menu search extended to all controls, preserved Tab/@username autocomplete, channel emotes applied to initial messages, and hardened Channel Points, Drops, Anti-Raid, and video previews
 // 1.11
@@ -50,7 +52,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.1';
+    var CURRENT_VERSION = '1.11.2';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -4148,13 +4150,10 @@
             return false;
         }
         try {
-            if (video.classList && video.classList.contains('tp9-sda-hidden')) {
-                return true;
-            }
             if (
                 video.closest &&
                 video.closest(
-                    '.tp9-sda-hidden,[data-a-target^="sda-"],[data-test-selector="sad-overlay"],' +
+                    '[data-a-target^="sda-"],[data-test-selector="sad-overlay"],' +
                     '[data-test-selector*="stream-display-ad"],[data-test-selector*="ad-banner"],[class*="stream-display-ad"]'
                 )
             ) {
@@ -4179,14 +4178,20 @@
                     if (v === lastVerifiedStreamVideo || v === dvrLiveVideo) break;
                 }
             }
+            // Pour une vidéo MediaSource (blob:) ou en cours de montage (src vide pendant setSrc),
+            // on n'autorise JAMAIS à la classer comme pub s'il n'existe pas une seconde vidéo
+            // de flux dans le lecteur : masquer l'unique <video> blob: crée un écran noir définitif
+            // (notamment pendant setSrc où video.duration est brièvement fini <= 180 s ou sur un live 9:16).
+            if (!otherStreamVid) {
+                return false;
+            }
             var hasCorroboratingAdSignal = Boolean(otherStreamVid) || playerRootHasAdSignal(playerRoot);
 
-            // Vidéo publicitaire au format vertical (9:16, ex. "Pub 0:06") :
-            // exige un signal publicitaire ou une seconde vidéo afin de ne jamais couper un vrai live vertical 9:16.
+            // Vidéo publicitaire au format vertical (9:16, ex. "Pub 0:06") en présence d'une seconde vidéo :
             if (hasCorroboratingAdSignal && video.videoWidth > 0 && video.videoHeight > video.videoWidth * 1.05) {
                 return true;
             }
-            // Sur une chaîne en direct, une vidéo à durée courte finie (<= 180 s) accompagnée d'un signal pub / 2e vidéo est un spot pub
+            // Sur une chaîne en direct, une seconde vidéo à durée courte finie (<= 180 s) est un spot pub
             if (
                 hasCorroboratingAdSignal &&
                 getTestChannel() &&
@@ -5388,12 +5393,11 @@
             // aperçoit il ne relance pas son lecteur après une pub
             // tant qu'on n'est pas revenu sur l'onglet.
             //
-            // Forcé en mode Adblock, quelle que soit l'option : c'est
-            // ce qui laisse la relance de fin de pub se faire en
-            // arrière-plan.
+            // Forcé dès que le bloqueur VAFT pilote le lecteur (Adblock,
+            // proxys pendant les pubs, ou repli 403) : c'est ce qui laisse
+            // la relance de fin de pub se faire en arrière-plan.
             var spoofVisibility = function () {
-                return !!pageConfig.keepQualityInBackground ||
-                    (pageConfig.proxiesEnabled === false && !scriptIsOff());
+                return !!pageConfig.keepQualityInBackground || vaftPlaybackOn();
             };
 
             var fakeValues = {
@@ -5589,6 +5593,7 @@
                                 ' · bloqueur de pub actif',
                                 true
                             );
+                            updateActiveProxyDisplay();
                             renderDashboard();
                             return;
                         }
@@ -12280,6 +12285,100 @@ function showAddProxyForm() {
         return dvrSourceKind === 'live';
     }
 
+    // Suivi explicite d'une pause demandée par l'utilisateur sur le direct :
+    // permet de ne JAMAIS confondre une pause interne posée par Twitch/IVS
+    // pendant ou après un blocage pub avec une vraie pause volontaire.
+    var userExplicitLivePaused = false;
+    var userExplicitPauseChannel = null;
+    var userExplicitPauseAt = 0;
+    var livePlayVerifyTimer = null;
+
+    function setUserExplicitLivePause(paused) {
+        if (paused) {
+            userExplicitLivePaused = true;
+            userExplicitPauseChannel = getTestChannel();
+            userExplicitPauseAt = Date.now();
+            if (livePlayVerifyTimer) {
+                clearTimeout(livePlayVerifyTimer);
+                livePlayVerifyTimer = null;
+            }
+        } else {
+            userExplicitLivePaused = false;
+            userExplicitPauseChannel = null;
+            userExplicitPauseAt = 0;
+        }
+    }
+
+    function isUserExplicitlyPausedLive() {
+        if (dvrIsLivePaused()) return true;
+        var ch = getTestChannel();
+        return Boolean(userExplicitLivePaused && ch && userExplicitPauseChannel === ch);
+    }
+
+    function isLivePlayerBrokenOrStuck(video) {
+        var v = video || ((dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo());
+        if (!v || !v.isConnected) return Boolean(getTestChannel());
+        if (v.error || v.ended) return true;
+        if (v.readyState < 2 && v.networkState === 3) return true;
+        var ch = getTestChannel();
+        if (
+            ch &&
+            twitchSpy.channel === ch &&
+            twitchSpy.played &&
+            (twitchSpy.state === 'Ended' || twitchSpy.state === 'Idle')
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    function rescueLivePlayerIfStuck(forceImmediate) {
+        setUserExplicitLivePause(false);
+        clearStraySdaHiddenOnPlayer(null);
+        var ch = getTestChannel();
+        if (!ch) return false;
+        if (spAd.active && spAd.lastUpdateAt && (Date.now() - spAd.lastUpdateAt) > 6000) {
+            spHandleMessage({ type: 'spAd', channel: spAd.channel || ch, active: false, stripping: false });
+        }
+        var v = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+        if (forceImmediate || isLivePlayerBrokenOrStuck(v) || !v || v.readyState < 2) {
+            if (livePlayVerifyTimer) {
+                clearTimeout(livePlayVerifyTimer);
+                livePlayVerifyTimer = null;
+            }
+            return reloadTwitchPlayer();
+        }
+        try {
+            if (v.paused) {
+                var p = v.play();
+                if (p && p.catch) p.catch(function () {});
+            }
+        } catch (e) {}
+        if (livePlayVerifyTimer) {
+            clearTimeout(livePlayVerifyTimer);
+        }
+        var startT = v.currentTime;
+        var startCh = ch;
+        livePlayVerifyTimer = setTimeout(function () {
+            livePlayVerifyTimer = null;
+            if (isUserExplicitlyPausedLive() || dvrStreamEnded() || getTestChannel() !== startCh) return;
+            if (dvrOverlay && !dvrIsLive()) return;
+            var curV = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+            if (
+                !curV ||
+                curV.error ||
+                curV.ended ||
+                curV.paused ||
+                curV.readyState < 2 ||
+                (curV === v && Math.abs(curV.currentTime - startT) < 0.02)
+            ) {
+                logEvent('info', '🔄 Reprise manuelle sans mouvement d\'image sur ' + startCh + ' : relance complète du lecteur');
+                reloadTwitchPlayer();
+            }
+        }, 1600);
+        return true;
+    }
+
     function dvrEnterLiveMode() {
         if (!dvrOverlay) {
             return;
@@ -12289,10 +12388,12 @@ function showAddProxyForm() {
 
         dvrRestoreNativeControls();
         dvrUncoverPicture();
+        clearStraySdaHiddenOnPlayer(null);
         dvrSourceKind = 'live';
 
         // Revenir au direct annule le gel : on y est, il n'y a plus
         // rien à rattraper. Et le retard visé n'a plus d'objet.
+        setUserExplicitLivePause(false);
         dvrLivePauseAt = 0;
         dvrPendingPause = false;
         dvrAimedOffset = null;
@@ -12311,6 +12412,17 @@ function showAddProxyForm() {
         dvrSendHold(false);
 
         dvrRestoreLiveSound();
+
+        if (!dvrStreamEnded()) {
+            if (!dvrLiveVideo || isLivePlayerBrokenOrStuck(dvrLiveVideo)) {
+                reloadTwitchPlayer();
+            } else if (dvrLiveVideo.paused) {
+                try {
+                    var resumedLive = dvrLiveVideo.play();
+                    if (resumedLive && resumedLive.catch) resumedLive.catch(function () {});
+                } catch (e) {}
+            }
+        }
 
         dvrRefreshControls();
     }
@@ -12430,6 +12542,7 @@ function showAddProxyForm() {
             return;
         }
 
+        setUserExplicitLivePause(true);
         dvrLivePauseAt = Date.now();
 
         try {
@@ -12444,6 +12557,7 @@ function showAddProxyForm() {
 
         var kind = dvrLivePauseKind();
 
+        setUserExplicitLivePause(false);
         dvrLivePauseAt = 0;
 
         // Rien à rattraper sur cette chaîne : on repart au direct,
@@ -13388,15 +13502,28 @@ function showAddProxyForm() {
             dvrTogglePlayback();
             return;
         }
+        var v = dvrPlayerVideo(player);
+        var onLiveChannel = Boolean(getTestChannel());
+        if (onLiveChannel && (!v || isLivePlayerBrokenOrStuck(v))) {
+            rescueLivePlayerIfStuck(true);
+            return;
+        }
+        var wantsPlay = !v || v.paused || v.ended;
+        if (onLiveChannel) {
+            setUserExplicitLivePause(!wantsPlay);
+        }
         var button = player.querySelector('[data-a-target="player-play-pause-button"]');
         if (button) {
             button.click();
-            return;
+        } else {
+            var core = twitchPlayerCore(player);
+            if (core) {
+                if (core.isPaused()) core.play();
+                else core.pause();
+            }
         }
-        var core = twitchPlayerCore(player);
-        if (core) {
-            if (core.isPaused()) core.play();
-            else core.pause();
+        if (onLiveChannel && wantsPlay) {
+            rescueLivePlayerIfStuck(false);
         }
     }
 
@@ -13410,7 +13537,9 @@ function showAddProxyForm() {
             event.target.closest(PLAYER_NOT_SURFACE)
         ) return;
         var video = dvrPlayerVideo(player);
-        if (!video || isMiniPlayerVideo(video)) return;
+        var isMini = (video && isMiniPlayerVideo(video)) ||
+            !!(player.closest && player.closest('.persistent-player--mini, .video-player__container--mini, [data-a-player-state="mini"]'));
+        if (isMini || (!video && !getTestChannel())) return;
         // Ce clic-là ferme un menu : il ne met pas en pause.
         if (dashboardVisible || dvrPlayerMenuOpen(player)) {
             dvrPlayerInputLog('Clic sur le lecteur ignoré : un menu est ouvert');
@@ -13487,9 +13616,46 @@ function showAddProxyForm() {
                 }
             }, true);
         });
+        document.addEventListener('click', function (event) {
+            if (scriptIsOff() || !event || !event.isTrusted || dvrNativeBypass) return;
+            var t = event.target && event.target.nodeType === 3 ? event.target.parentElement : event.target;
+            if (!t || !t.closest) return;
+            if (!dvrOverlay && t.closest('[data-a-target="player-play-pause-button"]') && getTestChannel()) {
+                var v = findPlaybackVideo();
+                if (!v || v.paused || v.ended || isLivePlayerBrokenOrStuck(v)) {
+                    setUserExplicitLivePause(false);
+                    rescueLivePlayerIfStuck(false);
+                } else {
+                    setUserExplicitLivePause(true);
+                }
+            }
+        }, true);
         document.addEventListener('keydown', function (event) {
             if (!event || !event.isTrusted) return;
             var key = event.key || '';
+            if (!dvrOverlay && !scriptIsOff() && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                var lk = key.toLowerCase();
+                if ((lk === 'k' || lk === ' ') && getTestChannel()) {
+                    var actEl = document.activeElement;
+                    var inField = actEl && (
+                        actEl.tagName === 'INPUT' ||
+                        actEl.tagName === 'TEXTAREA' ||
+                        actEl.tagName === 'SELECT' ||
+                        actEl.tagName === 'BUTTON' ||
+                        actEl.isContentEditable ||
+                        (actEl.closest && actEl.closest('[role="textbox"], [contenteditable="true"]'))
+                    );
+                    if (!inField) {
+                        var kv = findPlaybackVideo();
+                        if (!kv || kv.paused || kv.ended || isLivePlayerBrokenOrStuck(kv)) {
+                            setUserExplicitLivePause(false);
+                            rescueLivePlayerIfStuck(false);
+                        } else {
+                            setUserExplicitLivePause(true);
+                        }
+                    }
+                }
+            }
             if (key === 'm' || key === 'M' || key === 'ArrowUp' || key === 'ArrowDown') {
                 var active = document.activeElement;
                 var inInput = active && (
@@ -13534,6 +13700,9 @@ function showAddProxyForm() {
                 if (scriptIsOff()) return;
                 var v = event.target;
                 if (v instanceof HTMLVideoElement && !isMiniPlayerVideo(v) && !isOwnPlayerVideo(v)) {
+                    if (evType === 'playing' && userExplicitLivePaused && (Date.now() - userExplicitPauseAt) > 450 && !isAdVideoElement(v)) {
+                        setUserExplicitLivePause(false);
+                    }
                     enforceSavedVolumeOnVideoSync(v);
                     if (evType === 'loadedmetadata' || evType === 'loadstart') {
                         scheduleVolumeRestore(getTestChannel(), 1800);
@@ -13971,6 +14140,9 @@ function showAddProxyForm() {
                 document.body.classList.remove(cls);
             });
             syncChatOnLeftLayout();
+            if (typeof releaseChatHoverPause === 'function') {
+                releaseChatHoverPause(true);
+            }
             return;
         }
         document.body.classList.toggle('tp9-hide-turbo', !!pageConfig.hideTwitchTurbo);
@@ -13994,6 +14166,9 @@ function showAddProxyForm() {
         document.body.style.setProperty('--tp9-split-color', pageConfig.splitChatColor || '#9147ff');
         document.body.style.setProperty('--tp9-hl-color', pageConfig.highlightColor || '#9147ff');
         syncChatOnLeftLayout();
+        if (pageConfig.hoverPause === false && typeof releaseChatHoverPause === 'function') {
+            releaseChatHoverPause(true);
+        }
         if (typeof sweepChatTopBanners === 'function') {
             sweepChatTopBanners();
         }
@@ -14448,6 +14623,8 @@ function showAddProxyForm() {
         if (
             el.matches &&
             el.matches(
+                '.video-player__container,.video-ref,[data-a-target="video-ref"],' +
+                '.video-player__overlay,[data-a-target="player-overlay-click-handler"],' +
                 '.player-controls,[data-a-target="player-controls"],' +
                 '[data-a-target="player-settings-menu"],' +
                 '.extension-taskbar,.extensions-dock__layout,.extension-container,' +
@@ -14459,6 +14636,7 @@ function showAddProxyForm() {
         if (
             el.querySelector &&
             el.querySelector(
+                '[data-a-target="video-ref"],.video-ref,.video-player__container,' +
                 '[data-a-target="player-controls"],[data-a-target="player-settings-menu"],' +
                 '#tp9-dashboard,.tp9dvr-bar'
             )
@@ -14471,15 +14649,41 @@ function showAddProxyForm() {
     function neutralizeSdaBranch(node, rootBoundary, mainVideo) {
         if (!node || node.nodeType !== 1 || !rootBoundary) return false;
         if (mainVideo && node.contains(mainVideo)) return false;
+        if (isProtectedPlayerUiBranch(node)) return false;
+        var sdaRoot = node.closest ? node.closest(SDA_SELECTORS) : null;
+        if (sdaRoot && (!rootBoundary.contains(sdaRoot) || sdaRoot === rootBoundary || (mainVideo && sdaRoot.contains(mainVideo)))) {
+            sdaRoot = null;
+        }
         var branch = node;
-        while (
-            branch.parentElement &&
-            branch.parentElement !== rootBoundary &&
-            rootBoundary.contains(branch.parentElement) &&
-            (!mainVideo || !branch.parentElement.contains(mainVideo)) &&
-            !isProtectedPlayerUiBranch(branch.parentElement)
-        ) {
-            branch = branch.parentElement;
+        if (!mainVideo) {
+            // Pendant setSrc (~50-200 ms), la nouvelle <video> n'est pas encore montée :
+            // on ne remonte jamais au-delà d'un conteneur SDA explicite pour ne pas masquer
+            // la branche dans laquelle Twitch va insérer le flux principal.
+            if (sdaRoot && !isProtectedPlayerUiBranch(sdaRoot)) {
+                branch = sdaRoot;
+            } else {
+                var rRect = rootBoundary.getBoundingClientRect();
+                var nRect = node.getBoundingClientRect();
+                if (
+                    rRect.width > 200 &&
+                    rRect.height > 120 &&
+                    nRect.width > rRect.width * 0.6 &&
+                    nRect.height > rRect.height * 0.6 &&
+                    !(node.matches && node.matches(SDA_SELECTORS))
+                ) {
+                    return false;
+                }
+            }
+        } else {
+            while (
+                branch.parentElement &&
+                branch.parentElement !== rootBoundary &&
+                rootBoundary.contains(branch.parentElement) &&
+                !branch.parentElement.contains(mainVideo) &&
+                !isProtectedPlayerUiBranch(branch.parentElement)
+            ) {
+                branch = branch.parentElement;
+            }
         }
         if (isProtectedPlayerUiBranch(branch)) return false;
         var newlyHidden = !branch.classList.contains('tp9-sda-hidden');
@@ -14519,6 +14723,29 @@ function showAddProxyForm() {
         return newlyHidden;
     }
 
+    function clearStraySdaHiddenOnPlayer(root) {
+        try {
+            var scope = root || document.querySelector('.video-player__default-player, .video-player, [data-a-target="video-player"]');
+            if (!scope) return;
+            var protectedNodes = scope.querySelectorAll(
+                '.video-player__container, .video-ref, [data-a-target="video-ref"], ' +
+                '.video-player__overlay, [data-a-target="player-overlay-click-handler"], ' +
+                '[data-a-target="player-controls"]'
+            );
+            for (var i = 0; i < protectedNodes.length; i++) {
+                var pn = protectedNodes[i];
+                var cur = pn;
+                while (cur && cur !== document.body) {
+                    if (cur.classList && cur.classList.contains('tp9-sda-hidden')) {
+                        cur.classList.remove('tp9-sda-hidden');
+                    }
+                    if (cur === scope) break;
+                    cur = cur.parentElement;
+                }
+            }
+        } catch (e) {}
+    }
+
     // Bloque les Stream Display Ads (SDA : bannières/vidéos verticales ou en L glissées
     // à côté du lecteur, ex. "Pub 0:06") et force le conteneur vidéo principal à garder
     // 100 % de la surface du lecteur sans jamais étirer le conteneur publicitaire.
@@ -14535,6 +14762,8 @@ function showAddProxyForm() {
             return false;
         }
 
+        clearStraySdaHiddenOnPlayer(playerRoot);
+
         var mainVideo = findPlaybackVideo();
         if (mainVideo && isAdVideoElement(mainVideo)) {
             mainVideo = null;
@@ -14546,10 +14775,11 @@ function showAddProxyForm() {
         try {
             if (mainVideo && playerRoot.contains(mainVideo)) {
                 var anc = mainVideo;
-                while (anc && anc !== playerRoot && anc !== document.body) {
+                while (anc && anc !== document.body) {
                     if (anc.classList && anc.classList.contains('tp9-sda-hidden')) {
                         anc.classList.remove('tp9-sda-hidden');
                     }
+                    if (anc === playerRoot) break;
                     anc = anc.parentElement;
                 }
             }
@@ -14589,12 +14819,16 @@ function showAddProxyForm() {
                 ) {
                     continue;
                 }
+                var vidSrc = String(vid.currentSrc || vid.src || '');
                 var isSoleStreamCandidate = (
                     allVideos.length === 1 &&
-                    String(vid.currentSrc || vid.src || '').indexOf('blob:') === 0 &&
+                    (!vidSrc || vidSrc.indexOf('blob:') === 0) &&
                     !(vid.closest && vid.closest(SDA_SELECTORS))
                 );
                 if (isSoleStreamCandidate) {
+                    if (vid.classList && vid.classList.contains('tp9-sda-hidden')) {
+                        vid.classList.remove('tp9-sda-hidden');
+                    }
                     continue;
                 }
                 if (isAdVideoElement(vid) || (mainVideo && vid !== mainVideo)) {
@@ -14909,7 +15143,7 @@ function showAddProxyForm() {
     }
 
     function adCleanWatchTick() {
-        if (directPlaybackOn()) {
+        if (vaftPlaybackOn()) {
             adCleanWatch = null;
             return;
         }
@@ -15702,6 +15936,22 @@ function showAddProxyForm() {
         }
     }
 
+    var spLastAdEndedAt = 0;
+    var streamEndVerifyInFlight = null;
+    var streamEndVerifyAt = 0;
+    var streamEndLastRescueAt = 0;
+
+    function isRecentOrActiveAdWindow() {
+        var now = Date.now();
+        return Boolean(
+            spAd.active ||
+            adCleanWatch ||
+            (lastStreamAdAt && (now - lastStreamAdAt) < 90000) ||
+            (lastAdBreakEndAt && (now - lastAdBreakEndAt) < 90000) ||
+            (spLastAdEndedAt && (now - spLastAdEndedAt) < 90000)
+        );
+    }
+
     function streamEndTick() {
         if (isDashboardOnlyTab) {
             return;
@@ -15740,14 +15990,55 @@ function showAddProxyForm() {
             (video && video.ended) ||
             (spyHere && twitchSpy.played && twitchSpy.state === 'Ended')
         ) {
-            var vod = dvrVodCache[channel];
-            streamEndMark(
-                channel,
-                video && video.ended
-                    ? 'la vidéo du lecteur Twitch est terminée'
-                    : 'le lecteur Twitch est passé à « terminé »',
-                vod && vod.streamId
-            );
+            var endReason = video && video.ended
+                ? 'la vidéo du lecteur Twitch est terminée'
+                : 'le lecteur Twitch est passé à « terminé »';
+            var nowMs = Date.now();
+            // Pendant ou dans les 90 s suivant une pub, l'état Ended/video.ended
+            // est un faux positif causé par la coupure pub : ne jamais griser
+            // les boutons Lecture / Direct, et relancer aussitôt le lecteur.
+            if (isRecentOrActiveAdWindow()) {
+                if (!isUserExplicitlyPausedLive() && (!dvrOverlay || dvrIsLive()) && (nowMs - streamEndLastRescueAt) > 6000) {
+                    streamEndLastRescueAt = nowMs;
+                    logEvent('info', '🛡️ Faux état « terminé » intercepté après/pendant une pub sur ' + channel + ' : relance automatique du lecteur');
+                    reloadTwitchPlayer();
+                }
+            } else if (streamEndVerifyInFlight !== channel && (nowMs - streamEndVerifyAt) > 8000) {
+                // Vérifie auprès de l'API GQL de Twitch que le streamer est
+                // réellement hors ligne avant de déclarer le stream terminé.
+                streamEndVerifyInFlight = channel;
+                streamEndVerifyAt = nowMs;
+                dvrGql(
+                    'query($login:String!){user(login:$login){stream{id}}}',
+                    { login: channel },
+                    function (json) {
+                        if (streamEndVerifyInFlight === channel) {
+                            streamEndVerifyInFlight = null;
+                        }
+                        if (getTestChannel() !== channel || streamEnd) {
+                            return;
+                        }
+                        var liveStream = json && json.data && json.data.user && json.data.user.stream;
+                        if (liveStream && liveStream.id) {
+                            if (!isUserExplicitlyPausedLive() && (!dvrOverlay || dvrIsLive()) && (Date.now() - streamEndLastRescueAt) > 6000) {
+                                streamEndLastRescueAt = Date.now();
+                                logEvent('info', '🔄 Le lecteur Twitch s\'est arrêté alors que ' + channel + ' est toujours en direct : relance automatique');
+                                reloadTwitchPlayer();
+                            }
+                            return;
+                        }
+                        if (json && json.data) {
+                            var vod = dvrVodCache[channel];
+                            streamEndMark(channel, endReason, vod && vod.streamId);
+                        }
+                    },
+                    function () {
+                        if (streamEndVerifyInFlight === channel) {
+                            streamEndVerifyInFlight = null;
+                        }
+                    }
+                );
+            }
         }
         streamLastLive = {
             channel: channel,
@@ -15761,7 +16052,7 @@ function showAddProxyForm() {
         if (isDashboardOnlyTab) {
             return;
         }
-        if (directPlaybackOn() || scriptIsOff()) {
+        if (vaftPlaybackOn() || scriptIsOff()) {
             watchdogReset();
             return;
         }
@@ -15773,29 +16064,38 @@ function showAddProxyForm() {
             watchdogStarted = false;
             watchdogReset();
         }
-        var channel = getWatchedChannel();
+        var channel = getWatchedChannel() || getTestChannel();
         if (!channel || isRealDocumentHidden()) {
             watchdogReset();
             return;
         }
-        if (dvrOverlay && (!dvrIsLive() || dvrIsLivePaused())) {
+        if (isUserExplicitlyPausedLive() || dvrStreamEnded() || (dvrOverlay && !dvrIsLive())) {
             watchdogReset();
             return;
         }
+        var now = Date.now();
         var video = (dvrLiveVideo && dvrLiveVideo.isConnected)
             ? dvrLiveVideo
             : findPlaybackVideo();
         if (
             !video ||
             isOwnPlayerVideo(video) ||
-            isMiniPlayerVideo(video) ||
-            video.paused ||
-            video.ended
+            isMiniPlayerVideo(video)
         ) {
+            if (watchdogStarted && watchdogSince && (now - watchdogSince) >= WATCHDOG_STALL_MS && (now - watchdogLastRescue) >= WATCHDOG_COOLDOWN_MS) {
+                watchdogRescue(channel);
+                watchdogReset();
+                return;
+            }
+            if (!watchdogStarted) {
+                watchdogReset();
+            }
+            return;
+        }
+        if ((video.paused || video.ended) && !watchdogStarted && !video.error) {
             watchdogReset();
             return;
         }
-        var now = Date.now();
         if (video !== watchdogVideo) {
             watchdogVideo = video;
             watchdogTime = video.currentTime;
@@ -15993,6 +16293,7 @@ function showAddProxyForm() {
             logEvent('warn', 'Relance impossible : lecteur Twitch introuvable');
             return false;
         }
+        clearStraySdaHiddenOnPlayer(null);
         var ch = getTestChannel();
         var savedVol = getSavedChannelVolume(ch);
         if (savedVol !== null) {
@@ -16002,9 +16303,28 @@ function showAddProxyForm() {
                 localStorage.setItem('muted', String(baseVol === 0));
             } catch (e) {}
         }
+        spBuffer.lastFix = Date.now();
+        spBuffer.same = 0;
+        spBuffer.deadTicks = 0;
         try {
             state.setSrc({ isNewMediaPlayerInstance: true, refreshAccessToken: true });
             scheduleVolumeRestore(ch, 2500);
+            [120, 400, 900, 1800].forEach(function (delayMs) {
+                setTimeout(audioNormScan, delayMs);
+            });
+            if (configChannel) {
+                try {
+                    configChannel.postMessage({ type: 'spReloaded', tabId: TAB_ID });
+                } catch (e2) {}
+            }
+            if (!isUserExplicitlyPausedLive()) {
+                try {
+                    var parts = twitchSpy.parts || findTwitchPlayerParts();
+                    if (parts && parts.player && typeof parts.player.play === 'function') {
+                        parts.player.play();
+                    }
+                } catch (e3) {}
+            }
             return true;
         } catch (e) {
             logEvent('warn', 'Relance du lecteur Twitch refusée : ' + (e && e.message));
@@ -17663,7 +17983,23 @@ function showAddProxyForm() {
     function dvrWireControls() {
         var seek = dvrQuery('.tp9dvr-seek');
         var wrap = dvrQuery('.tp9dvr-seek-wrap');
-        dvrQuery('.tp9dvr-live').addEventListener('click', dvrEnterLiveMode);
+        dvrQuery('.tp9dvr-live').addEventListener('click', function () {
+            var wasAlreadyLive = dvrIsLive() && !dvrIsLivePaused();
+            if (dvrStreamEnded() && wasAlreadyLive) {
+                var ch = dvrChannelInUse || getTestChannel();
+                if (ch) {
+                    streamEnd = null;
+                    delete dvrVodCache[ch];
+                }
+                rescueLivePlayerIfStuck(true);
+                dvrRefreshControls();
+                return;
+            }
+            dvrEnterLiveMode();
+            if (wasAlreadyLive && !dvrStreamEnded()) {
+                rescueLivePlayerIfStuck(true);
+            }
+        });
         dvrQuery('.tp9dvr-settings').addEventListener('click', dvrToggleSettingsMenu);
         dvrQuery('.tp9dvr-back').addEventListener('click', function () {
             dvrShowSkipHint(true);
@@ -17831,15 +18167,20 @@ function showAddProxyForm() {
             return;
         }
         if (dvrIsLive()) {
-            if (dvrIsLivePaused()) dvrResumeLive();
-            // Ni VOD ni mémoire : c'est la pause de Twitch, qui repart
-            // au direct à la reprise. On lui passe la main, aussi pour
-            // reprendre une pause qu'il a lui-même posée.
-            else if (
-                dvrLivePauseKind() === 'plain' ||
-                (dvrLiveVideo && dvrLiveVideo.paused)
-            ) dvrTwitchNativePlayPause();
-            else dvrPauseLive();
+            if (dvrIsLivePaused()) {
+                dvrResumeLive();
+            } else if (!dvrLiveVideo || isLivePlayerBrokenOrStuck(dvrLiveVideo)) {
+                rescueLivePlayerIfStuck(true);
+            } else if (dvrLiveVideo.paused) {
+                setUserExplicitLivePause(false);
+                dvrTwitchNativePlayPause();
+                rescueLivePlayerIfStuck(false);
+            } else if (dvrLivePauseKind() === 'plain') {
+                setUserExplicitLivePause(true);
+                dvrTwitchNativePlayPause();
+            } else {
+                dvrPauseLive();
+            }
         } else if (dvrVideo.paused) {
             var played = dvrVideo.play();
             if (played && played.catch) played.catch(function () {});
@@ -18144,9 +18485,11 @@ function showAddProxyForm() {
         if (!dvrOverlay || !dvrVideo) return;
         var liveButton = dvrQuery('.tp9dvr-live');
         if (liveButton) {
-            liveButton.disabled = dvrIsLive() && !dvrIsLivePaused();
-            // Stream terminé : le bouton ramène à la fin, plus au direct.
             var ended = dvrStreamEnded();
+            var liveNeedsRescue = dvrIsLive() && !dvrIsLivePaused() && !ended &&
+                (isLivePlayerBrokenOrStuck(dvrLiveVideo) || !!(dvrLiveVideo && dvrLiveVideo.paused && !isUserExplicitlyPausedLive()));
+            liveButton.disabled = dvrIsLive() && !dvrIsLivePaused() && !liveNeedsRescue;
+            // Stream terminé : le bouton ramène à la fin, plus au direct.
             var html = '<span class="tp9dvr-live-dot"></span>' + (ended ? tt('FIN', 'END') : tt('DIRECT', 'LIVE'));
             if (liveButton.innerHTML !== html) {
                 liveButton.innerHTML = html;
@@ -33146,6 +33489,8 @@ dashboardButton.style.visibility = 'hidden';
 
         lines.push('var __tp_adCleanOff = ' + JSON.stringify(loadAdCleanOff()) + ';');
 
+        lines.push('var __tp_channelAll403 = {};');
+
         lines.push('var __tp_tabId = ' + JSON.stringify(TAB_ID) + ';');
 
         // --------------------------------------------------------
@@ -33167,6 +33512,7 @@ dashboardButton.style.visibility = 'hidden';
                             ) {
                                 __tp_config =
                                     event.data.config;
+                                __tp_channelAll403 = {};
                                 console.log(
                                     '[TwitchProxy] Configuration mise à jour'
                                 );
@@ -34759,10 +35105,14 @@ dashboardButton.style.visibility = 'hidden';
                     }).catch(function(){});
                 }, 400);
             }
+            function __sp_isDiscTag(line){
+                var t = line.trim();
+                return t === "#EXT-X-DISCONTINUITY";
+            }
             // Garde uniquement les N derniers segments d'une playlist de secours
             // en ancrant le premier segment conservé par son #EXT-X-PROGRAM-DATE-TIME
-            // (info.adBackupMinPdt) afin que #EXT-X-MEDIA-SEQUENCE reste 100 % monotone
-            // sans jamais reculer ni sauter pendant toute la durée de la pub.
+            // (info.adBackupMinPdt) afin que #EXT-X-MEDIA-SEQUENCE et
+            // #EXT-X-DISCONTINUITY-SEQUENCE restent 100 % monotones sans saut.
             function __sp_trimToLiveEdge(text, maxSegments, info){
                 maxSegments = maxSegments || 3;
                 var lines = __sp_lines(text);
@@ -34805,13 +35155,14 @@ dashboardButton.style.visibility = 'hidden';
                 if (dropCount <= 0) {
                     return text;
                 }
+                // Conserve uniquement le #EXT-X-PROGRAM-DATE-TIME / #EXT-X-MAP propre
+                // au premier segment gardé ; toute balise #EXT-X-DISCONTINUITY située
+                // avant lui est comptabilisée dans #EXT-X-DISCONTINUITY-SEQUENCE.
                 var keepFromLine = segIndices[dropCount];
-                // Recule d'une ou deux lignes pour conserver le #EXT-X-PROGRAM-DATE-TIME
-                // associé au premier segment conservé
                 while (
                     keepFromLine > 0 &&
                     (lines[keepFromLine - 1].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
-                     lines[keepFromLine - 1].indexOf("#EXT-X-DISCONTINUITY") === 0)
+                     lines[keepFromLine - 1].indexOf("#EXT-X-MAP:") === 0)
                 ) {
                     keepFromLine--;
                 }
@@ -34819,10 +35170,24 @@ dashboardButton.style.visibility = 'hidden';
                 while (
                     firstSegLine > 0 &&
                     (lines[firstSegLine - 1].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
-                     lines[firstSegLine - 1].indexOf("#EXT-X-DISCONTINUITY") === 0)
+                     lines[firstSegLine - 1].indexOf("#EXT-X-MAP:") === 0 ||
+                     __sp_isDiscTag(lines[firstSegLine - 1]))
                 ) {
                     firstSegLine--;
                 }
+                var droppedDisc = 0;
+                var lastDroppedMap = "";
+                for (var d = firstSegLine; d < keepFromLine; d++) {
+                    if (__sp_isDiscTag(lines[d])) {
+                        droppedDisc++;
+                    } else if (lines[d].indexOf("#EXT-X-MAP:") === 0) {
+                        lastDroppedMap = lines[d];
+                    }
+                }
+                var keepStartsWithMap = lines[keepFromLine] && lines[keepFromLine].indexOf("#EXT-X-MAP:") === 0;
+                var sawDiscSeq = false;
+                var sawHeaderMap = false;
+                var mediaSeqIdx = -1;
                 var out = [];
                 for (var h = 0; h < firstSegLine; h++) {
                     var hLine = lines[h];
@@ -34831,8 +35196,33 @@ dashboardButton.style.visibility = 'hidden';
                         if (!isNaN(seq)) {
                             hLine = "#EXT-X-MEDIA-SEQUENCE:" + (seq + dropCount);
                         }
+                        mediaSeqIdx = out.length;
+                    } else if (hLine.indexOf("#EXT-X-DISCONTINUITY-SEQUENCE:") === 0) {
+                        sawDiscSeq = true;
+                        if (droppedDisc > 0) {
+                            var dSeq = parseInt(hLine.substring(30).trim(), 10);
+                            if (!isNaN(dSeq)) {
+                                hLine = "#EXT-X-DISCONTINUITY-SEQUENCE:" + (dSeq + droppedDisc);
+                            }
+                        }
+                    } else if (hLine.indexOf("#EXT-X-MAP:") === 0) {
+                        sawHeaderMap = true;
+                        if (lastDroppedMap && !keepStartsWithMap) {
+                            hLine = lastDroppedMap;
+                        }
                     }
                     out.push(hLine);
+                }
+                if (droppedDisc > 0 && !sawDiscSeq) {
+                    var discHeader = "#EXT-X-DISCONTINUITY-SEQUENCE:" + droppedDisc;
+                    if (mediaSeqIdx >= 0) {
+                        out.splice(mediaSeqIdx + 1, 0, discHeader);
+                    } else {
+                        out.push(discHeader);
+                    }
+                }
+                if (lastDroppedMap && !keepStartsWithMap && !sawHeaderMap) {
+                    out.push(lastDroppedMap);
                 }
                 for (var k = keepFromLine; k < lines.length; k++) {
                     out.push(lines[k]);
@@ -35123,11 +35513,14 @@ dashboardButton.style.visibility = 'hidden';
                         text,
                         info.v2
                     );
+                    var is403Fallback = !__sp_on() && !!(__tp_channelAll403[channel] && __tp_channelAll403[channel] > Date.now() - 600000);
                     __tp_noteOrigin(
                         __tp_parseMediaInfo(out),
-                        __sp_proxyAds()
-                            ? "Twitch direct, proxys pendant les pubs"
-                            : "Twitch direct, bloqueur de pub sans proxy",
+                        is403Fallback
+                            ? "Twitch direct + relais anti-pub sans proxy (VAFT) suite au refus des proxys"
+                            : (__sp_proxyAds()
+                                ? "Twitch direct, proxys pendant les pubs"
+                                : "Twitch direct, bloqueur de pub sans proxy"),
                         playerType,
                         usherN
                     );
@@ -35138,6 +35531,7 @@ dashboardButton.style.visibility = 'hidden';
                         channel: channel,
                         direct: true,
                         sansProxy: true,
+                        proxy403: is403Fallback,
                         usher: usherN,
                         playerType: playerType,
                         timestamp: Date.now()
@@ -35516,109 +35910,169 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 return out;
             }
-            // Coupure finie : on retire tous les repères ET tous les anciens
-            // segments de pub qui traînent encore en haut de la fenêtre
+            // Coupure finie : on retire tous les repères ET tout le préfixe de
+            // segments de pub / pré-pub qui traîne encore en haut de la fenêtre
             // glissante de Twitch (tout en gardant leurs URLs dans __sp_adSegs
-            // pour garantir 0 % de pub), puis on ancre le premier segment ,live
-            // conservé sur le bord du direct (info.postAdMinPdt) pendant 45 s
-            // afin que le lecteur relancé démarre directement à ~1,5 s du direct
-            // sans que #EXT-X-MEDIA-SEQUENCE ne recule jamais.
+            // pour garantir 0 % de pub), en gardant au moins 2 segments ,live
+            // (~4 s) et en mettant à jour #EXT-X-MEDIA-SEQUENCE ET
+            // #EXT-X-DISCONTINUITY-SEQUENCE pour éviter tout rejet du décodeur
+            // IVS lorsque Twitch fait glisser la pub hors de sa fenêtre ~30 s après.
             function __sp_cleanAfter(text, info){
                 var lines = __sp_lines(text);
                 var now = Date.now();
+                var segIndices = [];
+                var segPdts = [];
+                var segIsLive = [];
                 var livePdts = [];
+                var lastNonLiveIdx = -1;
                 var scanPdt = 0;
                 for (var s = 0; s < lines.length - 1; s++) {
                     if (lines[s].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
                         scanPdt = Date.parse(lines[s].substring(25).trim()) || 0;
                     } else if (lines[s].indexOf("#EXTINF") === 0) {
-                        if (lines[s].indexOf(",live") >= 0 && scanPdt > 0) {
-                            livePdts.push(scanPdt);
+                        var isLiveSeg = lines[s].indexOf(",live") >= 0;
+                        var segIdx = segIndices.length;
+                        segIndices.push(s);
+                        segPdts.push(scanPdt);
+                        segIsLive.push(isLiveSeg);
+                        if (isLiveSeg) {
+                            if (scanPdt > 0) {
+                                livePdts.push(scanPdt);
+                            }
+                        } else {
+                            lastNonLiveIdx = segIdx;
+                            var adSegUrl = lines[s + 1].trim();
+                            if (adSegUrl) {
+                                __sp_adSegs[adSegUrl] = now;
+                            }
                         }
                         scanPdt = 0;
                     }
                 }
+                // Garde-fou absolu : ne jamais renvoyer une playlist média à 0 segment
+                if (!segIndices.length || lastNonLiveIdx >= segIndices.length - 1) {
+                    return __sp_strip(text, false, info);
+                }
                 var lastLivePdt = livePdts.length ? livePdts[livePdts.length - 1] : 0;
                 if (info && !info.postAdReloadLocked && livePdts.length > 0) {
-                    var hasPrefetch = text.indexOf("#EXT-X-TWITCH-PREFETCH:") >= 0;
-                    var targetIdx = hasPrefetch ? (livePdts.length - 1) : Math.max(0, livePdts.length - 2);
+                    // Toujours conserver au moins 2 segments ,live (~4 s) pour éviter
+                    // toute famine de tampon immédiate au setSrc ; spCatchUpTick recale
+                    // ensuite en douceur à ~1,8 s du direct.
+                    var targetIdx = Math.max(0, livePdts.length - 2);
                     info.postAdMinPdt = livePdts[targetIdx];
                     if (info.postAdReloadSeen || (info.lastEndAt && (now - info.lastEndAt) > 1200)) {
                         info.postAdReloadLocked = true;
                     }
                 }
                 var minKeepPdt = (info && info.postAdMinPdt > 0) ? info.postAdMinPdt : 0;
-                var out = [];
-                var droppedSegs = 0;
-                var pendingTagLines = [];
-                var pendingPdt = 0;
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i];
-                    if (line.indexOf("#EXT-X-DATERANGE") === 0 && line.indexOf(__sp_MARK) >= 0) {
-                        continue;
-                    }
-                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
-                        pendingPdt = Date.parse(line.substring(25).trim()) || 0;
-                        pendingTagLines.push(line);
-                        continue;
-                    }
-                    if (line.indexOf("#EXT-X-DISCONTINUITY") === 0) {
-                        pendingTagLines.push(line);
-                        continue;
-                    }
-                    if (
-                        i < lines.length - 1 &&
-                        line.indexOf("#EXTINF") === 0
-                    ) {
-                        var segUrl = lines[i + 1].trim();
-                        if (line.indexOf(",live") < 0) {
-                            __sp_adSegs[segUrl] = now;
-                            droppedSegs++;
-                            pendingTagLines.length = 0;
-                            pendingPdt = 0;
-                            i++; // saute aussi l'URL du segment de pub
-                            continue;
-                        }
-                        if (
-                            minKeepPdt > 0 &&
-                            pendingPdt > 0 &&
-                            pendingPdt < minKeepPdt - 50 &&
-                            (!lastLivePdt || pendingPdt < lastLivePdt - 50)
-                        ) {
-                            droppedSegs++;
-                            pendingTagLines.length = 0;
-                            pendingPdt = 0;
-                            i++; // saute ce vieux segment ,live antérieur au bord du direct
-                            continue;
-                        }
-                        for (var p = 0; p < pendingTagLines.length; p++) {
-                            out.push(pendingTagLines[p]);
-                        }
-                        pendingTagLines.length = 0;
-                        pendingPdt = 0;
-                        out.push(line);
-                        out.push(lines[i + 1]);
-                        i++;
-                        continue;
-                    }
-                    if (pendingTagLines.length) {
-                        for (var q = 0; q < pendingTagLines.length; q++) {
-                            out.push(pendingTagLines[q]);
-                        }
-                        pendingTagLines.length = 0;
-                        pendingPdt = 0;
-                    }
-                    out.push(line);
+                var dropCount = lastNonLiveIdx + 1;
+                while (
+                    dropCount < segIndices.length - 1 &&
+                    minKeepPdt > 0 &&
+                    segPdts[dropCount] > 0 &&
+                    segPdts[dropCount] < minKeepPdt - 50 &&
+                    (!lastLivePdt || segPdts[dropCount] < lastLivePdt - 50)
+                ) {
+                    dropCount++;
                 }
-                if (droppedSegs > 0) {
-                    for (var k = 0; k < out.length; k++) {
-                        if (out[k].indexOf("#EXT-X-MEDIA-SEQUENCE:") === 0) {
-                            var seq = parseInt(out[k].substring(22).trim(), 10);
-                            if (!isNaN(seq)) {
-                                out[k] = "#EXT-X-MEDIA-SEQUENCE:" + (seq + droppedSegs);
-                            }
-                            break;
+                var isAdMetaLine = function(ln){
+                    return (ln.indexOf("#EXT-X-DATERANGE") === 0 && (ln.indexOf(__sp_MARK) >= 0 || /twitch-ad|X-TV-TWITCH-AD/i.test(ln))) ||
+                        /^#EXT-X-(SCTE35|CUE-OUT|CUE-OUT-CONT|CUE-IN)/i.test(ln) ||
+                        (ln.charAt(0) === "#" && /X-TV-TWITCH-AD/i.test(ln));
+                };
+                if (dropCount <= 0) {
+                    var cleanOnly = [];
+                    for (var c = 0; c < lines.length; c++) {
+                        if (!isAdMetaLine(lines[c])) {
+                            cleanOnly.push(lines[c]);
                         }
+                    }
+                    return cleanOnly.join(__sp_NL);
+                }
+                var firstSegLine = segIndices[0];
+                while (
+                    firstSegLine > 0 &&
+                    (lines[firstSegLine - 1].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
+                     lines[firstSegLine - 1].indexOf("#EXT-X-MAP:") === 0 ||
+                     __sp_isDiscTag(lines[firstSegLine - 1]) ||
+                     isAdMetaLine(lines[firstSegLine - 1]))
+                ) {
+                    firstSegLine--;
+                }
+                var keepFromLine = segIndices[dropCount];
+                while (
+                    keepFromLine > firstSegLine &&
+                    (lines[keepFromLine - 1].indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
+                     lines[keepFromLine - 1].indexOf("#EXT-X-MAP:") === 0)
+                ) {
+                    keepFromLine--;
+                }
+                var droppedDisc = 0;
+                var lastDroppedMap = "";
+                for (var d = firstSegLine; d < keepFromLine; d++) {
+                    if (__sp_isDiscTag(lines[d])) {
+                        droppedDisc++;
+                    } else if (lines[d].indexOf("#EXT-X-MAP:") === 0) {
+                        // On ne retient un #EXT-X-MAP du préfixe supprimé que s'il précède
+                        // un segment ,live (et non le segment d'init d'une pub fMP4).
+                        var nextSegIsLive = true;
+                        for (var ns = 0; ns < segIndices.length; ns++) {
+                            if (segIndices[ns] > d) {
+                                nextSegIsLive = segIsLive[ns];
+                                break;
+                            }
+                        }
+                        if (nextSegIsLive) {
+                            lastDroppedMap = lines[d];
+                        }
+                    }
+                }
+                var keepStartsWithMap = lines[keepFromLine] && lines[keepFromLine].indexOf("#EXT-X-MAP:") === 0;
+                var sawDiscSeq = false;
+                var sawHeaderMap = false;
+                var mediaSeqIdx = -1;
+                var out = [];
+                for (var h = 0; h < firstSegLine; h++) {
+                    var hLine = lines[h];
+                    if (isAdMetaLine(hLine)) {
+                        continue;
+                    }
+                    if (hLine.indexOf("#EXT-X-MEDIA-SEQUENCE:") === 0) {
+                        var seq = parseInt(hLine.substring(22).trim(), 10);
+                        if (!isNaN(seq)) {
+                            hLine = "#EXT-X-MEDIA-SEQUENCE:" + (seq + dropCount);
+                        }
+                        mediaSeqIdx = out.length;
+                    } else if (hLine.indexOf("#EXT-X-DISCONTINUITY-SEQUENCE:") === 0) {
+                        sawDiscSeq = true;
+                        if (droppedDisc > 0) {
+                            var dSeq = parseInt(hLine.substring(30).trim(), 10);
+                            if (!isNaN(dSeq)) {
+                                hLine = "#EXT-X-DISCONTINUITY-SEQUENCE:" + (dSeq + droppedDisc);
+                            }
+                        }
+                    } else if (hLine.indexOf("#EXT-X-MAP:") === 0) {
+                        sawHeaderMap = true;
+                        if (lastDroppedMap && !keepStartsWithMap) {
+                            hLine = lastDroppedMap;
+                        }
+                    }
+                    out.push(hLine);
+                }
+                if (droppedDisc > 0 && !sawDiscSeq) {
+                    var discHeader = "#EXT-X-DISCONTINUITY-SEQUENCE:" + droppedDisc;
+                    if (mediaSeqIdx >= 0) {
+                        out.splice(mediaSeqIdx + 1, 0, discHeader);
+                    } else {
+                        out.push(discHeader);
+                    }
+                }
+                if (lastDroppedMap && !keepStartsWithMap && !sawHeaderMap) {
+                    out.push(lastDroppedMap);
+                }
+                for (var k = keepFromLine; k < lines.length; k++) {
+                    if (!isAdMetaLine(lines[k])) {
+                        out.push(lines[k]);
                     }
                 }
                 return out.join(__sp_NL);
@@ -36077,7 +36531,7 @@ dashboardButton.style.visibility = 'hidden';
                 __tp_dvrSyncConfig();
                 var __tp_usherN = ++__tp_usherCount;
                 var __tp_ptype = __tp_playerType(originalURL);
-                if (__sp_on()) {
+                if (__sp_on() || (__tp_channelAll403[channel] && __tp_channelAll403[channel] > Date.now() - 600000)) {
                     return __sp_usher(this, input, init, originalURL, channel, __tp_usherN, __tp_ptype);
                 }
                 if (__tp_ptype !== "site") {
@@ -36502,12 +36956,24 @@ dashboardButton.style.visibility = 'hidden';
                             }
 
                             if (response.status === 200) {
+                                if (__tp_had403) {
+                                    __tp_channelAll403[channel] = Date.now();
+                                }
                                 return response.text().then(function(text){
-                                    var info = __sp_streams[channel];
-                                    if (info) {
-                                        __sp_forget(info);
+                                    var prevInfo = __sp_streams[channel];
+                                    var prevEndAt = (prevInfo && prevInfo.lastEndAt && (Date.now() - prevInfo.lastEndAt) < 45000)
+                                        ? prevInfo.lastEndAt
+                                        : 0;
+                                    var prevMinPdt = prevEndAt ? (prevInfo.postAdMinPdt || 0) : 0;
+                                    if (prevInfo) {
+                                        __sp_forget(prevInfo);
                                     }
-                                    info = __sp_readMaster(channel, text, originalURL);
+                                    var info = __sp_readMaster(channel, text, originalURL);
+                                    if (prevEndAt) {
+                                        info.lastEndAt = prevEndAt;
+                                        info.postAdMinPdt = prevMinPdt;
+                                        info.postAdReloadSeen = true;
+                                    }
                                     __sp_streams[channel] = info;
                                     info.lastReload = Date.now();
                                     __sp_warmBackups(info);
@@ -36629,6 +37095,14 @@ dashboardButton.style.visibility = 'hidden';
         return !proxiesOn() || proxyAdsOnlyOn();
     }
 
+    // Vrai dès que le bloqueur interne VAFT pilote la lecture de la chaîne
+    // courante : mode Adblock, « proxys pendant les pubs », OU bascule
+    // automatique suite à un refus HTTP 403 de tous les proxys sur ce stream.
+    function vaftPlaybackOn() {
+        if (scriptIsOff()) return false;
+        return directPlaybackOn() || isChannelProxy403(getTestChannel());
+    }
+
     var SP_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
     var SP_HEADER_NAMES = [
         'Client-ID',
@@ -36640,7 +37114,7 @@ dashboardButton.style.visibility = 'hidden';
     var spHeaders = {};
     var spDeviceId = null;
     var spNativeFetch = window.fetch;
-    var spAd = { active: false, stripping: false, channel: null };
+    var spAd = { active: false, stripping: false, searching: false, channel: null, lastUpdateAt: 0 };
     var spBadge = null;
     var spParts = null;
     var spBuffer = {
@@ -36651,6 +37125,7 @@ dashboardButton.style.visibility = 'hidden';
         duration: 0,
         time: null,
         same: 0,
+        deadTicks: 0,
         lastFix: 0
     };
 
@@ -36697,15 +37172,31 @@ dashboardButton.style.visibility = 'hidden';
         try {
             var parsed = JSON.parse(body);
             if (Array.isArray(parsed)) {
-                var filtered = [];
+                if (parsed.length === 1) {
+                    var single = parsed[0];
+                    var singleType = single && single.variables && single.variables.playerType;
+                    if (singleType === 'picture-by-picture') {
+                        return '';
+                    }
+                }
+                var outArr = [];
                 var changedArr = false;
+                var nonPbpCount = 0;
                 for (var i = 0; i < parsed.length; i++) {
                     var entry = parsed[i];
                     var pType = entry && entry.variables && entry.variables.playerType;
                     if (pType === 'picture-by-picture') {
+                        // Dans un lot GraphQL multi-opérations d'Apollo, retirer un élément
+                        // décale les indices de réponse et fait échouer les opérations suivantes :
+                        // on neutralise login="" à la même position pour préserver l'alignement 1:1.
+                        entry = Object.assign({}, entry, {
+                            variables: Object.assign({}, entry.variables, { login: '', playerType: 'embed' })
+                        });
                         changedArr = true;
+                        outArr.push(entry);
                         continue;
                     }
+                    nonPbpCount++;
                     if (
                         pType &&
                         pType !== 'popout' &&
@@ -36715,10 +37206,10 @@ dashboardButton.style.visibility = 'hidden';
                         entry.variables.playerType = 'popout';
                         changedArr = true;
                     }
-                    filtered.push(entry);
+                    outArr.push(entry);
                 }
-                if (!filtered.length) return '';
-                return changedArr ? JSON.stringify(filtered) : body;
+                if (!nonPbpCount) return '';
+                return changedArr ? JSON.stringify(outArr) : body;
             }
             if (parsed && parsed.variables && parsed.variables.playerType === 'picture-by-picture') {
                 return '';
@@ -36756,7 +37247,7 @@ dashboardButton.style.visibility = 'hidden';
                 } else if (input && input.headers) {
                     spNoteHeaders(input.headers);
                 }
-                if (init && directPlaybackOn() && typeof init.body === 'string') {
+                if (init && vaftPlaybackOn() && typeof init.body === 'string') {
                     var body = spRewriteTokenBody(init.body);
                     if (body !== init.body) {
                         init = Object.assign({}, init, { body: body });
@@ -36846,13 +37337,21 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         var player = parts.player;
-        try {
-            if (player.isPaused() || (player.core && player.core.paused)) {
-                return;
-            }
-        } catch (e) {}
+        var isForced = !!(options && (options.force || options.afterAd));
+        if (isUserExplicitlyPausedLive()) {
+            return;
+        }
+        if (!isForced) {
+            try {
+                if (player.isPaused() || (player.core && player.core.paused)) {
+                    return;
+                }
+            } catch (e) {}
+        }
+        clearStraySdaHiddenOnPlayer(null);
         spBuffer.lastFix = Date.now();
         spBuffer.same = 0;
+        spBuffer.deadTicks = 0;
         if (action === 'pausePlay') {
             try {
                 player.pause();
@@ -37073,7 +37572,7 @@ dashboardButton.style.visibility = 'hidden';
 
     function spCatchUpTick() {
         var w = spCatchUp;
-        if (!w || !directPlaybackOn() || getTestChannel() !== w.channel) {
+        if (!w || !vaftPlaybackOn() || getTestChannel() !== w.channel) {
             spCatchUpStop();
             return;
         }
@@ -37223,7 +37722,7 @@ dashboardButton.style.visibility = 'hidden';
                 clearInterval(spResumeTimer);
                 spResumeTimer = null;
             }
-            if (!directPlaybackOn()) {
+            if (!vaftPlaybackOn()) {
                 stop();
                 return;
             }
@@ -37244,8 +37743,8 @@ dashboardButton.style.visibility = 'hidden';
                 return;
             }
             stop();
-            // Mis en pause : c'est l'utilisateur, on ne touche à rien.
-            if (video && video.paused) {
+            // Mis en pause volontairement par l'utilisateur : on ne touche à rien.
+            if (isUserExplicitlyPausedLive()) {
                 return;
             }
             logEvent(
@@ -37254,7 +37753,7 @@ dashboardButton.style.visibility = 'hidden';
                 (SP_RESUME_CHECK_MS / 1000) + ' s · ' +
                 adCleanVideoState(video) + ') : relance du lecteur'
             );
-            spPlayerTask('reload');
+            spPlayerTask('reload', { force: true });
         }, SP_RESUME_POLL_MS);
     }
 
@@ -37286,10 +37785,16 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         if (data.type === 'spAd') {
+            var wasSpAdActive = spAd.active;
             spCountAd(data);
             spAd.active = !!data.active;
             spAd.stripping = !!data.stripping;
+            spAd.searching = !!data.searching;
             spAd.channel = data.channel || null;
+            spAd.lastUpdateAt = Date.now();
+            if (wasSpAdActive && !spAd.active) {
+                spLastAdEndedAt = Date.now();
+            }
             spUpdateBadge(data);
             updateActiveProxyDisplay();
             renderAdblockStats();
@@ -37928,7 +38433,12 @@ dashboardButton.style.visibility = 'hidden';
     // l'image jusqu'au F5 ; la relance repart d'un lecteur neuf
     // (option PlayerBufferingDoPlayerReload de vaft).
     function sansProxyBufferTick() {
-        if (isDashboardOnlyTab || !directPlaybackOn()) {
+        if (isDashboardOnlyTab || !vaftPlaybackOn()) {
+            return;
+        }
+        if (isUserExplicitlyPausedLive() || dvrStreamEnded() || (dvrOverlay && !dvrIsLive())) {
+            spBuffer.same = 0;
+            spBuffer.deadTicks = 0;
             return;
         }
         var parts = spPlayerParts(false);
@@ -37941,16 +38451,31 @@ dashboardButton.style.visibility = 'hidden';
                 spParts = null;
                 return;
             }
+            var now = Date.now();
             var content = parts.state.props && parts.state.props.content;
+            if (!content || content.type !== 'live') {
+                return;
+            }
             var video = player.getHTMLVideoElement && player.getHTMLVideoElement();
-            if (
-                !content ||
-                content.type !== 'live' ||
-                player.isPaused() ||
-                (video && video.ended) ||
-                spAd.active ||
-                spBuffer.lastFix > Date.now() - 8000
-            ) {
+            if (spAd.active) {
+                // Si le lecteur IVS a cessé de relire la playlist .m3u8 depuis > 12 s
+                // (ex: décodeur stoppé sur un segment vide) ou est tombé en erreur média,
+                // __sp_endAd ne pourra jamais être déclenché tout seul : on débloque et relance.
+                var adPollDead = spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 12000;
+                var adMediaErr = !!(video && video.error && spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 5000);
+                if ((adPollDead || adMediaErr) && spBuffer.lastFix <= now - 8000) {
+                    spHandleMessage({ type: 'spAd', channel: spAd.channel || getTestChannel(), active: false, stripping: false });
+                    logEvent('warn', '🛡️ Lecteur Twitch interrompu pendant le blocage pub : relance automatique du lecteur');
+                    spPlayerTask('reload', { force: true });
+                    return;
+                }
+                // Pendant un remplacement par segments vides (stripping) ou la recherche
+                // initiale d'un flux de secours, l'image est normale si elle n'avance pas
+                // tant que le lecteur continue de relire .m3u8 toutes les 2 s.
+                if (spAd.stripping || spAd.searching || spBuffer.lastFix > now - 10000) {
+                    return;
+                }
+            } else if (spBuffer.lastFix > now - 8000) {
                 return;
             }
             var coreState = player.core.state || {};
@@ -37958,9 +38483,39 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.path = coreState.path;
                 spBuffer.started = false;
                 spBuffer.same = 0;
+                spBuffer.deadTicks = 0;
             }
-            if (player.getState() === 'Playing') {
+            var pState = '';
+            try {
+                pState = typeof player.getState === 'function' ? player.getState() : '';
+            } catch (e2) {}
+            if (pState === 'Playing') {
                 spBuffer.started = true;
+            }
+            if (!spAd.active) {
+                if ((video && (video.error || video.ended)) || pState === 'Ended' || (spBuffer.started && !video)) {
+                    spBuffer.deadTicks = (spBuffer.deadTicks || 0) + 1;
+                    if (spBuffer.deadTicks >= 5) {
+                        spBuffer.deadTicks = 0;
+                        logEvent('info', '🔄 Lecteur Twitch interrompu (écran noir / fin prématurée) : relance automatique du lecteur');
+                        spPlayerTask('reload', { force: true });
+                    }
+                    return;
+                }
+                if (video && video.paused) {
+                    spBuffer.deadTicks = (spBuffer.deadTicks || 0) + 1;
+                    if (spBuffer.deadTicks === 2) {
+                        try {
+                            player.play();
+                        } catch (e3) {}
+                    } else if (spBuffer.deadTicks >= 8) {
+                        spBuffer.deadTicks = 0;
+                        logEvent('info', '🔄 Lecteur Twitch figé en pause involontaire : relance automatique du lecteur');
+                        spPlayerTask('reload', { force: true });
+                    }
+                    return;
+                }
+                spBuffer.deadTicks = 0;
             }
             var position = coreState.position;
             var buffered = coreState.bufferedPosition;
@@ -37971,6 +38526,7 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.time = time;
                 return;
             }
+            var stallThreshold = spAd.active ? 10 : 5;
             if (
                 spBuffer.started &&
                 spBuffer.time !== null &&
@@ -37981,9 +38537,9 @@ dashboardButton.style.visibility = 'hidden';
                 (position !== 0 || buffered !== 0 || duration !== 0)
             ) {
                 spBuffer.same++;
-                if (spBuffer.same === 5) {
+                if (spBuffer.same === stallThreshold) {
                     logEvent('info', 'Lecteur Twitch bloqué en chargement : relance automatique du lecteur');
-                    spPlayerTask('reload');
+                    spPlayerTask('reload', { force: true });
                 }
             } else {
                 spBuffer.same = 0;
@@ -38539,6 +39095,7 @@ dashboardButton.style.visibility = 'hidden';
     var bttvGlobalsLoaded = false;
     var bttvCurrentChannel = null;
     var bttvChatObserver = null;
+    var bttvChatResizeObserver = null;
     var bttvObservedChatNode = null;
     var bttvLastSpamNorm = '';
     var bttvLastSpamEl = null;
@@ -38557,6 +39114,20 @@ dashboardButton.style.visibility = 'hidden';
     var bttvSidebarIframeTimer = null;
     var bttvSidebarHls = null;
     var bttvChatHoverPaused = false;
+    var bttvChatManualScrolled = false;
+    var bttvChatNotifiedTwitchPause = false;
+    var bttvHoverActiveScroller = null;
+    var bttvHoverLockedScrollTop = 0;
+    var bttvHoverAnchorEl = null;
+    var bttvHoverAnchorOffset = 0;
+    var bttvHoverFallbackAnchorEl = null;
+    var bttvHoverFallbackOffset = 0;
+    var bttvHoverOrigOverflowAnchor = '';
+    var bttvHoverOverflowAnchorSaved = false;
+    var bttvInternalScrollWrite = false;
+    var bttvManualMovedAway = false;
+    var bttvLastAwayWheelAt = 0;
+    var bttvScrollIntoViewHooked = false;
     var bttvSplitAlt = false;
     var bttvSavedChatRange = null;
     var bttvAcEl = null;
@@ -39715,12 +40286,337 @@ dashboardButton.style.visibility = 'hidden';
         updateMessageOnlyEmotesState(msgEl);
     }
 
+    var bttvNativeScrollTopDesc = (function () {
+        try {
+            return Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop') ||
+                   Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTop') ||
+                   null;
+        } catch (e) {
+            return null;
+        }
+    })();
+
+    function getRawChatScrollTop(el) {
+        if (!el) return 0;
+        if (bttvNativeScrollTopDesc && bttvNativeScrollTopDesc.get) {
+            try { return bttvNativeScrollTopDesc.get.call(el); } catch (e) {}
+        }
+        return el.scrollTop || 0;
+    }
+
+    function setRawChatScrollTop(el, val) {
+        if (!el) return;
+        bttvInternalScrollWrite = true;
+        try {
+            if (bttvNativeScrollTopDesc && bttvNativeScrollTopDesc.set) {
+                bttvNativeScrollTopDesc.set.call(el, val);
+            } else {
+                el.scrollTop = val;
+            }
+        } catch (e) {}
+        bttvInternalScrollWrite = false;
+    }
+
+    function isChatHoverScrollLocked(scroller) {
+        if (!bttvChatHoverPaused || bttvChatManualScrolled) return false;
+        if (scriptIsOff() || pageConfig.hoverPause === false) return false;
+        if (scroller && bttvHoverActiveScroller && scroller !== bttvHoverActiveScroller) return false;
+        return true;
+    }
+
+    function resolveChatScroller(container) {
+        if (!container) return null;
+        var p = container.parentElement;
+        while (p && p !== document.body && p !== document.documentElement) {
+            if (p.classList && p.classList.contains('simplebar-scroll-content')) {
+                return p;
+            }
+            try {
+                var ov = window.getComputedStyle(p).overflowY;
+                if (ov === 'scroll' || ov === 'auto' || ov === 'overlay') {
+                    return p;
+                }
+            } catch (e) {}
+            p = p.parentElement;
+        }
+        p = container.parentElement;
+        while (p && p !== document.body && p !== document.documentElement) {
+            if (p.scrollHeight > p.clientHeight + 2) return p;
+            p = p.parentElement;
+        }
+        var fallback = container.closest('.simplebar-scroll-content') ||
+                       container.closest('[data-a-target="chat-scroller"]');
+        if (fallback && fallback !== container) return fallback;
+        return container.parentElement;
+    }
+
+    function resolveChatHoverZone(container, scroller) {
+        if (!container) return null;
+        var listWrap = container.closest(
+            '.chat-list--default, .chat-list--other, [data-test-selector="chat-scrollable-area__message-container-wrapper"]'
+        );
+        if (
+            listWrap &&
+            !listWrap.querySelector('[data-a-target="chat-input"]') &&
+            !listWrap.querySelector('[data-a-target="stream-chat-header"]')
+        ) {
+            return listWrap;
+        }
+        var scrollerAttr = container.closest('[data-a-target="chat-scroller"]');
+        if (
+            scrollerAttr &&
+            scrollerAttr.parentElement &&
+            !scrollerAttr.parentElement.querySelector('[data-a-target="chat-input"]') &&
+            !scrollerAttr.parentElement.querySelector('[data-a-target="stream-chat-header"]')
+        ) {
+            return scrollerAttr.parentElement;
+        }
+        return scrollerAttr || scroller || container;
+    }
+
+    function ensureChatScrollIntoViewHook() {
+        if (bttvScrollIntoViewHooked) return;
+        bttvScrollIntoViewHooked = true;
+        try {
+            var origSiv = Element.prototype.scrollIntoView;
+            if (typeof origSiv === 'function') {
+                Element.prototype.scrollIntoView = function () {
+                    if (
+                        isChatHoverScrollLocked(null) &&
+                        bttvObservedChatNode &&
+                        this &&
+                        (this === bttvObservedChatNode || bttvObservedChatNode.contains(this))
+                    ) {
+                        return;
+                    }
+                    return origSiv.apply(this, arguments);
+                };
+            }
+        } catch (e) {}
+    }
+
+    function installScrollerHoverGuard(scroller) {
+        if (!scroller || scroller.__tp9ScrollGuarded) return;
+        scroller.__tp9ScrollGuarded = true;
+        ensureChatScrollIntoViewHook();
+        if (bttvNativeScrollTopDesc && bttvNativeScrollTopDesc.get && bttvNativeScrollTopDesc.set) {
+            try {
+                Object.defineProperty(scroller, 'scrollTop', {
+                    configurable: true,
+                    enumerable: true,
+                    get: function () {
+                        return bttvNativeScrollTopDesc.get.call(this);
+                    },
+                    set: function (val) {
+                        if (!bttvInternalScrollWrite && isChatHoverScrollLocked(this)) {
+                            return;
+                        }
+                        bttvNativeScrollTopDesc.set.call(this, val);
+                    }
+                });
+            } catch (e) {}
+        }
+        ['scrollTo', 'scrollBy', 'scroll'].forEach(function (fnName) {
+            try {
+                var origFn = scroller[fnName];
+                if (typeof origFn === 'function') {
+                    scroller[fnName] = function () {
+                        if (!bttvInternalScrollWrite && isChatHoverScrollLocked(this)) return;
+                        return origFn.apply(this, arguments);
+                    };
+                }
+            } catch (e) {}
+        });
+    }
+
+    function captureChatHoverAnchor(container, scroller) {
+        bttvHoverAnchorEl = null;
+        bttvHoverFallbackAnchorEl = null;
+        if (!container || !scroller) return;
+
+        bttvHoverLockedScrollTop = getRawChatScrollTop(scroller);
+        var scRect = scroller.getBoundingClientRect();
+        if (scRect.height <= 0) return;
+
+        var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+        if (!msgs.length) return;
+
+        var isRev = !!pageConfig.reverseChat;
+        var chosen = null;
+        var fallback = null;
+
+        for (var i = msgs.length - 1; i >= 0; i--) {
+            var r = msgs[i].getBoundingClientRect();
+            if (r.height <= 0) continue;
+            if (r.top < scRect.bottom - 2 && r.bottom > scRect.top + 2) {
+                if (!chosen) {
+                    chosen = msgs[i];
+                } else {
+                    fallback = msgs[i];
+                    break;
+                }
+            }
+        }
+        if (!chosen) chosen = msgs[msgs.length - 1];
+        var chosenTop = chosen.getBoundingClientRect().top;
+        bttvHoverAnchorEl = chosen;
+        bttvHoverAnchorOffset = isRev ? (chosenTop - scRect.top) : (scRect.bottom - chosenTop);
+        if (fallback) {
+            var fbTop = fallback.getBoundingClientRect().top;
+            bttvHoverFallbackAnchorEl = fallback;
+            bttvHoverFallbackOffset = isRev ? (fbTop - scRect.top) : (scRect.bottom - fbTop);
+        }
+    }
+
+    function syncHoverPausePosition() {
+        if (!isChatHoverScrollLocked(null)) return;
+        var container = bttvObservedChatNode;
+        var scroller = bttvHoverActiveScroller || resolveChatScroller(container);
+        if (!container || !scroller || !scroller.isConnected) return;
+
+        var isRev = !!pageConfig.reverseChat;
+
+        // Tant que le tchat n'a pas encore assez de messages pour déborder, on actualise l'ancre
+        if (scroller.scrollHeight <= scroller.clientHeight + 2) {
+            captureChatHoverAnchor(container, scroller);
+            return;
+        }
+
+        var scRect = scroller.getBoundingClientRect();
+        if (scRect.height <= 0) return;
+
+        var anchor = bttvHoverAnchorEl;
+        var savedOff = bttvHoverAnchorOffset;
+        if (!anchor || !anchor.isConnected || !container.contains(anchor)) {
+            if (bttvHoverFallbackAnchorEl && bttvHoverFallbackAnchorEl.isConnected && container.contains(bttvHoverFallbackAnchorEl)) {
+                anchor = bttvHoverFallbackAnchorEl;
+                savedOff = bttvHoverFallbackOffset;
+                bttvHoverAnchorEl = anchor;
+                bttvHoverAnchorOffset = savedOff;
+                bttvHoverFallbackAnchorEl = null;
+            } else {
+                captureChatHoverAnchor(container, scroller);
+                return;
+            }
+        }
+
+        var aRect = anchor.getBoundingClientRect();
+        if (aRect.height > 0) {
+            var expectedTop = isRev ? (scRect.top + savedOff) : (scRect.bottom - savedOff);
+            var drift = aRect.top - expectedTop;
+            if (Math.abs(drift) > 0.25) {
+                var curSt = getRawChatScrollTop(scroller);
+                var maxSt = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+                var unclampedSt = curSt + drift;
+                var nextSt = Math.max(0, Math.min(maxSt, unclampedSt));
+                setRawChatScrollTop(scroller, nextSt);
+                bttvHoverLockedScrollTop = getRawChatScrollTop(scroller);
+                if (unclampedSt < -0.5 || unclampedSt > (maxSt + 0.5)) {
+                    var afterTop = anchor.getBoundingClientRect().top;
+                    bttvHoverAnchorOffset = isRev ? (afterTop - scRect.top) : (scRect.bottom - afterTop);
+                }
+            } else {
+                bttvHoverLockedScrollTop = getRawChatScrollTop(scroller);
+            }
+        }
+
+        if (!bttvHoverFallbackAnchorEl || !bttvHoverFallbackAnchorEl.isConnected) {
+            var nextMsg = anchor.nextElementSibling;
+            while (nextMsg && !(nextMsg.matches && nextMsg.matches('.chat-line__message, [data-a-target="chat-line-message"]'))) {
+                nextMsg = nextMsg.nextElementSibling;
+            }
+            if (nextMsg) {
+                var fbRect = nextMsg.getBoundingClientRect();
+                if (fbRect.height > 0) {
+                    bttvHoverFallbackAnchorEl = nextMsg;
+                    bttvHoverFallbackOffset = isRev ? (fbRect.top - scRect.top) : (scRect.bottom - fbRect.top);
+                }
+            }
+        }
+
+        // Notifie Twitch sans déplacer scrollTop dès que de nouveaux messages se sont accumulés sous la zone visible
+        if (!bttvChatNotifiedTwitchPause) {
+            var distFromLive = isRev
+                ? bttvHoverLockedScrollTop
+                : (scroller.scrollHeight - bttvHoverLockedScrollTop - scroller.clientHeight);
+            if (distFromLive >= 32) {
+                bttvChatNotifiedTwitchPause = true;
+                try {
+                    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+                } catch (e) {}
+                requestAnimationFrame(function () {
+                    syncHoverPausePosition();
+                });
+            }
+        }
+    }
+
+    function markChatManualScrollWhileHovered(scroller) {
+        if (!bttvChatHoverPaused || bttvChatManualScrolled) return;
+        bttvChatManualScrolled = true;
+        bttvHoverAnchorEl = null;
+        bttvHoverFallbackAnchorEl = null;
+        if (scroller && bttvHoverOverflowAnchorSaved) {
+            try {
+                scroller.style.overflowAnchor = bttvHoverOrigOverflowAnchor;
+            } catch (e) {}
+            bttvHoverOverflowAnchorSaved = false;
+        }
+    }
+
+    function releaseChatHoverPause(forceSnapToLive) {
+        var wasPaused = bttvChatHoverPaused;
+        var wasManual = bttvChatManualScrolled;
+        var scroller = bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode);
+
+        bttvChatHoverPaused = false;
+        bttvChatManualScrolled = false;
+        bttvChatNotifiedTwitchPause = false;
+        bttvManualMovedAway = false;
+        bttvHoverAnchorEl = null;
+        bttvHoverFallbackAnchorEl = null;
+
+        if (scroller && bttvHoverOverflowAnchorSaved) {
+            try {
+                scroller.style.overflowAnchor = bttvHoverOrigOverflowAnchor;
+            } catch (e) {}
+        }
+        bttvHoverOverflowAnchorSaved = false;
+        bttvHoverOrigOverflowAnchor = '';
+        bttvHoverActiveScroller = null;
+
+        if (!wasPaused || !scroller) return;
+
+        var isRev = !!pageConfig.reverseChat;
+        var curSt = getRawChatScrollTop(scroller);
+        var distFromLive = isRev
+            ? curSt
+            : (scroller.scrollHeight - curSt - scroller.clientHeight);
+
+        if (!forceSnapToLive && wasManual && distFromLive > 55 && document.querySelector('[data-a-target="chat-scroller-footer"]')) {
+            return;
+        }
+
+        var resumeBtn = document.querySelector('[data-a-target="chat-scroller-footer"] button');
+        if (resumeBtn) {
+            try { resumeBtn.click(); } catch (e) {}
+        }
+        setRawChatScrollTop(scroller, isRev ? 0 : scroller.scrollHeight);
+    }
+
     function ensureChatObserver() {
         var container = document.querySelector('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]');
         if (!container || container === bttvObservedChatNode) return;
+        if (bttvChatHoverPaused) {
+            releaseChatHoverPause(false);
+        }
         bttvObservedChatNode = container;
         if (bttvChatObserver) {
             bttvChatObserver.disconnect();
+        }
+        if (bttvChatResizeObserver) {
+            bttvChatResizeObserver.disconnect();
+            bttvChatResizeObserver = null;
         }
         bttvChatObserver = new MutationObserver(function (records) {
             if (scriptIsOff()) return;
@@ -39747,54 +40643,217 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 }
             }
+            if (isChatHoverScrollLocked(null)) {
+                syncHoverPausePosition();
+            }
         });
         bttvChatObserver.observe(container, { childList: true, subtree: true });
+
+        if (typeof ResizeObserver === 'function') {
+            bttvChatResizeObserver = new ResizeObserver(function () {
+                if (isChatHoverScrollLocked(null)) {
+                    syncHoverPausePosition();
+                }
+            });
+            try { bttvChatResizeObserver.observe(container); } catch (e) {}
+            var initScroller = resolveChatScroller(container);
+            if (initScroller && initScroller !== container) {
+                initScroller.__tp9ResizeObserved = true;
+                try { bttvChatResizeObserver.observe(initScroller); } catch (e) {}
+            }
+        }
 
         var existing = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
         for (var m = 0; m < existing.length; m++) {
             processChatMessageNode(existing[m]);
         }
 
-        if (!container.__tp9HoverBound) {
-            container.__tp9HoverBound = true;
-            var getChatScroller = function () {
-                var sc = container.closest('[data-a-target="chat-scroller"], .simplebar-scroll-content');
-                if (sc && sc !== container) return sc;
-                var p = container.parentElement;
-                while (p && p !== document.body) {
-                    if (p.scrollHeight > p.clientHeight + 4) return p;
-                    p = p.parentElement;
-                }
-                return container.parentElement;
-            };
-            container.addEventListener('mouseenter', function () {
-                if (scriptIsOff() || pageConfig.hoverPause === false) return;
-                var scroller = getChatScroller();
-                if (!scroller) return;
-                if (pageConfig.reverseChat) {
-                    if (scroller.scrollTop < 35) {
-                        bttvChatHoverPaused = true;
-                        scroller.scrollTop = scroller.scrollTop + 22;
-                        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+        var scrollerForBind = resolveChatScroller(container);
+        var hoverZone = resolveChatHoverZone(container, scrollerForBind);
+        if (hoverZone) {
+            hoverZone.__tp9MouseInside = false;
+        }
+        if (hoverZone && !hoverZone.__tp9HoverBound) {
+            hoverZone.__tp9HoverBound = true;
+
+            var bindScrollerScrollHandler = function (sc) {
+                if (!sc || sc.__tp9HoverScrollListenerBound) return;
+                sc.__tp9HoverScrollListenerBound = true;
+                sc.addEventListener('scroll', function () {
+                    if (!bttvChatHoverPaused || bttvInternalScrollWrite) return;
+                    var isRev = !!pageConfig.reverseChat;
+                    var curSt = getRawChatScrollTop(sc);
+                    var distFromLive = isRev
+                        ? curSt
+                        : (sc.scrollHeight - curSt - sc.clientHeight);
+                    if (bttvChatManualScrolled) {
+                        if (distFromLive > 18) {
+                            bttvManualMovedAway = true;
+                        } else if (bttvManualMovedAway && distFromLive <= 6 && Date.now() > bttvLastAwayWheelAt + 120) {
+                            bttvManualMovedAway = false;
+                            bttvChatManualScrolled = false;
+                            if (!bttvHoverOverflowAnchorSaved) {
+                                bttvHoverOrigOverflowAnchor = sc.style.overflowAnchor || '';
+                                bttvHoverOverflowAnchorSaved = true;
+                                try { sc.style.overflowAnchor = 'none'; } catch (e) {}
+                            }
+                            captureChatHoverAnchor(bttvObservedChatNode || container, sc);
+                        }
                     }
-                } else if ((scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 35) {
-                    bttvChatHoverPaused = true;
-                    scroller.scrollTop = Math.max(0, scroller.scrollTop - 22);
-                    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+                }, { passive: true });
+            };
+
+            var engageChatHoverPause = function () {
+                if (scriptIsOff() || pageConfig.hoverPause === false) return;
+                var activeContainer = bttvObservedChatNode || container;
+                var scroller = resolveChatScroller(activeContainer);
+                if (!scroller) return;
+
+                installScrollerHoverGuard(scroller);
+                bindScrollerScrollHandler(scroller);
+                if (bttvChatResizeObserver && !scroller.__tp9ResizeObserved) {
+                    scroller.__tp9ResizeObserved = true;
+                    try { bttvChatResizeObserver.observe(scroller); } catch (e) {}
                 }
-            });
-            container.addEventListener('mouseleave', function () {
+
+                var isRev = !!pageConfig.reverseChat;
+                var curSt = getRawChatScrollTop(scroller);
+                var distFromLive = isRev
+                    ? curSt
+                    : (scroller.scrollHeight - curSt - scroller.clientHeight);
+
+                // Ne verrouille que si le tchat était déjà au direct (sinon l'utilisateur lisait déjà plus haut)
+                if (distFromLive > 35) return;
+
+                bttvHoverActiveScroller = scroller;
+                bttvChatHoverPaused = true;
+                bttvChatManualScrolled = false;
+                bttvChatNotifiedTwitchPause = false;
+                bttvManualMovedAway = false;
+
+                if (!bttvHoverOverflowAnchorSaved) {
+                    bttvHoverOrigOverflowAnchor = scroller.style.overflowAnchor || '';
+                    bttvHoverOverflowAnchorSaved = true;
+                    try { scroller.style.overflowAnchor = 'none'; } catch (e) {}
+                }
+
+                // 0px de mouvement : aucun décalage artificiel de scrollTop au survol
+                captureChatHoverAnchor(activeContainer, scroller);
+            };
+
+            var handleChatHoverLeave = function () {
+                hoverZone.__tp9MouseInside = false;
                 if (!bttvChatHoverPaused) return;
-                bttvChatHoverPaused = false;
-                var resumeBtn = document.querySelector('[data-a-target="chat-scroller-footer"] button');
-                if (resumeBtn) {
-                    try { resumeBtn.click(); } catch (e) {}
-                }
-                var scroller = getChatScroller();
-                if (scroller) {
-                    scroller.scrollTop = pageConfig.reverseChat ? 0 : scroller.scrollHeight;
+                releaseChatHoverPause(false);
+            };
+
+            hoverZone.addEventListener('mouseenter', function () {
+                hoverZone.__tp9MouseInside = true;
+                if (!bttvChatHoverPaused) {
+                    engageChatHoverPause();
                 }
             });
+
+            hoverZone.addEventListener('mousemove', function () {
+                if (!hoverZone.__tp9MouseInside) {
+                    hoverZone.__tp9MouseInside = true;
+                    if (!bttvChatHoverPaused) {
+                        engageChatHoverPause();
+                    }
+                }
+            }, { passive: true });
+
+            hoverZone.addEventListener('mouseleave', function (e) {
+                var rel = e && e.relatedTarget;
+                if (rel && rel.nodeType === 1) {
+                    if (hoverZone.contains(rel)) return;
+                    var floatingEl = rel.closest && rel.closest(
+                        '[data-a-target="chat-scroller-footer"], [data-a-target="viewer-card"], .viewer-card, [role="tooltip"], .tw-balloon'
+                    );
+                    if (floatingEl && !hoverZone.contains(floatingEl)) {
+                        var onFloatLeave = function (ev2) {
+                            floatingEl.removeEventListener('mouseleave', onFloatLeave);
+                            var nextRel = ev2 && ev2.relatedTarget;
+                            if (nextRel && nextRel.nodeType === 1 && hoverZone.contains(nextRel)) {
+                                return;
+                            }
+                            handleChatHoverLeave();
+                        };
+                        floatingEl.addEventListener('mouseleave', onFloatLeave);
+                        return;
+                    }
+                }
+                handleChatHoverLeave();
+            });
+
+            hoverZone.addEventListener('wheel', function (e) {
+                if (!bttvChatHoverPaused) return;
+                if (Math.abs(e.deltaY) > 0) {
+                    var isRev = !!pageConfig.reverseChat;
+                    var movingAway = isRev ? (e.deltaY > 0) : (e.deltaY < 0);
+                    if (movingAway) {
+                        bttvLastAwayWheelAt = Date.now();
+                    }
+                    markChatManualScrollWhileHovered(bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode || container));
+                }
+            }, { passive: true });
+
+            hoverZone.addEventListener('touchmove', function () {
+                if (!bttvChatHoverPaused) return;
+                markChatManualScrollWhileHovered(bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode || container));
+            }, { passive: true });
+
+            hoverZone.addEventListener('mousedown', function (e) {
+                if (!bttvChatHoverPaused) return;
+                var sc = bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode || container);
+                var t = e.target;
+                if (t && t.closest && t.closest('.simplebar-track, .simplebar-scrollbar')) {
+                    bttvManualMovedAway = true;
+                    markChatManualScrollWhileHovered(sc);
+                    return;
+                }
+                if (sc && t === sc && sc.offsetWidth > sc.clientWidth) {
+                    var sr = sc.getBoundingClientRect();
+                    if (e.clientX >= sr.left + sc.clientWidth - 2 || e.clientX <= sr.left + (sc.offsetWidth - sc.clientWidth) + 2) {
+                        bttvManualMovedAway = true;
+                        markChatManualScrollWhileHovered(sc);
+                    }
+                }
+            }, { passive: true });
+
+            hoverZone.addEventListener('keydown', function (e) {
+                if (!bttvChatHoverPaused) return;
+                if (e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"], [data-a-target="chat-input"]')) {
+                    return;
+                }
+                if (
+                    e.key === 'PageUp' || e.key === 'PageDown' ||
+                    e.key === 'Home' || e.key === 'End' ||
+                    e.key === 'ArrowUp' || e.key === 'ArrowDown'
+                ) {
+                    bttvManualMovedAway = true;
+                    markChatManualScrollWhileHovered(bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode || container));
+                }
+            }, true);
+
+            hoverZone.addEventListener('click', function (e) {
+                if (!bttvChatHoverPaused) return;
+                if (e.target && e.target.closest && e.target.closest('[data-a-target="chat-scroller-footer"]')) {
+                    var activeContainer = bttvObservedChatNode || container;
+                    var sc = bttvHoverActiveScroller || resolveChatScroller(activeContainer);
+                    bttvChatHoverPaused = false;
+                    bttvChatManualScrolled = false;
+                    bttvManualMovedAway = false;
+                    if (sc) {
+                        setRawChatScrollTop(sc, pageConfig.reverseChat ? 0 : sc.scrollHeight);
+                    }
+                    requestAnimationFrame(function () {
+                        if (hoverZone.__tp9MouseInside && !scriptIsOff() && pageConfig.hoverPause !== false) {
+                            engageChatHoverPause();
+                        }
+                    });
+                }
+            }, true);
         }
     }
 
