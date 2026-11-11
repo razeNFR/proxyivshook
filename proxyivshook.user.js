@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.3
+// @version      1.11.4
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,9 +13,12 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.4
+// - Nouvelle option « Cacher le carrousel promo du tchat » (Auto & Épur.) : masque uniquement le carrousel permanent en haut du tchat (Offrir un abonnement, Créer un clip, Classement), séparée de « Fermer bannières (Hype Train, Sondages) » afin de pouvoir conserver les sondages, prédictions et messages épinglés || New "Hide chat promo carousel" option (Auto & Clean UI): hides only the permanent top-of-chat carousel (Gift a Sub, Create a Clip, Leaderboard), separated from "Close banners (Hype Train, Polls)" so polls, predictions, and pinned messages can stay visible
 // 1.11.3
 // - Nouvelle option « Ralentir le tchat (Mode lent) » : limite la cadence d'affichage (1, 2, 4 ou 6 msg/s) sur les gros streams tout en conservant vos messages, mentions, streamer, modérateurs et VIP || New "Slow down chat (Slow mode)" option: limits chat display rate (1, 2, 4, or 6 msg/s) on busy streams while preserving your own messages, mentions, broadcaster, moderators, and VIPs
 // - Correctif de la « Pause du défilement au focus » du tchat : suppression du saut visuel au survol de la souris et reprise automatique du direct à la sortie du tchat sans rester bloqué sur « Chat mis en pause à cause du défilement » || Fixed chat "Pause scroll on focus": removed the visual jump on hover and ensured automatic live scroll resume on mouse leave without getting stuck on "Chat paused due to scroll"
+// - Correctif d'alignement du Mode lent natif Twitch : empêche le message « Vous pourrez envoyer un autre message dans Xs » de déborder hors de la colonne du tchat et de décaler les boutons || Fixed native Twitch Slow Mode layout: prevents the "You can send another message in Xs" notice from overflowing outside the chat column and misaligning chat buttons
 // 1.11.2
 // - Fix le bloquage de pub qui pouvais se retrouver bloquer et faire planter le lecteur || Fixes an issue where the ad blocker could get stuck, causing the player to crash.
 // 1.11.1
@@ -55,7 +58,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.3';
+    var CURRENT_VERSION = '1.11.4';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -702,6 +705,10 @@
         'Cacher Bits et boutons d\'abonnement': 'Hide Bits and subscribe buttons',
         'Cacher le bandeau promo sous le lecteur': 'Hide promo banner under player',
         'Masque le grand bandeau d\'offre sous le lecteur (SUBtember, etc.).': 'Hides the large offer banner under the player (SUBtember, etc.).',
+        'Bannières & carrousel en haut du tchat': 'Top-of-chat promo carousel',
+        'Masque le carrousel non fermable sous « Chat du stream » (Offrir un sub, Créer un clip, Classement) sans toucher aux sondages ni prédictions.': 'Hides the permanent carousel below "Stream Chat" (Gift a Sub, Create a Clip, Leaderboard) without affecting polls or predictions.',
+        'Cacher le carrousel promo du tchat': 'Hide chat promo carousel',
+        'Masque Offrir un sub, Créer un clip et Classement en haut du tchat': 'Hides Gift Sub, Create a Clip, and Leaderboard at the top of chat',
         'Aperçu Global': 'Global Overview',
         'Temps visionné': 'Watch time',
         'Data échangée': 'Data transferred',
@@ -881,6 +888,7 @@
         hideTurbo: '<polyline points="12.41 6.75 13 2 10.57 4.92"/><polyline points="18.57 12.91 21 10 15.66 10"/><polyline points="8 8 3 14 12 14 11 22 16 16"/><line x1="1" y1="1" x2="23" y2="23"/>',
         hideSubs: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/><line x1="2" y1="2" x2="22" y2="22"/>',
         hidePromo: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="2" y1="2" x2="22" y2="22"/>',
+        hideChatCarousel: '<rect x="5" y="5" width="14" height="14" rx="2"/><polyline points="3 9.5 1 12 3 14.5"/><polyline points="21 9.5 23 12 21 14.5"/><line x1="2" y1="2" x2="22" y2="22"/>',
         autoBackup: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
         fallback: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
         tooltips: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'
@@ -1234,6 +1242,7 @@
             scriptOff: false,
             hideTwitchSubButtons: false,
             hideTwitchPromo: false,
+            hideChatCarousel: false,
             detailedLogs: false,
             tooltips: true,
             lang: 'auto',
@@ -1440,7 +1449,7 @@
 
         [
             'statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons',
-            'hideTwitchPromo', 'proxiesEnabled', 'proxyAdsOnly', 'scriptOff',
+            'hideTwitchPromo', 'hideChatCarousel', 'proxiesEnabled', 'proxyAdsOnly', 'scriptOff',
             'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips',
             'perStreamerVolume', 'wheelVolumeLock', 'audioBoost',
             'playerTools', 'noHomeAutoplay', 'bttvEmotes', 'stvEmotes',
@@ -1775,6 +1784,9 @@
 
                 hideTwitchPromo:
                     !!pageConfig.hideTwitchPromo,
+
+                hideChatCarousel:
+                    !!pageConfig.hideChatCarousel,
 
                 tooltips:
                     pageConfig.tooltips !== false,
@@ -6925,6 +6937,19 @@
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
+                                <label class="tp9-toggle-row"
+                                    data-tp9-tip="Bannières & carrousel en haut du tchat"
+                                    data-tp9-tip-sub="Masque le carrousel non fermable sous « Chat du stream » (Offrir un sub, Créer un clip, Classement) sans toucher aux sondages ni prédictions.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.hideChatCarousel)}
+                                        <span>Cacher le carrousel promo du tchat</span>
+                                        <span class="tp9-toggle-sub">Masque Offrir un sub, Créer un clip et Classement en haut du tchat</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-hide-chat-carousel">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
                             </div>
                         </div>
 
@@ -7245,7 +7270,8 @@
             ['.tp9-sidebar-preview', 'sidebarPreview'],
             ['.tp9-expand-sidebar', 'autoExpandSidebar'],
             ['.tp9-hide-offline', 'hideOfflineChannels'],
-            ['.tp9-hide-recom', 'hideRecom']
+            ['.tp9-hide-recom', 'hideRecom'],
+            ['.tp9-hide-chat-carousel', 'hideChatCarousel']
         ].forEach(function (pair) {
             var el = dashboard.querySelector(pair[0]);
             if (!el) return;
@@ -8527,7 +8553,8 @@
             ['.tp9-sidebar-preview', pageConfig.sidebarPreview !== false],
             ['.tp9-expand-sidebar', !!pageConfig.autoExpandSidebar],
             ['.tp9-hide-offline', !!pageConfig.hideOfflineChannels],
-            ['.tp9-hide-recom', !!pageConfig.hideRecom]
+            ['.tp9-hide-recom', !!pageConfig.hideRecom],
+            ['.tp9-hide-chat-carousel', !!pageConfig.hideChatCarousel]
         ].forEach(function (pair) {
             var el = dashboard.querySelector(pair[0]);
             if (el) el.checked = pair[1];
@@ -14188,7 +14215,7 @@ function showAddProxyForm() {
         }
         if (scriptIsOff()) {
             [
-                'tp9-hide-turbo', 'tp9-hide-subs', 'tp9-hide-promo', 'tp9-wheel-lock-on',
+                'tp9-hide-turbo', 'tp9-hide-subs', 'tp9-hide-promo', 'tp9-hide-chat-carousel', 'tp9-wheel-lock-on',
                 'tp9-bttv-split-chat', 'tp9-bttv-chat-left', 'tp9-bttv-reverse-chat',
                 'tp9-bttv-big-emotes', 'tp9-bttv-hide-badges', 'tp9-bttv-hide-notices',
                 'tp9-bttv-hide-offline', 'tp9-bttv-hide-recom', 'tp9-bttv-close-banners',
@@ -14201,11 +14228,21 @@ function showAddProxyForm() {
             if (typeof releaseChatHoverPause === 'function') {
                 releaseChatHoverPause(true);
             }
+            if (typeof cleanupChatInputSlowModeLayout === 'function') {
+                cleanupChatInputSlowModeLayout();
+            }
+            if (typeof sweepChatPromoCarousel === 'function') {
+                sweepChatPromoCarousel();
+            }
+            if (typeof sweepChatTopBanners === 'function') {
+                sweepChatTopBanners();
+            }
             return;
         }
         document.body.classList.toggle('tp9-hide-turbo', !!pageConfig.hideTwitchTurbo);
         document.body.classList.toggle('tp9-hide-subs', !!pageConfig.hideTwitchSubButtons);
         document.body.classList.toggle('tp9-hide-promo', !!pageConfig.hideTwitchPromo);
+        document.body.classList.toggle('tp9-hide-chat-carousel', !!pageConfig.hideChatCarousel);
         document.body.classList.toggle('tp9-wheel-lock-on', pageConfig.wheelVolumeLock !== false);
         document.body.classList.toggle('tp9-bttv-split-chat', pageConfig.splitChat !== false);
         document.body.classList.toggle('tp9-bttv-chat-left', !!pageConfig.chatOnLeft);
@@ -14226,6 +14263,9 @@ function showAddProxyForm() {
         syncChatOnLeftLayout();
         if (pageConfig.hoverPause === false && typeof releaseChatHoverPause === 'function') {
             releaseChatHoverPause(true);
+        }
+        if (typeof sweepChatPromoCarousel === 'function') {
+            sweepChatPromoCarousel();
         }
         if (typeof sweepChatTopBanners === 'function') {
             sweepChatTopBanners();
@@ -14271,6 +14311,7 @@ function showAddProxyForm() {
             !pageConfig.hideTwitchTurbo &&
             !pageConfig.hideTwitchSubButtons &&
             !pageConfig.hideTwitchPromo &&
+            !pageConfig.hideChatCarousel &&
             !pageConfig.closeBanners &&
             !pageConfig.hideOfflineChannels
         ) {
@@ -14284,6 +14325,9 @@ function showAddProxyForm() {
                 twitchUIScanLast = Date.now();
                 try {
                     scanTwitchUI();
+                    if (typeof sweepChatPromoCarousel === 'function') {
+                        sweepChatPromoCarousel();
+                    }
                     if (typeof sweepChatTopBanners === 'function') {
                         sweepChatTopBanners();
                     }
@@ -25406,23 +25450,26 @@ dashboardButton.style.visibility = 'hidden';
             body.tp9-bttv-hide-recom [data-a-target="right-column-chat-bar-accolade"] {
                 display: none !important;
             }
+            body.tp9-hide-chat-carousel .tp9-chat-carousel-hidden,
+            body.tp9-hide-chat-carousel .channel-leaderboard,
+            body.tp9-hide-chat-carousel [class*="channel-leaderboard" i],
+            body.tp9-hide-chat-carousel [data-a-target*="channel-leaderboard" i],
+            body.tp9-hide-chat-carousel [data-test-selector*="channel-leaderboard" i],
+            body.tp9-hide-chat-carousel .stream-chat [data-test-selector*="leaderboard" i],
+            body.tp9-hide-chat-carousel .chat-room [data-test-selector*="leaderboard" i],
+            body.tp9-hide-chat-carousel [data-a-target*="community-highlights-marquee" i],
+            body.tp9-hide-chat-carousel [data-test-selector*="community-highlights-marquee" i] {
+                display: none !important;
+            }
             body.tp9-bttv-close-banners .tp9-chat-banner-hidden,
-            body.tp9-bttv-close-banners .community-highlight-stack,
-            body.tp9-bttv-close-banners .community-highlight-stack__scroll-area--disable,
-            body.tp9-bttv-close-banners .community-highlight-stack__card,
-            body.tp9-bttv-close-banners .community-highlight-stack__backlog-card,
-            body.tp9-bttv-close-banners [data-test-selector*="community-highlight" i],
-            body.tp9-bttv-close-banners [class*="community-highlight" i],
             body.tp9-bttv-close-banners [data-test-selector="community-prediction-highlight-header"],
             body.tp9-bttv-close-banners [data-test-selector*="community-prediction" i],
+            body.tp9-bttv-close-banners [data-a-target*="prediction" i],
+            body.tp9-bttv-close-banners [data-test-selector*="poll" i],
+            body.tp9-bttv-close-banners [data-a-target*="poll" i],
             body.tp9-bttv-close-banners [data-test-selector*="hype-train" i],
             body.tp9-bttv-close-banners [data-a-target*="hype-train" i],
             body.tp9-bttv-close-banners [class*="hype-train" i],
-            body.tp9-bttv-close-banners .channel-leaderboard,
-            body.tp9-bttv-close-banners [class*="channel-leaderboard" i],
-            body.tp9-bttv-close-banners [data-a-target*="channel-leaderboard" i],
-            body.tp9-bttv-close-banners [data-test-selector*="channel-leaderboard" i],
-            body.tp9-bttv-close-banners [data-test-selector*="leaderboard" i],
             body.tp9-bttv-close-banners [data-a-target="chat-pinned-message"],
             body.tp9-bttv-close-banners [data-test-selector*="pinned-chat" i],
             body.tp9-bttv-close-banners [class*="pinned-chat" i] {
@@ -25610,6 +25657,91 @@ dashboardButton.style.visibility = 'hidden';
                 max-width: calc(100% + 8px);
                 object-fit: contain;
                 pointer-events: none;
+            }
+            /* Alignement propre du compte à rebours Mode lent natif Twitch (« Vous pourrez envoyer un autre message dans Xs ») */
+            [data-tp9-slow-bar="1"] {
+                position: relative !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                padding-top: var(--tp9-sb-pt, 20px) !important;
+                box-sizing: border-box !important;
+            }
+            [data-tp9-slow-anc="1"] {
+                position: static !important;
+            }
+            [data-tp9-slow-notice="1"] {
+                position: absolute !important;
+                top: var(--tp9-sb-top, 2px) !important;
+                left: var(--tp9-sb-pl, 0px) !important;
+                right: var(--tp9-sb-pr, 0px) !important;
+                width: auto !important;
+                max-width: calc(100% - var(--tp9-sb-pl, 0px) - var(--tp9-sb-pr, 0px)) !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                font-size: 11.5px !important;
+                line-height: 16px !important;
+                color: #adadb8 !important;
+                text-align: right !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+                pointer-events: none !important;
+                z-index: 2 !important;
+            }
+            [data-tp9-slow-notice="1"] div,
+            [data-tp9-slow-notice="1"] span,
+            [data-tp9-slow-notice="1"] p {
+                display: inline !important;
+                white-space: nowrap !important;
+                font-size: inherit !important;
+                line-height: inherit !important;
+                color: inherit !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            [data-tp9-slow-mixed="1"] {
+                font-size: 0 !important;
+            }
+            [data-tp9-slow-mixed="1"] > * {
+                font-size: 13px !important;
+            }
+            [data-tp9-slow-bar="1"][data-tp9-slow-text]::before {
+                content: attr(data-tp9-slow-text);
+                position: absolute;
+                top: var(--tp9-sb-top, 2px);
+                left: var(--tp9-sb-pl, 0px);
+                right: var(--tp9-sb-pr, 0px);
+                font-size: 11.5px;
+                line-height: 16px;
+                color: #adadb8;
+                text-align: right;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                pointer-events: none;
+                z-index: 2;
+            }
+            [data-tp9-slow-row="1"] {
+                display: block !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                box-sizing: border-box !important;
+                font-size: 11.5px !important;
+                line-height: 16px !important;
+                color: #adadb8 !important;
+                text-align: right !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+            }
+            [data-tp9-slow-tooltip="1"] {
+                left: auto !important;
+                right: 0 !important;
+                transform: none !important;
+                max-width: min(300px, calc(100vw - 24px)) !important;
+                white-space: normal !important;
+                overflow-wrap: break-word !important;
+                text-align: center !important;
             }
             .tp9-msg-deleted-kept {
                 opacity: 0.72;
@@ -41858,6 +41990,262 @@ dashboardButton.style.visibility = 'hidden';
         bttvInputMirrorEl.scrollTop = input.scrollTop;
     }
 
+    // Recalage propre du compte à rebours Mode lent natif de Twitch (« Vous pourrez envoyer un autre message dans Xs »)
+    var bttvSlowInputAreaNode = null;
+    var bttvSlowInputObserver = null;
+    var SLOW_SEND_COOLDOWN_RE =
+        /(?:vous\s+pourr?ez\s+envoyer\s+un\s+(?:autre\s+)?message\s+dans|you\s+(?:can|may)\s+send\s+(?:another|a)\s+message\s+in|enviar\s+otro\s+mensaje\s+en|weitere\s+nachricht\s+in)/i;
+
+    function resolveChatInputAreaRoot() {
+        var direct = document.querySelector('.chat-input, [data-test-selector="chat-input-container"]');
+        if (direct) return direct;
+        var editorEl = document.querySelector('[data-a-target="chat-input"]');
+        var sendBtn = document.querySelector('[data-a-target="chat-send-button"], [data-a-target="chat-settings"]');
+        if (editorEl && sendBtn) {
+            var cur = editorEl.parentElement;
+            var guard = 0;
+            while (cur && cur !== document.body && guard++ < 10) {
+                if (cur.contains(sendBtn)) return cur;
+                cur = cur.parentElement;
+            }
+        }
+        return null;
+    }
+
+    function resolveChatButtonsContainer(chatInputRoot) {
+        if (!chatInputRoot) return null;
+        var known = chatInputRoot.querySelector('[data-test-selector="chat-input-buttons-container"], .chat-input__buttons-container');
+        if (known) return known;
+        var sendBtn = chatInputRoot.querySelector('[data-a-target="chat-send-button"], [data-a-target="chat-settings"]');
+        var editorEl = chatInputRoot.querySelector(
+            '[data-a-target="chat-input"], [role="textbox"], [contenteditable="true"], textarea, .chat-wysiwyg-input__editor, [data-a-target="chat-emote-picker-button"]'
+        );
+        if (sendBtn) {
+            var cur = sendBtn;
+            while (cur.parentElement && cur.parentElement !== chatInputRoot && (!editorEl || !cur.parentElement.contains(editorEl))) {
+                cur = cur.parentElement;
+            }
+            if (cur !== sendBtn) return cur;
+            return sendBtn.parentElement;
+        }
+        return null;
+    }
+
+    function cleanupChatInputSlowModeLayout(scopeRoot) {
+        var root = scopeRoot || document;
+        if (!root || typeof root.querySelectorAll !== 'function') return;
+        root.querySelectorAll('[data-tp9-slow-bar]').forEach(function (el) {
+            el.removeAttribute('data-tp9-slow-bar');
+            el.removeAttribute('data-tp9-slow-text');
+            if (el.style && typeof el.style.removeProperty === 'function') {
+                el.style.removeProperty('--tp9-sb-pt');
+                el.style.removeProperty('--tp9-sb-top');
+                el.style.removeProperty('--tp9-sb-pl');
+                el.style.removeProperty('--tp9-sb-pr');
+            }
+        });
+        ['data-tp9-slow-anc', 'data-tp9-slow-notice', 'data-tp9-slow-mixed', 'data-tp9-slow-row', 'data-tp9-slow-tooltip'].forEach(function (attr) {
+            root.querySelectorAll('[' + attr + ']').forEach(function (el) {
+                el.removeAttribute(attr);
+            });
+        });
+    }
+
+    function applySlowBarHostPadding(barHost) {
+        if (!barHost) return;
+        if (barHost.getAttribute('data-tp9-slow-bar') !== '1') {
+            var origPt = 0;
+            var pl = '0px';
+            var pr = '0px';
+            try {
+                var bcs = window.getComputedStyle(barHost);
+                origPt = parseFloat(bcs.paddingTop) || 0;
+                pl = bcs.paddingLeft || '0px';
+                pr = bcs.paddingRight || '0px';
+            } catch (e) {}
+            if (barHost.style && typeof barHost.style.setProperty === 'function') {
+                barHost.style.setProperty('--tp9-sb-pt', (origPt + 19) + 'px');
+                barHost.style.setProperty('--tp9-sb-top', Math.max(2, origPt) + 'px');
+                barHost.style.setProperty('--tp9-sb-pl', pl);
+                barHost.style.setProperty('--tp9-sb-pr', pr);
+            }
+            barHost.setAttribute('data-tp9-slow-bar', '1');
+        }
+    }
+
+    function syncChatInputSlowModeLayout(chatInputRoot) {
+        var root = chatInputRoot || resolveChatInputAreaRoot();
+        if (!root || scriptIsOff()) {
+            cleanupChatInputSlowModeLayout(root);
+            return;
+        }
+
+        var matchedEl = null;
+        var mixedParent = null;
+        var mixedRawText = '';
+
+        var inspect = function (el) {
+            if (!el || el.nodeType !== 1) return;
+            if (el.id && el.id.indexOf('tp9') === 0) return;
+            if (el.matches && el.matches(
+                '[data-a-target="chat-input"], [contenteditable="true"], textarea, input, [role="listbox"], [role="dialog"], [data-test-selector="chat-input-tray"], .chat-input-tray__open'
+            )) {
+                return;
+            }
+            if (el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return;
+
+            var hasInteractiveChild = Boolean(
+                el.querySelector && el.querySelector('button, input, textarea, [contenteditable="true"], [data-a-target="chat-input"]')
+            );
+            if (!hasInteractiveChild) {
+                var txt = (el.textContent || '').trim();
+                if (txt.length >= 10 && txt.length <= 140 && SLOW_SEND_COOLDOWN_RE.test(txt)) {
+                    var visible = true;
+                    if (typeof el.getBoundingClientRect === 'function') {
+                        try {
+                            visible = el.getBoundingClientRect().height > 0;
+                        } catch (e) {}
+                    }
+                    if (visible) {
+                        matchedEl = el;
+                    }
+                }
+            } else if (el.childNodes && el.childNodes.length) {
+                for (var n = 0; n < el.childNodes.length; n++) {
+                    var cn = el.childNodes[n];
+                    if (cn.nodeType === 3) {
+                        var raw = (cn.nodeValue || '').trim();
+                        if (raw.length >= 10 && raw.length <= 140 && SLOW_SEND_COOLDOWN_RE.test(raw)) {
+                            mixedParent = el;
+                            mixedRawText = raw;
+                        }
+                    }
+                }
+            }
+
+            var ch = el.children;
+            if (ch && ch.length) {
+                for (var i = 0; i < ch.length; i++) {
+                    inspect(ch[i]);
+                }
+            }
+        };
+
+        inspect(root);
+
+        if (!matchedEl && !mixedParent) {
+            cleanupChatInputSlowModeLayout(root);
+            return;
+        }
+
+        var buttonsBar = resolveChatButtonsContainer(root);
+
+        // Cas 1 : Élément dédié contenant le texte de compte à rebours (cas standard CoreUI Twitch)
+        if (matchedEl) {
+            var leafText = (matchedEl.textContent || '').trim();
+            var noticeBox = matchedEl;
+            while (
+                noticeBox.parentElement &&
+                noticeBox.parentElement !== buttonsBar &&
+                noticeBox.parentElement !== root
+            ) {
+                var p = noticeBox.parentElement;
+                if (p.querySelector && p.querySelector('button, input, textarea, [contenteditable="true"], [data-a-target="chat-input"]')) {
+                    break;
+                }
+                if ((p.textContent || '').trim() !== leafText) {
+                    break;
+                }
+                noticeBox = p;
+            }
+
+            if (noticeBox.__tp9OrigFloating === undefined) {
+                var isBalloon = Boolean(noticeBox.closest && noticeBox.closest('[role="tooltip"], .tw-balloon'));
+                var pos = '';
+                try { pos = window.getComputedStyle(noticeBox).position; } catch (e) {}
+                noticeBox.__tp9OrigFloating = isBalloon || pos === 'absolute' || pos === 'fixed';
+            }
+
+            if (noticeBox.__tp9OrigFloating) {
+                var overflowsLeft = noticeBox.getAttribute('data-tp9-slow-tooltip') === '1';
+                if (!overflowsLeft && typeof noticeBox.getBoundingClientRect === 'function' && typeof root.getBoundingClientRect === 'function') {
+                    try {
+                        overflowsLeft = noticeBox.getBoundingClientRect().left < root.getBoundingClientRect().left - 2;
+                    } catch (e) {}
+                }
+                cleanupChatInputSlowModeLayout(root);
+                if (overflowsLeft) {
+                    noticeBox.setAttribute('data-tp9-slow-tooltip', '1');
+                }
+                return;
+            }
+
+            if (buttonsBar && buttonsBar.contains(noticeBox)) {
+                applySlowBarHostPadding(buttonsBar);
+                buttonsBar.removeAttribute('data-tp9-slow-text');
+                root.querySelectorAll('[data-tp9-slow-anc], [data-tp9-slow-mixed], [data-tp9-slow-row], [data-tp9-slow-tooltip]').forEach(function (el) {
+                    el.removeAttribute('data-tp9-slow-anc');
+                    el.removeAttribute('data-tp9-slow-mixed');
+                    el.removeAttribute('data-tp9-slow-row');
+                    el.removeAttribute('data-tp9-slow-tooltip');
+                });
+                root.querySelectorAll('[data-tp9-slow-notice]').forEach(function (el) {
+                    if (el !== noticeBox) el.removeAttribute('data-tp9-slow-notice');
+                });
+                var anc = noticeBox.parentElement;
+                while (anc && anc !== buttonsBar && anc !== root) {
+                    anc.setAttribute('data-tp9-slow-anc', '1');
+                    anc = anc.parentElement;
+                }
+                noticeBox.setAttribute('data-tp9-slow-notice', '1');
+                return;
+            }
+
+            cleanupChatInputSlowModeLayout(root);
+            noticeBox.setAttribute('data-tp9-slow-row', '1');
+            return;
+        }
+
+        // Cas 2 : Nœud #text brut partagé avec un bouton dans le même conteneur parent
+        if (mixedParent && buttonsBar && buttonsBar.contains(mixedParent)) {
+            applySlowBarHostPadding(buttonsBar);
+            buttonsBar.setAttribute('data-tp9-slow-text', mixedRawText);
+            mixedParent.setAttribute('data-tp9-slow-mixed', '1');
+        }
+    }
+
+    function ensureChatInputSlowModeObserver() {
+        var root = resolveChatInputAreaRoot();
+        if (!root) return;
+        if (root !== bttvSlowInputAreaNode) {
+            if (bttvSlowInputObserver) {
+                try { bttvSlowInputObserver.disconnect(); } catch (e) {}
+            }
+            bttvSlowInputAreaNode = root;
+            bttvSlowInputObserver = new MutationObserver(function (records) {
+                if (scriptIsOff()) return;
+                var relevant = false;
+                for (var i = 0; i < records.length; i++) {
+                    var rt = records[i].target;
+                    var el = rt && rt.nodeType === 1 ? rt : (rt && rt.parentElement);
+                    if (!el) continue;
+                    if (el.id === 'tp9-chat-input-mirror' || (el.closest && el.closest('[data-a-target="chat-input"], #tp9-chat-input-mirror'))) {
+                        continue;
+                    }
+                    relevant = true;
+                    break;
+                }
+                if (relevant) {
+                    syncChatInputSlowModeLayout(root);
+                }
+            });
+            try {
+                bttvSlowInputObserver.observe(root, { childList: true, subtree: true, characterData: true });
+            } catch (e) {}
+        }
+        syncChatInputSlowModeLayout(root);
+    }
+
     // Insertion de texte dans le champ de tchat Twitch (compatible Slate contenteditable & React textarea)
     function insertTextIntoTwitchChat(textToInsert, replaceAll) {
         var input = document.querySelector('[data-a-target="chat-input"]');
@@ -43773,19 +44161,36 @@ dashboardButton.style.visibility = 'hidden';
         return false;
     }
 
-    function sweepChatTopBanners() {
-        if (scriptIsOff() || !pageConfig.closeBanners) {
-            var hidden = document.querySelectorAll('.tp9-chat-banner-hidden');
-            for (var h = 0; h < hidden.length; h++) {
-                hidden[h].classList.remove('tp9-chat-banner-hidden');
-            }
-            return;
-        }
+    var CHAT_PROMO_CAROUSEL_TEXT_RE =
+        /offrez\s+[\s\S]{0,28}?\babonnements?\b|\boffrir\s+\d*\s*abonnements?\b|pour\s+devenir\s+1\s*er|devenez\s+1\s*er|gift\s+[\s\S]{0,28}?\bsubs?(?:cription)?s?\b|to\s+(?:take|become)\s+#?1\b|faire\s+un\s+clip\s+des\s+meilleurs\s+moments|\bcréer\s+un\s+clip\b|clip\s+the\s+best\s+moments|\b(?:create|make)\s+a\s+clip\b|\btop\s+(?:gifters?|cheerers?)\b|meilleurs?\s+(?:donateurs?|gifters?|encouragements?)|(?:envoyez|encourager\s+avec|cheer)\s+[\s\S]{0,28}?\bbits\b/i;
 
+    var CHAT_PROMO_CAROUSEL_SEL =
+        '.channel-leaderboard, ' +
+        '[class*="channel-leaderboard" i], ' +
+        '[data-a-target*="channel-leaderboard" i], ' +
+        '[data-test-selector*="channel-leaderboard" i], ' +
+        '[data-test-selector*="leaderboard" i], ' +
+        '[data-a-target*="community-highlights-marquee" i], ' +
+        '[data-test-selector*="community-highlights-marquee" i]';
+
+    var CHAT_EVENT_BANNER_SEL =
+        '[data-test-selector="community-prediction-highlight-header"], ' +
+        '[data-test-selector*="community-prediction" i], ' +
+        '[data-a-target*="prediction" i], ' +
+        '[data-test-selector*="poll" i], ' +
+        '[data-a-target*="poll" i], ' +
+        '[data-a-target="chat-pinned-message"], ' +
+        '[data-test-selector*="pinned-chat" i], ' +
+        '[class*="pinned-chat" i], ' +
+        '[data-test-selector*="hype-train" i], ' +
+        '[data-a-target*="hype-train" i], ' +
+        '[class*="hype-train" i]';
+
+    function resolveChatTopContext() {
         var chatCol = document.querySelector(
             '.stream-chat, [data-a-target="stream-chat"], .chat-room, [data-test-selector="chat-room-component-layout"], .channel-root__right-column, [data-a-target="right-column-chat-bar"]'
         );
-        if (!chatCol) return;
+        if (!chatCol) return null;
 
         var msgListEl = chatCol.querySelector(
             '.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"], [role="log"]'
@@ -43818,74 +44223,217 @@ dashboardButton.style.visibility = 'hidden';
         var colRect = chatCol.getBoundingClientRect();
         var chatTopLimit = (headerEl ? headerEl.getBoundingClientRect().bottom : colRect.top) + 230;
 
-        function inspectBranch(node, depth) {
-            if (!node || node.nodeType !== 1 || depth > 7) return;
-            if (node.classList && node.classList.contains('tp9-chat-banner-hidden')) return;
-            if (isProtectedChatBannerNode(node, headerEl, msgListEl, inputAreaEl)) return;
+        return {
+            chatCol: chatCol,
+            msgListEl: msgListEl,
+            headerEl: headerEl,
+            inputAreaEl: inputAreaEl,
+            colRect: colRect,
+            chatTopLimit: chatTopLimit
+        };
+    }
 
-            if (containsProtectedChatTarget(node, headerEl, msgListEl, inputAreaEl)) {
-                var ch = node.children;
-                for (var i = 0; i < ch.length; i++) {
-                    inspectBranch(ch[i], depth + 1);
-                }
-                return;
+    function isRaidOrDropBanner(el) {
+        if (!el || el.nodeType !== 1) return false;
+        var raidSel = '[data-test-selector="raid-banner"], button[aria-label*="Quitter le raid" i], button[aria-label*="Leave raid" i]';
+        if (el.matches && el.matches(raidSel)) return true;
+        if (el.querySelector && el.querySelector(raidSel)) return true;
+        var rawTxt = (el.textContent || '').trim();
+        if (!rawTxt || rawTxt.length > 600) return false;
+        if (/quitter le raid|leave raid/i.test(rawTxt)) return true;
+        if (/\bdrops?\b/i.test(rawTxt) && /réclamer|claim|inventaire|inventory|\d+\s*%/i.test(rawTxt)) return true;
+        return false;
+    }
+
+    function isCommunityEventBanner(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.matches && el.matches(CHAT_EVENT_BANNER_SEL)) return true;
+        if (el.querySelector && el.querySelector(CHAT_EVENT_BANNER_SEL)) return true;
+        var rawTxt = (el.textContent || '').trim();
+        if (!rawTxt || rawTxt.length > 800) return false;
+        var cleanedTxt = rawTxt.replace(
+            /faire\s+un\s+clip\s+des\s+meilleurs\s+moments\s+de\s+\S+|clip\s+the\s+best\s+moments\s+from\s+\S+/gi,
+            ''
+        );
+        return /train de la hype|hype train|\bsondage\b|\bpoll\b|\bprédiction\b|\bprediction\b|message épinglé|pinned by|épinglé par/i.test(cleanedTxt);
+    }
+
+    function containsPromoCarouselBanner(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.matches && el.matches(CHAT_PROMO_CAROUSEL_SEL)) return true;
+        if (el.querySelector && el.querySelector(CHAT_PROMO_CAROUSEL_SEL)) return true;
+        var rawTxt = (el.textContent || '').trim();
+        return rawTxt.length >= 6 && rawTxt.length <= 800 && CHAT_PROMO_CAROUSEL_TEXT_RE.test(rawTxt);
+    }
+
+    function hasCarouselSideArrows(el, elRect) {
+        if (!el || !el.querySelectorAll || !elRect) return false;
+        if (elRect.height < 32 || elRect.height > 210 || elRect.width < 180) return false;
+        if (el.querySelector && el.querySelector(
+            'button[aria-label*="Précédent" i], button[aria-label*="Suivant" i], ' +
+            'button[aria-label*="Previous" i], button[aria-label*="Next" i], ' +
+            'button[aria-label*="carrousel" i], button[aria-label*="carousel" i], ' +
+            '[data-a-target*="carousel" i]'
+        )) {
+            return true;
+        }
+        var btns = el.querySelectorAll('button');
+        if (!btns || btns.length < 2) return false;
+        var hasLeftArrow = false;
+        var hasRightArrow = false;
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if ((b.textContent || '').trim().length > 2) continue;
+            var br = b.getBoundingClientRect();
+            if (br.width <= 0 || br.width > 42 || br.height <= 0 || br.height > 60) continue;
+            if (br.left - elRect.left <= 22) hasLeftArrow = true;
+            if (elRect.right - br.right <= 22) hasRightArrow = true;
+            if (hasLeftArrow && hasRightArrow) return true;
+        }
+        return false;
+    }
+
+    // Option dédiée « Cacher le carrousel promo du tchat » : masque uniquement Offrir un sub, Créer un clip et Classement
+    function sweepChatPromoCarousel() {
+        if (scriptIsOff() || !pageConfig.hideChatCarousel) {
+            var prevHidden = document.querySelectorAll('.tp9-chat-carousel-hidden');
+            for (var p = 0; p < prevHidden.length; p++) {
+                prevHidden[p].classList.remove('tp9-chat-carousel-hidden');
             }
+            return;
+        }
 
-            var r = node.getBoundingClientRect();
-            var precedesMsgList = Boolean(
-                msgListEl && (node.compareDocumentPosition(msgListEl) & Node.DOCUMENT_POSITION_FOLLOWING)
-            );
+        var ctx = resolveChatTopContext();
+        if (!ctx) return;
+        var chatCol = ctx.chatCol;
+        var msgListEl = ctx.msgListEl;
+        var headerEl = ctx.headerEl;
+        var inputAreaEl = ctx.inputAreaEl;
+        var chatTopLimit = ctx.chatTopLimit;
+        var preserveEvents = !pageConfig.closeBanners;
 
-            // Si c'est un conteneur plein-écran d'overlay (height > 260), descendre dans ses enfants pour cibler la carte de bannière en haut
-            if (r.height > 260) {
-                var overlayChildren = node.children;
-                for (var j = 0; j < overlayChildren.length; j++) {
-                    inspectBranch(overlayChildren[j], depth + 1);
-                }
-                return;
-            }
-
+        var currentlyHidden = chatCol.querySelectorAll('.tp9-chat-carousel-hidden');
+        for (var chIdx = 0; chIdx < currentlyHidden.length; chIdx++) {
+            var hNode = currentlyHidden[chIdx];
             if (
-                (r.height > 0 && r.height <= 260 && r.top <= chatTopLimit && r.bottom <= chatTopLimit + 120) ||
-                (precedesMsgList && r.height <= 260)
+                isProtectedChatBannerNode(hNode, headerEl, msgListEl, inputAreaEl) ||
+                containsProtectedChatTarget(hNode, headerEl, msgListEl, inputAreaEl) ||
+                isRaidOrDropBanner(hNode) ||
+                (preserveEvents && isCommunityEventBanner(hNode))
             ) {
-                node.classList.add('tp9-chat-banner-hidden');
+                hNode.classList.remove('tp9-chat-carousel-hidden');
             }
         }
 
-        inspectBranch(chatCol, 0);
-
-        // Détection directe par contenu/attributs dans le haut de la colonne du tchat (Train de la Hype, Sondages, Prédictions, Classement)
         var candidates = chatCol.querySelectorAll('div, section, aside');
         for (var k = 0; k < candidates.length; k++) {
             var el = candidates[k];
-            if (el.classList.contains('tp9-chat-banner-hidden')) continue;
+            if (el.classList.contains('tp9-chat-carousel-hidden') || (el.closest && el.closest('.tp9-chat-carousel-hidden'))) continue;
             if (isProtectedChatBannerNode(el, headerEl, msgListEl, inputAreaEl)) continue;
             if (containsProtectedChatTarget(el, headerEl, msgListEl, inputAreaEl)) continue;
+            if (isRaidOrDropBanner(el)) continue;
+            if (preserveEvents && isCommunityEventBanner(el)) continue;
 
             var cr = el.getBoundingClientRect();
-            if (cr.height < 18 || cr.height > 240 || cr.top > chatTopLimit) continue;
+            if (cr.height < 18 || cr.height > 230 || cr.top > chatTopLimit) continue;
+
+            var precedesMsgList = Boolean(
+                !msgListEl || (el.compareDocumentPosition(msgListEl) & Node.DOCUMENT_POSITION_FOLLOWING)
+            );
+            if (!precedesMsgList && cr.bottom > chatTopLimit - 30) continue;
 
             var cText = (el.textContent || '').trim();
-            if (
-                /train de la hype|hype train|\bsondage\b|\bpoll\b|\bprédiction\b|\bprediction\b|message épinglé|pinned by|épinglé par/i.test(cText)
+            var matchedPromo =
+                (cText.length >= 6 && cText.length <= 420 && CHAT_PROMO_CAROUSEL_TEXT_RE.test(cText)) ||
+                Boolean(el.matches && el.matches(CHAT_PROMO_CAROUSEL_SEL)) ||
+                (precedesMsgList && hasCarouselSideArrows(el, cr) && !isCommunityEventBanner(el));
+
+            if (!matchedPromo) continue;
+
+            var targetBanner = el;
+            while (
+                targetBanner.parentElement &&
+                targetBanner.parentElement !== chatCol &&
+                !containsProtectedChatTarget(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl) &&
+                !isProtectedChatBannerNode(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl) &&
+                !isRaidOrDropBanner(targetBanner.parentElement) &&
+                !(preserveEvents && isCommunityEventBanner(targetBanner.parentElement))
             ) {
-                var targetBanner = el;
-                while (
-                    targetBanner.parentElement &&
-                    targetBanner.parentElement !== chatCol &&
-                    !containsProtectedChatTarget(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl) &&
-                    !isProtectedChatBannerNode(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl)
-                ) {
-                    var pr = targetBanner.parentElement.getBoundingClientRect();
-                    if (pr.height > 0 && pr.height <= 250 && pr.top <= chatTopLimit) {
-                        targetBanner = targetBanner.parentElement;
-                    } else {
-                        break;
-                    }
+                var pr = targetBanner.parentElement.getBoundingClientRect();
+                if (pr.height > 0 && pr.height <= 240 && pr.top <= chatTopLimit) {
+                    targetBanner = targetBanner.parentElement;
+                } else {
+                    break;
                 }
-                targetBanner.classList.add('tp9-chat-banner-hidden');
             }
+            targetBanner.classList.add('tp9-chat-carousel-hidden');
+        }
+    }
+
+    // Option « Fermer bannières (Hype Train, Sondages) » : masque uniquement Hype Train, Sondages, Prédictions et Messages épinglés
+    function sweepChatTopBanners() {
+        if (scriptIsOff() || !pageConfig.closeBanners) {
+            var hidden = document.querySelectorAll('.tp9-chat-banner-hidden');
+            for (var h = 0; h < hidden.length; h++) {
+                hidden[h].classList.remove('tp9-chat-banner-hidden');
+            }
+            return;
+        }
+
+        var ctx = resolveChatTopContext();
+        if (!ctx) return;
+        var chatCol = ctx.chatCol;
+        var msgListEl = ctx.msgListEl;
+        var headerEl = ctx.headerEl;
+        var inputAreaEl = ctx.inputAreaEl;
+        var chatTopLimit = ctx.chatTopLimit;
+        var preservePromoCarousel = !pageConfig.hideChatCarousel;
+
+        var currentlyHidden = chatCol.querySelectorAll('.tp9-chat-banner-hidden');
+        for (var chIdx = 0; chIdx < currentlyHidden.length; chIdx++) {
+            var hNode = currentlyHidden[chIdx];
+            if (
+                isProtectedChatBannerNode(hNode, headerEl, msgListEl, inputAreaEl) ||
+                containsProtectedChatTarget(hNode, headerEl, msgListEl, inputAreaEl) ||
+                isRaidOrDropBanner(hNode) ||
+                !isCommunityEventBanner(hNode) ||
+                (preservePromoCarousel && containsPromoCarouselBanner(hNode))
+            ) {
+                hNode.classList.remove('tp9-chat-banner-hidden');
+            }
+        }
+
+        var candidates = chatCol.querySelectorAll('div, section, aside');
+        for (var k = 0; k < candidates.length; k++) {
+            var el = candidates[k];
+            if (el.classList.contains('tp9-chat-banner-hidden') || (el.closest && el.closest('.tp9-chat-banner-hidden'))) continue;
+            if (isProtectedChatBannerNode(el, headerEl, msgListEl, inputAreaEl)) continue;
+            if (containsProtectedChatTarget(el, headerEl, msgListEl, inputAreaEl)) continue;
+            if (isRaidOrDropBanner(el)) continue;
+            if (preservePromoCarousel && containsPromoCarouselBanner(el)) continue;
+
+            var cr = el.getBoundingClientRect();
+            if (cr.height < 18 || cr.height > 250 || cr.top > chatTopLimit) continue;
+
+            if (!isCommunityEventBanner(el)) continue;
+
+            var targetBanner = el;
+            while (
+                targetBanner.parentElement &&
+                targetBanner.parentElement !== chatCol &&
+                !containsProtectedChatTarget(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl) &&
+                !isProtectedChatBannerNode(targetBanner.parentElement, headerEl, msgListEl, inputAreaEl) &&
+                !isRaidOrDropBanner(targetBanner.parentElement) &&
+                !(preservePromoCarousel && containsPromoCarouselBanner(targetBanner.parentElement))
+            ) {
+                var pr = targetBanner.parentElement.getBoundingClientRect();
+                if (pr.height > 0 && pr.height <= 250 && pr.top <= chatTopLimit) {
+                    targetBanner = targetBanner.parentElement;
+                } else {
+                    break;
+                }
+            }
+            targetBanner.classList.add('tp9-chat-banner-hidden');
         }
     }
 
@@ -43899,6 +44447,7 @@ dashboardButton.style.visibility = 'hidden';
         ensureChatEmoteButton();
         ensurePlayerToolButtons();
         updateChatInputEmoteMirror();
+        ensureChatInputSlowModeObserver();
         syncAnonChatBadge();
 
         // 0. Déplier automatiquement la barre latérale des chaînes suivies (« Afficher plus »)
@@ -43951,7 +44500,8 @@ dashboardButton.style.visibility = 'hidden';
             }
         }
 
-        // 2b. Fermer/masquer les bannières du haut du tchat (Hype Train, Classement, Sondages, Prédictions, Messages épinglés)
+        // 2b. Fermer/masquer les bannières et le carrousel promo du haut du tchat
+        sweepChatPromoCarousel();
         sweepChatTopBanners();
 
         // 3. Anti-Raid automatique
