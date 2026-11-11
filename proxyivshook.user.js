@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.2
+// @version      1.11.3
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,9 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.3
+// - Nouvelle option « Ralentir le tchat (Mode lent) » : limite la cadence d'affichage (1, 2, 4 ou 6 msg/s) sur les gros streams tout en conservant vos messages, mentions, streamer, modérateurs et VIP || New "Slow down chat (Slow mode)" option: limits chat display rate (1, 2, 4, or 6 msg/s) on busy streams while preserving your own messages, mentions, broadcaster, moderators, and VIPs
+// - Correctif de la « Pause du défilement au focus » du tchat : suppression du saut visuel au survol de la souris et reprise automatique du direct à la sortie du tchat sans rester bloqué sur « Chat mis en pause à cause du défilement » || Fixed chat "Pause scroll on focus": removed the visual jump on hover and ensured automatic live scroll resume on mouse leave without getting stuck on "Chat paused due to scroll"
 // 1.11.2
 // - Fix le bloquage de pub qui pouvais se retrouver bloquer et faire planter le lecteur || Fixes an issue where the ad blocker could get stuck, causing the player to crash.
 // 1.11.1
@@ -52,7 +55,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.2';
+    var CURRENT_VERSION = '1.11.3';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -616,6 +619,11 @@
         'Fusionne les messages identiques consécutifs avec un badge x2, x3…': 'Merges consecutive identical messages with a x2, x3… badge.',
         'Anti-spam (Compteur x2, x3…)': 'Anti-spam (x2, x3… counter)',
         'Regroupe les copiés-collés consécutifs': 'Groups consecutive copy-pasted messages',
+        'Ralentir les tchats rapides': 'Slow down fast chats',
+        'Limite la cadence des messages en direct sans retard (protège tes messages, @mentions, Streamer, Modos et VIP).': 'Caps live message rate with zero delay (always keeps your messages, @mentions, Streamer, Mods, and VIPs).',
+        'Ralentir le tchat (Mode lent)': 'Slow down chat (Slow Mode)',
+        'Limite le débit sur les gros lives sans retard': 'Limits message flood on big streams with zero delay',
+        'Cadence maximale du tchat': 'Maximum chat message rate',
         'Pause du tchat au survol': 'Pause chat on hover',
         'Fige le défilement quand ta souris survole les messages.': 'Freezes chat scrolling when your mouse hovers over messages.',
         'Pause du défilement au survol': 'Pause scrolling on hover',
@@ -851,6 +859,7 @@
         trashRestore: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
         contrastSun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>',
         antiSpam: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
+        slowChat: '<path d="M12 14l3.5-3.5"/><path d="M20.3 18A9 9 0 1 0 3.7 18"/><line x1="6" y1="18" x2="18" y2="18"/><circle cx="12" cy="14" r="1.2"/>',
         hoverPause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
         historyUp: '<circle cx="12" cy="12" r="9"/><polyline points="8 12 12 8 16 12"/><line x1="12" y1="16" x2="12" y2="8"/>',
         atReply: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>',
@@ -1255,6 +1264,8 @@
             showDeleted: true,
             readableColors: true,
             antiSpam: true,
+            slowChat: false,
+            slowChatRate: 2,
             hoverPause: true,
             upArrowHistory: true,
             dblClickReply: false,
@@ -1438,7 +1449,7 @@
             'chatOnLeft', 'reverseChat', 'anonChat', 'roleHighlights',
             'highlightSound', 'chatTimestamps', 'botBadges', 'hideBots',
             'hideChatNotices', 'showDeleted', 'readableColors', 'antiSpam',
-            'hoverPause', 'upArrowHistory', 'dblClickReply', 'hideBadges',
+            'slowChat', 'hoverPause', 'upArrowHistory', 'dblClickReply', 'hideBadges',
             'highlightKeywords', 'blacklistKeywords', 'autoPoints', 'autoDrops',
             'antiRaid', 'closeBanners', 'sidebarPreview', 'autoExpandSidebar',
             'hideOfflineChannels', 'hideRecom'
@@ -1461,6 +1472,13 @@
 
         if (typeof parsed.lastGlobalVolume === 'number' && Number.isFinite(parsed.lastGlobalVolume) && parsed.lastGlobalVolume >= 0 && parsed.lastGlobalVolume <= 2) {
             config.lastGlobalVolume = Math.round(parsed.lastGlobalVolume * 1000) / 1000;
+        }
+
+        if (parsed.slowChatRate !== undefined) {
+            var parsedRate = Number(parsed.slowChatRate);
+            if (parsedRate === 1 || parsedRate === 2 || parsedRate === 4 || parsedRate === 6) {
+                config.slowChatRate = parsedRate;
+            }
         }
 
         ['frequentEmotes', 'favoriteEmotes', 'highlightWords', 'blacklistWords'].forEach(function (arrKey) {
@@ -1791,6 +1809,8 @@
                 showDeleted: pageConfig.showDeleted !== false,
                 readableColors: pageConfig.readableColors !== false,
                 antiSpam: pageConfig.antiSpam !== false,
+                slowChat: !!pageConfig.slowChat,
+                slowChatRate: pageConfig.slowChatRate || 2,
                 hoverPause: pageConfig.hoverPause !== false,
                 upArrowHistory: pageConfig.upArrowHistory !== false,
                 dblClickReply: !!pageConfig.dblClickReply,
@@ -6575,6 +6595,27 @@
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
+                                <div class="tp9-toggle-row"
+                                    data-tp9-tip="Ralentir les tchats rapides"
+                                    data-tp9-tip-sub="Limite la cadence des messages en direct sans retard (protège tes messages, @mentions, Streamer, Modos et VIP).">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.slowChat)}
+                                        <span>Ralentir le tchat (Mode lent)</span>
+                                        <span class="tp9-toggle-sub">Limite le débit sur les gros lives sans retard</span>
+                                    </span>
+                                    <span class="tp9-row-controls">
+                                        <select class="tp9-inline-select tp9-slow-chat-rate" data-tp9-tip="Cadence maximale du tchat" aria-label="Cadence maximale du tchat">
+                                            <option value="1">1 msg/s</option>
+                                            <option value="2">2 msg/s</option>
+                                            <option value="4">4 msg/s</option>
+                                            <option value="6">6 msg/s</option>
+                                        </select>
+                                        <label class="tp9-switch">
+                                            <input type="checkbox" class="tp9-slow-chat">
+                                            <span class="tp9-switch-track"></span>
+                                        </label>
+                                    </span>
+                                </div>
                                 <label class="tp9-toggle-row"
                                     data-tp9-tip="Pause du tchat au survol"
                                     data-tp9-tip-sub="Fige le défilement quand ta souris survole les messages.">
@@ -7186,6 +7227,7 @@
             ['.tp9-show-deleted', 'showDeleted'],
             ['.tp9-readable-colors', 'readableColors'],
             ['.tp9-anti-spam', 'antiSpam'],
+            ['.tp9-slow-chat', 'slowChat'],
             ['.tp9-hover-pause', 'hoverPause'],
             ['.tp9-up-arrow', 'upArrowHistory'],
             ['.tp9-dblclick-reply', 'dblClickReply'],
@@ -7240,6 +7282,19 @@
                 if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
             });
         });
+
+        var slowRateSelect = dashboard.querySelector('.tp9-slow-chat-rate');
+        if (slowRateSelect) {
+            slowRateSelect.addEventListener('click', function (e) { e.stopPropagation(); });
+            slowRateSelect.addEventListener('change', function (e) {
+                var rVal = parseInt(e.target.value, 10);
+                if (rVal === 1 || rVal === 2 || rVal === 4 || rVal === 6) {
+                    pageConfig.slowChatRate = rVal;
+                    saveConfig(pageConfig);
+                    broadcastConfig();
+                }
+            });
+        }
 
         // Ajout de mots-clés (Highlight & Blacklist)
         function bindKeywordAdder(inputSel, btnSel, listKey, type) {
@@ -8454,6 +8509,7 @@
             ['.tp9-show-deleted', pageConfig.showDeleted !== false],
             ['.tp9-readable-colors', pageConfig.readableColors !== false],
             ['.tp9-anti-spam', pageConfig.antiSpam !== false],
+            ['.tp9-slow-chat', !!pageConfig.slowChat],
             ['.tp9-hover-pause', pageConfig.hoverPause !== false],
             ['.tp9-up-arrow', pageConfig.upArrowHistory !== false],
             ['.tp9-dblclick-reply', !!pageConfig.dblClickReply],
@@ -8486,6 +8542,8 @@
         if (splitColEl) splitColEl.value = pageConfig.splitChatColor || '#9147ff';
         var hlColEl = dashboard.querySelector('.tp9-hl-color');
         if (hlColEl) hlColEl.value = pageConfig.highlightColor || '#9147ff';
+        var slowRateEl = dashboard.querySelector('.tp9-slow-chat-rate');
+        if (slowRateEl) slowRateEl.value = String(pageConfig.slowChatRate || 2);
 
         updateMenuVolumeUI();
         updateQuickStatsPane();
@@ -24988,6 +25046,33 @@ dashboardButton.style.visibility = 'hidden';
                 border: 0;
                 border-radius: 5px;
             }
+            #tp9-dashboard .tp9-inline-select {
+                height: 23px;
+                padding: 0 5px;
+                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: rgba(255, 255, 255, 0.055);
+                color: #dcdce6;
+                font-family: inherit;
+                font-size: 11px;
+                font-weight: 600;
+                outline: none;
+                cursor: pointer;
+                opacity: 0.65;
+                transition: opacity .15s, border-color .15s, background .15s, color .15s;
+            }
+            #tp9-dashboard .tp9-inline-select:hover,
+            #tp9-dashboard .tp9-inline-select:focus,
+            #tp9-dashboard .tp9-toggle-row:has(input[type="checkbox"]:checked) .tp9-inline-select {
+                opacity: 1;
+                border-color: rgba(145, 71, 255, 0.45);
+                background: rgba(145, 71, 255, 0.14);
+                color: #efe8ff;
+            }
+            #tp9-dashboard .tp9-inline-select option {
+                background: #181822;
+                color: #f0f0f5;
+            }
             #tp9-dashboard .tp9-vol-badge,
             #tp9-dashboard .tp9-badge-soft {
                 padding: 1px 7px;
@@ -39137,6 +39222,15 @@ dashboardButton.style.visibility = 'hidden';
     var bttvAnonWsHooked = false;
     var bttvActiveIrcSockets = [];
     var bttvCurrentAnonNick = '';
+    var bttvDetectedUserLogin = '';
+    var bttvDetectedUserDisplayLower = '';
+    var bttvUserCookieCheckedAt = 0;
+    var bttvCachedCookieLogin = '';
+    var bttvCachedCookieDisplayLower = '';
+    var bttvSlowChatTokens = 1.6;
+    var bttvSlowChatLastRefillAt = 0;
+    var bttvSlowChatLastIrcAt = 0;
+    var bttvOrigMsgDataGet = null;
 
     var BTTV_ZERO_WIDTH_CODES = {
         cvHazmat: true,
@@ -39170,6 +39264,288 @@ dashboardButton.style.visibility = 'hidden';
         botrixoficial: true
     };
 
+    function getCurrentTwitchUserLogins() {
+        var now = Date.now();
+        if (now - bttvUserCookieCheckedAt > 5000) {
+            bttvUserCookieCheckedAt = now;
+            try {
+                var cookieStr = document.cookie || '';
+                var twMatch = cookieStr.match(/(?:^|;\s*)twilight-user=([^;]+)/);
+                if (twMatch && twMatch[1]) {
+                    var parsedUser = JSON.parse(decodeURIComponent(twMatch[1]));
+                    if (parsedUser && typeof parsedUser === 'object') {
+                        if (parsedUser.login) {
+                            bttvCachedCookieLogin = String(parsedUser.login).trim().toLowerCase();
+                        }
+                        if (parsedUser.displayName) {
+                            bttvCachedCookieDisplayLower = String(parsedUser.displayName).trim().toLowerCase();
+                        }
+                    }
+                }
+                if (!bttvCachedCookieLogin) {
+                    var lgMatch = cookieStr.match(/(?:^|;\s*)login=([^;]+)/);
+                    if (lgMatch && lgMatch[1]) {
+                        bttvCachedCookieLogin = decodeURIComponent(lgMatch[1]).trim().toLowerCase();
+                    }
+                }
+            } catch (e) {}
+        }
+        var login = bttvDetectedUserLogin || bttvCachedCookieLogin || '';
+        var displayLower = bttvDetectedUserDisplayLower || bttvCachedCookieDisplayLower || login;
+        return { login: login, displayLower: displayLower };
+    }
+
+    function bodyMentionsUsername(msgBodyLower, uname) {
+        if (!uname || uname.length < 2 || !msgBodyLower) return false;
+        var idx = msgBodyLower.indexOf(uname);
+        while (idx !== -1) {
+            var prev = idx > 0 ? msgBodyLower.charAt(idx - 1) : '';
+            var end = idx + uname.length;
+            var next = end < msgBodyLower.length ? msgBodyLower.charAt(end) : '';
+            var validStart = (idx === 0 || prev === '@' || !/[a-z0-9_]/.test(prev));
+            var validEnd = (end === msgBodyLower.length || !/[a-z0-9_]/.test(next));
+            if (validStart && validEnd) return true;
+            idx = msgBodyLower.indexOf(uname, idx + 1);
+        }
+        return false;
+    }
+
+    function isExemptPriorityChatMessage(
+        senderLogin,
+        senderDisplayLower,
+        channelLogin,
+        badgesRaw,
+        isModFlag,
+        isHighlightedRedeem,
+        msgBodyLower
+    ) {
+        if (isModFlag || isHighlightedRedeem) return true;
+        if (channelLogin && senderLogin && senderLogin === channelLogin) return true;
+        if (badgesRaw && (
+            badgesRaw.indexOf('broadcaster/') !== -1 ||
+            badgesRaw.indexOf('moderator/') !== -1 ||
+            badgesRaw.indexOf('lead_moderator/') !== -1 ||
+            badgesRaw.indexOf('vip/') !== -1 ||
+            badgesRaw.indexOf('staff/') !== -1 ||
+            badgesRaw.indexOf('admin/') !== -1 ||
+            badgesRaw.indexOf('global_mod/') !== -1
+        )) {
+            return true;
+        }
+        var me = getCurrentTwitchUserLogins();
+        if (me.login) {
+            if (senderLogin === me.login || senderDisplayLower === me.login) return true;
+            if (bodyMentionsUsername(msgBodyLower, me.login)) return true;
+        }
+        if (me.displayLower && me.displayLower !== me.login) {
+            if (senderDisplayLower === me.displayLower || senderLogin === me.displayLower) return true;
+            if (bodyMentionsUsername(msgBodyLower, me.displayLower)) return true;
+        }
+        if (pageConfig.highlightKeywords !== false && Array.isArray(pageConfig.highlightWords) && pageConfig.highlightWords.length && msgBodyLower) {
+            for (var h = 0; h < pageConfig.highlightWords.length; h++) {
+                var hw = String(pageConfig.highlightWords[h] || '').trim().toLowerCase();
+                if (hw && msgBodyLower.indexOf(hw) !== -1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function isPreDroppedChatMessage(senderLogin, senderDisplayLower, msgBodyLower) {
+        if (pageConfig.hideBots && (
+            (senderLogin && KNOWN_TWITCH_BOTS[senderLogin]) ||
+            (senderDisplayLower && KNOWN_TWITCH_BOTS[senderDisplayLower])
+        )) {
+            return true;
+        }
+        if (pageConfig.blacklistKeywords !== false && Array.isArray(pageConfig.blacklistWords) && pageConfig.blacklistWords.length) {
+            for (var b = 0; b < pageConfig.blacklistWords.length; b++) {
+                var bw = String(pageConfig.blacklistWords[b] || '').trim().toLowerCase();
+                if (bw && (
+                    (msgBodyLower && msgBodyLower.indexOf(bw) !== -1) ||
+                    (senderLogin && senderLogin === bw) ||
+                    (senderDisplayLower && senderDisplayLower === bw)
+                )) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function consumeSlowChatSlot() {
+        var now = Date.now();
+        var rate = Number(pageConfig.slowChatRate);
+        if (!Number.isFinite(rate) || rate <= 0) rate = 2;
+        var maxTokens = rate <= 1 ? 1.0 : 1.6;
+        if (!bttvSlowChatLastRefillAt || now < bttvSlowChatLastRefillAt) {
+            bttvSlowChatLastRefillAt = now;
+            bttvSlowChatTokens = maxTokens;
+        } else {
+            var elapsedMs = now - bttvSlowChatLastRefillAt;
+            bttvSlowChatLastRefillAt = now;
+            bttvSlowChatTokens = Math.min(maxTokens, bttvSlowChatTokens + (elapsedMs * rate) / 1000);
+        }
+        if (bttvSlowChatTokens >= 1.0) {
+            bttvSlowChatTokens -= 1.0;
+            return true;
+        }
+        return false;
+    }
+
+    function shouldKeepSingleIrcLine(line) {
+        if (!line) return true;
+        if (line.indexOf('USERSTATE') !== -1 && line.charCodeAt(0) === 64) {
+            var spU = line.indexOf(' ');
+            if (spU > 1) {
+                var dm = line.slice(1, spU).match(/(?:^|;)display-name=([^;]+)/);
+                if (dm && dm[1] && !/^justinfan\d+$/i.test(dm[1])) {
+                    bttvDetectedUserDisplayLower = dm[1].trim().toLowerCase();
+                }
+            }
+            return true;
+        }
+
+        if (!pageConfig.slowChat || scriptIsOff()) return true;
+
+        var tagsStr = '';
+        var rest = line;
+        if (line.charCodeAt(0) === 64) {
+            var spIdx = line.indexOf(' ');
+            if (spIdx === -1) return true;
+            tagsStr = line.slice(1, spIdx);
+            rest = line.slice(spIdx + 1);
+        }
+
+        var privIdx = rest.indexOf(' PRIVMSG #');
+        if (privIdx === -1) return true;
+
+        bttvSlowChatLastIrcAt = Date.now();
+
+        var bangIdx = rest.indexOf('!');
+        var senderLogin = (rest.charCodeAt(0) === 58 && bangIdx > 1 && bangIdx < privIdx)
+            ? rest.slice(1, bangIdx).toLowerCase()
+            : '';
+
+        var chanStart = privIdx + 10;
+        var colonIdx = rest.indexOf(' :', chanStart);
+        var channelLogin = (colonIdx !== -1 ? rest.slice(chanStart, colonIdx) : rest.slice(chanStart)).trim().toLowerCase();
+        var msgBody = colonIdx !== -1 ? rest.slice(colonIdx + 2) : '';
+        if (msgBody.charCodeAt(0) === 1 && msgBody.indexOf('ACTION ') === 1) {
+            msgBody = msgBody.slice(8, msgBody.charCodeAt(msgBody.length - 1) === 1 ? -1 : msgBody.length);
+        }
+        var msgBodyLower = msgBody.toLowerCase();
+
+        var badgesRaw = '';
+        var senderDisplayLower = '';
+        var isModFlag = false;
+        var isHighlightedRedeem = false;
+
+        if (tagsStr) {
+            var tagParts = tagsStr.split(';');
+            for (var t = 0; t < tagParts.length; t++) {
+                var kv = tagParts[t];
+                var eq = kv.indexOf('=');
+                if (eq === -1) continue;
+                var k = kv.slice(0, eq);
+                var v = kv.slice(eq + 1);
+                if (k === 'badges') {
+                    badgesRaw = v.toLowerCase();
+                } else if (k === 'display-name') {
+                    senderDisplayLower = v.trim().toLowerCase();
+                } else if (k === 'mod') {
+                    if (v === '1') isModFlag = true;
+                } else if (k === 'user-type') {
+                    if (v === 'mod' || v === 'global_mod' || v === 'admin' || v === 'staff') isModFlag = true;
+                } else if (k === 'msg-id') {
+                    if (v === 'highlighted-message') isHighlightedRedeem = true;
+                } else if (k === 'custom-reward-id') {
+                    if (v) isHighlightedRedeem = true;
+                }
+            }
+        }
+
+        if (isExemptPriorityChatMessage(
+            senderLogin,
+            senderDisplayLower,
+            channelLogin,
+            badgesRaw,
+            isModFlag,
+            isHighlightedRedeem,
+            msgBodyLower
+        )) {
+            return true;
+        }
+
+        if (isPreDroppedChatMessage(senderLogin, senderDisplayLower, msgBodyLower)) {
+            return false;
+        }
+
+        return consumeSlowChatSlot();
+    }
+
+    function filterIrcPayloadForSlowChat(rawText) {
+        if (typeof rawText !== 'string' || !rawText) return rawText;
+        if (rawText.indexOf('PRIVMSG #') === -1 && rawText.indexOf('USERSTATE') === -1) {
+            return rawText;
+        }
+        if (!pageConfig.slowChat || scriptIsOff()) {
+            if (rawText.indexOf('USERSTATE') !== -1) {
+                var uLines = rawText.split('\r\n');
+                for (var u = 0; u < uLines.length; u++) {
+                    if (uLines[u].indexOf('USERSTATE') !== -1) shouldKeepSingleIrcLine(uLines[u]);
+                }
+            }
+            return rawText;
+        }
+        var lines = rawText.split('\r\n');
+        var kept = [];
+        var droppedAny = false;
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i];
+            if (!ln) continue;
+            if (shouldKeepSingleIrcLine(ln)) {
+                kept.push(ln);
+            } else {
+                droppedAny = true;
+            }
+        }
+        if (!droppedAny) return rawText;
+        if (!kept.length) return '';
+        return kept.join('\r\n') + '\r\n';
+    }
+
+    function evaluateEventIrcFilter(ev, rawVal) {
+        if (!ev || typeof ev !== 'object') return rawVal;
+        if (ev.__tp9IrcEvaluated) {
+            return ev.__tp9FilteredIrcData !== undefined ? ev.__tp9FilteredIrcData : rawVal;
+        }
+        ev.__tp9IrcEvaluated = true;
+        if (typeof rawVal !== 'string' || !rawVal) return rawVal;
+        if (rawVal.indexOf('PRIVMSG #') === -1 && rawVal.indexOf('USERSTATE') === -1) {
+            return rawVal;
+        }
+        var filtered = filterIrcPayloadForSlowChat(rawVal);
+        if (filtered !== rawVal) {
+            ev.__tp9FilteredIrcData = filtered;
+        }
+        return filtered;
+    }
+
+    function shouldDropEntireIrcEvent(ws, ev) {
+        try {
+            if (!pageConfig.slowChat || scriptIsOff() || !ev) return false;
+            if (ws && ws.url && ws.url.indexOf('irc-ws') === -1) return false;
+            var raw = bttvOrigMsgDataGet ? bttvOrigMsgDataGet.call(ev) : ev.data;
+            if (typeof raw !== 'string' || raw.indexOf('PRIVMSG #') === -1) return false;
+            var res = evaluateEventIrcFilter(ev, raw);
+            return res === '';
+        } catch (e) {
+            return false;
+        }
+    }
+
     function attachTwitchPubsubListener(ws) {
         if (!ws || ws.__tp9PubsubHooked) return;
         if (ws.url && ws.url.indexOf('irc-ws') !== -1) return;
@@ -39191,13 +39567,14 @@ dashboardButton.style.visibility = 'hidden';
         if (bttvAnonWsHooked || typeof window.WebSocket !== 'function') return;
         bttvAnonWsHooked = true;
 
-        // 1. Intercepte MessageEvent.prototype.data pour capter les messages des WebSockets / Workers (Hermes / PubSub)
+        // 1. Intercepte MessageEvent.prototype.data pour capter les messages des WebSockets / Workers (Hermes / PubSub / IRC)
         // même si Twitch a ouvert la connexion WebSocket AVANT l'injection du userscript ou dans un Worker
         try {
             if (typeof window.MessageEvent === 'function' && window.MessageEvent.prototype) {
                 var msgDataDesc = Object.getOwnPropertyDescriptor(window.MessageEvent.prototype, 'data');
                 if (msgDataDesc && typeof msgDataDesc.get === 'function' && !msgDataDesc.get.__tp9Hooked) {
                     var origMsgDataGet = msgDataDesc.get;
+                    bttvOrigMsgDataGet = origMsgDataGet;
                     var hookedMsgDataGet = function () {
                         var val = origMsgDataGet.call(this);
                         try {
@@ -39224,6 +39601,9 @@ dashboardButton.style.visibility = 'hidden';
                                         handleTwitchPubsubMessage({ data: JSON.stringify(val) });
                                     }
                                 }
+                            }
+                            if (this && typeof val === 'string' && (val.indexOf('PRIVMSG #') !== -1 || val.indexOf('USERSTATE') !== -1)) {
+                                return evaluateEventIrcFilter(this, val);
                             }
                         } catch (e) {}
                         return val;
@@ -39309,21 +39689,74 @@ dashboardButton.style.visibility = 'hidden';
 
         var origSend = window.WebSocket.prototype.send;
         var origAddEv = window.WebSocket.prototype.addEventListener;
+        var origRemoveEv = window.WebSocket.prototype.removeEventListener;
         if (typeof origAddEv === 'function') {
             window.WebSocket.prototype.addEventListener = function (type, listener, options) {
                 try {
                     if (type === 'message') {
                         attachTwitchPubsubListener(this);
+                        if (typeof listener === 'function') {
+                            var wrappedListener = listener.__tp9WsMsgWrap;
+                            if (!wrappedListener) {
+                                wrappedListener = function (ev) {
+                                    if (shouldDropEntireIrcEvent(this, ev)) return;
+                                    return listener.call(this, ev);
+                                };
+                                listener.__tp9WsMsgWrap = wrappedListener;
+                            }
+                            return origAddEv.call(this, type, wrappedListener, options);
+                        }
                     }
                 } catch (e) {}
                 return origAddEv.call(this, type, listener, options);
             };
         }
+        if (typeof origRemoveEv === 'function') {
+            window.WebSocket.prototype.removeEventListener = function (type, listener, options) {
+                if (type === 'message' && typeof listener === 'function' && listener.__tp9WsMsgWrap) {
+                    return origRemoveEv.call(this, type, listener.__tp9WsMsgWrap, options);
+                }
+                return origRemoveEv.call(this, type, listener, options);
+            };
+        }
+        try {
+            var wsOnMsgDesc = Object.getOwnPropertyDescriptor(window.WebSocket.prototype, 'onmessage');
+            if (wsOnMsgDesc && typeof wsOnMsgDesc.set === 'function' && !wsOnMsgDesc.set.__tp9Hooked) {
+                var origWsOnMsgGet = wsOnMsgDesc.get;
+                var origWsOnMsgSet = wsOnMsgDesc.set;
+                var hookedWsOnMsgSet = function (fn) {
+                    if (typeof fn !== 'function') {
+                        this.__tp9OrigOnMsg = null;
+                        return origWsOnMsgSet.call(this, fn);
+                    }
+                    this.__tp9OrigOnMsg = fn;
+                    return origWsOnMsgSet.call(this, function (ev) {
+                        if (shouldDropEntireIrcEvent(this, ev)) return;
+                        return fn.call(this, ev);
+                    });
+                };
+                hookedWsOnMsgSet.__tp9Hooked = true;
+                Object.defineProperty(window.WebSocket.prototype, 'onmessage', {
+                    configurable: true,
+                    enumerable: wsOnMsgDesc.enumerable,
+                    get: function () {
+                        return this.__tp9OrigOnMsg !== undefined ? this.__tp9OrigOnMsg : origWsOnMsgGet.call(this);
+                    },
+                    set: hookedWsOnMsgSet
+                });
+            }
+        } catch (e) {}
         if (typeof origSend !== 'function') return;
         window.WebSocket.prototype.send = function (data) {
             try {
                 attachTwitchPubsubListener(this);
                 if (this && this.url && this.url.indexOf('irc-ws') !== -1 && this.url.indexOf('twitch.tv') !== -1) {
+                    if (typeof data === 'string') {
+                        var realNickMatch = data.match(/^NICK\s+(?!justinfan)([^\r\n\s]+)/mi);
+                        if (realNickMatch && realNickMatch[1]) {
+                            bttvDetectedUserLogin = realNickMatch[1].trim().toLowerCase();
+                        }
+                    }
                     if (bttvActiveIrcSockets.indexOf(this) === -1) {
                         bttvActiveIrcSockets.push(this);
                         var selfWs = this;
@@ -39454,6 +39887,7 @@ dashboardButton.style.visibility = 'hidden';
         var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
         var alt = false;
         for (var i = 0; i < msgs.length; i++) {
+            if (msgs[i].style && msgs[i].style.display === 'none') continue;
             alt = !alt;
             msgs[i].classList.toggle('tp9-chat-alt', alt);
         }
@@ -40147,7 +40581,12 @@ dashboardButton.style.visibility = 'hidden';
             msgEl.style.display = 'none';
             return true;
         } else if (!msgEl.__tp9HiddenBySpam) {
-            msgEl.style.display = '';
+            if (!pageConfig.slowChat && msgEl.__tp9HiddenBySlow) {
+                msgEl.__tp9HiddenBySlow = false;
+            }
+            if (!msgEl.__tp9HiddenBySlow) {
+                msgEl.style.display = '';
+            }
         }
 
         // 2. Highlight mots-clés (uniquement sur le corps du message / émotes, jamais sur l'horodatage ou le badge BOT)
@@ -40172,13 +40611,49 @@ dashboardButton.style.visibility = 'hidden';
         return false;
     }
 
-    function processChatMessageNode(msgEl) {
+    function processChatMessageNode(msgEl, isInitialBatch) {
         if (!msgEl || msgEl.nodeType !== 1) return;
 
         if (msgEl.__tp9Processed) {
             checkAndRestoreDeletedMessage(msgEl);
             return;
         }
+
+        var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
+        var author = authorEl ? (authorEl.textContent || '').trim() : '';
+        var authorLower = author.toLowerCase();
+        var authorLogin = (msgEl.getAttribute('data-a-user') || (authorEl && authorEl.getAttribute('data-a-user')) || '').trim().toLowerCase();
+
+        // Fallback DOM pour le mode lent local (ex: tchat de VOD ou flux hors WebSocket IRC)
+        if (!isInitialBatch && pageConfig.slowChat && !scriptIsOff() && (Date.now() - bttvSlowChatLastIrcAt) > 5000) {
+            var hasRoleBadge = !!msgEl.querySelector(
+                'img.chat-badge[alt*="Broadcaster" i], img.chat-badge[alt*="Diffuseur" i], ' +
+                'img.chat-badge[alt*="Moderator" i], img.chat-badge[alt*="Modérateur" i], ' +
+                'img.chat-badge[alt*="VIP" i], img.chat-badge[alt*="Staff" i]'
+            );
+            var hasSelfMentionOrRedeem = !!msgEl.querySelector(
+                '.chat-line__message-mention--me, [data-a-target="chat-message-mention"], [data-a-target="chat-highlighted-message"]'
+            ) || msgEl.classList.contains('chat-line__message--highlighted');
+            var domBodyLower = extractChatMessagePlainText(msgEl).toLowerCase();
+            var curChan = (getTestChannel() || '').toLowerCase();
+            if (!isExemptPriorityChatMessage(
+                authorLogin || authorLower,
+                authorLower,
+                curChan,
+                hasRoleBadge ? 'moderator/1' : '',
+                hasRoleBadge,
+                hasSelfMentionOrRedeem,
+                domBodyLower
+            )) {
+                if (isPreDroppedChatMessage(authorLogin || authorLower, authorLower, domBodyLower) || !consumeSlowChatSlot()) {
+                    msgEl.__tp9Processed = true;
+                    msgEl.__tp9HiddenBySlow = true;
+                    msgEl.style.display = 'none';
+                    return;
+                }
+            }
+        }
+
         msgEl.__tp9Processed = true;
 
         // 0. Lignes alternées (Split Chat)
@@ -40186,10 +40661,6 @@ dashboardButton.style.visibility = 'hidden';
         if (bttvSplitAlt) {
             msgEl.classList.add('tp9-chat-alt');
         }
-
-        var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
-        var author = authorEl ? (authorEl.textContent || '').trim() : '';
-        var authorLower = author.toLowerCase();
 
         // 0b. Détection des Bots connus (Badge [BOT] et classe de masquage)
         var isBot = !!(authorLower && KNOWN_TWITCH_BOTS[authorLower]);
@@ -40285,6 +40756,20 @@ dashboardButton.style.visibility = 'hidden';
         // 6. Émotes/Émojis géants si le message ne contient que des émotes ou émojis
         updateMessageOnlyEmotesState(msgEl);
     }
+
+    var bttvChatResumeTimer = null;
+    var bttvChatResumeToken = 0;
+
+    var CHAT_PAUSE_FOOTER_SEL =
+        '[data-a-target="chat-scroller-footer"], ' +
+        '[data-a-target="chat-paused-footer"], ' +
+        '[data-test-selector="chat-paused-footer"], ' +
+        '[data-test-selector="chat-scrollable-area__message-container-pause-footer"], ' +
+        '.chat-paused-footer, ' +
+        '.chat-list__more-messages-placeholder';
+
+    var CHAT_PAUSE_TEXT_RE =
+        /t?chat\s+(?:mis\s+)?en\s+pause|voir\s+les\s+nouveaux\s+messages|plus\s+de\s+messages|nouveaux\s+messages\s+ci-dessous|reprendre\s+le\s+d[ée]filement|chat\s+paused|more\s+messages\s+below|see\s+new\s+messages|new\s+messages\s+below|resume\s+scroll/i;
 
     var bttvNativeScrollTopDesc = (function () {
         try {
@@ -40564,10 +41049,341 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
-    function releaseChatHoverPause(forceSnapToLive) {
+    function getChatRoomScope(container) {
+        if (container && container.closest) {
+            var room = container.closest(
+                '.stream-chat, [data-a-target="stream-chat"], .chat-room, ' +
+                '[data-test-selector="chat-room-component-layout"], ' +
+                '.channel-root__right-column, [data-a-target="right-column-chat-bar"]'
+            );
+            if (room) return room;
+            var list = container.closest(
+                '.chat-list--default, .chat-list--other, [data-test-selector="chat-scrollable-area__message-container-wrapper"]'
+            );
+            if (list) return list;
+        }
+        if (container && container.parentElement) {
+            return container.parentElement.parentElement || container.parentElement;
+        }
+        return document;
+    }
+
+    function isElementVisibleForChatBanner(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.isConnected === false) return false;
+        if (el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return false;
+        if (typeof el.getBoundingClientRect === 'function') {
+            try {
+                var r = el.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0 || r.height > 110) return false;
+            } catch (e) {}
+        }
+        return true;
+    }
+
+    function findChatPauseFloatingAncestor(el, container) {
+        if (!el || el.nodeType !== 1) return null;
+        if (el.closest) {
+            var known = el.closest(CHAT_PAUSE_FOOTER_SEL);
+            if (known) return known;
+        }
+        if (container && container.contains && container.contains(el)) return null;
+        if (el.closest && el.closest(
+            '.chat-line__message, [data-a-target="chat-line-message"], ' +
+            '.chat-input, [data-a-target="chat-input"], ' +
+            '.stream-chat-header, [data-a-target="stream-chat-header"]'
+        )) {
+            return null;
+        }
+        var cur = el;
+        var depth = 0;
+        while (cur && cur.nodeType === 1 && depth < 6 && cur !== document.body) {
+            if (container && cur.contains && cur.contains(container)) break;
+            var txt = (cur.textContent || '').trim();
+            if (txt.length >= 8 && txt.length <= 140 && CHAT_PAUSE_TEXT_RE.test(txt)) {
+                if (isElementVisibleForChatBanner(cur)) {
+                    var btn = cur.closest ? cur.closest('button, [role="button"], [tabindex="0"]') : null;
+                    if (btn && !(container && btn.contains && btn.contains(container))) {
+                        return btn;
+                    }
+                    return cur;
+                }
+            }
+            cur = cur.parentElement;
+            depth++;
+        }
+        return null;
+    }
+
+    function findBestTwitchChatPauseBannerTarget(container) {
+        var scope = getChatRoomScope(container);
+        var roots = [scope];
+        if (scope !== document && document) {
+            roots.push(document);
+        }
+
+        // 1. Sélecteurs explicites connus (anciens et nouveaux attributs/classes Twitch)
+        for (var rIdx = 0; rIdx < roots.length; rIdx++) {
+            var root = roots[rIdx];
+            if (!root) continue;
+            if (typeof root.querySelectorAll === 'function') {
+                var footers = root.querySelectorAll(CHAT_PAUSE_FOOTER_SEL);
+                for (var i = 0; i < footers.length; i++) {
+                    var f = footers[i];
+                    if (!isElementVisibleForChatBanner(f)) continue;
+                    var innerBtn = (f.matches && f.matches('button, [role="button"]'))
+                        ? f
+                        : (f.querySelector && f.querySelector('button, [role="button"], [tabindex="0"]'));
+                    return innerBtn || f;
+                }
+            }
+            if (typeof root.querySelector === 'function') {
+                var legacyBtn = root.querySelector('[data-a-target="chat-scroller-footer"] button');
+                if (legacyBtn && isElementVisibleForChatBanner(legacyBtn)) return legacyBtn;
+                var legacyFooter = root.querySelector('[data-a-target="chat-scroller-footer"]');
+                if (legacyFooter && isElementVisibleForChatBanner(legacyFooter)) {
+                    var lb = legacyFooter.querySelector && legacyFooter.querySelector('button, [role="button"]');
+                    return lb || legacyFooter;
+                }
+            }
+        }
+
+        // 2. Parcours rapide hors liste des messages pour les bandeaux CoreUI ("Chat mis en pause à cause du défilement", etc.)
+        if (!scope || scope === document) return null;
+        var bestInteractive = null;
+        var bestLeaf = null;
+
+        var inspectNode = function (el) {
+            if (!el || el.nodeType !== 1 || el === container) return;
+            if (el.matches && el.matches(
+                '.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"], ' +
+                '.chat-line__message, [data-a-target="chat-line-message"], ' +
+                '.chat-input, [data-a-target="chat-input"], ' +
+                '.stream-chat-header, [data-a-target="stream-chat-header"], a[href]'
+            )) {
+                return;
+            }
+            if (el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return;
+
+            var wrapsContainer = Boolean(container && el.contains && el.contains(container));
+            if (!wrapsContainer) {
+                var txt = (el.textContent || '').trim();
+                if (txt.length >= 8 && txt.length <= 140 && CHAT_PAUSE_TEXT_RE.test(txt) && isElementVisibleForChatBanner(el)) {
+                    var tag = el.tagName;
+                    var isInteractive =
+                        tag === 'BUTTON' ||
+                        (el.getAttribute && (el.getAttribute('role') === 'button' || el.getAttribute('tabindex') === '0')) ||
+                        (el.matches && el.matches('button, [role="button"], [tabindex="0"]'));
+                    if (isInteractive) {
+                        bestInteractive = el;
+                    } else {
+                        bestLeaf = el;
+                    }
+                }
+            }
+
+            var ch = el.children;
+            if (ch && ch.length) {
+                for (var c = 0; c < ch.length; c++) {
+                    inspectNode(ch[c]);
+                }
+            }
+        };
+
+        inspectNode(scope);
+        return bestInteractive || bestLeaf || null;
+    }
+
+    function triggerChatResumeElementClick(target) {
+        if (!target) return false;
+        try {
+            if (typeof MouseEvent === 'function') {
+                target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+            }
+        } catch (e) {}
+        try {
+            if (typeof target.click === 'function') {
+                target.click();
+                return true;
+            }
+        } catch (e) {}
+        try {
+            var ev = typeof MouseEvent === 'function'
+                ? new MouseEvent('click', { bubbles: true, cancelable: true, view: window })
+                : new Event('click', { bubbles: true });
+            target.dispatchEvent(ev);
+            return true;
+        } catch (e) {}
+        return false;
+    }
+
+    function clickTwitchChatResumeBanner(container) {
+        var target = findBestTwitchChatPauseBannerTarget(container);
+        return target ? triggerChatResumeElementClick(target) : false;
+    }
+
+    function unpauseTwitchChatFiber(scroller, container) {
+        var scope = getChatRoomScope(container);
+        var startEl = scroller || container;
+        if (!startEl) return false;
+
+        var getFiber = function (node) {
+            if (typeof getReactFiberFromDom === 'function') {
+                return getReactFiberFromDom(node);
+            }
+            if (!node || typeof node !== 'object') return null;
+            try {
+                var keys = Object.keys(node);
+                for (var i = 0; i < keys.length; i++) {
+                    if (keys[i].indexOf('__reactFiber$') === 0 || keys[i].indexOf('__reactInternalInstance$') === 0) {
+                        return node[keys[i]];
+                    }
+                }
+            } catch (e) {}
+            return null;
+        };
+
+        var fiber = getFiber(startEl) || (container && container !== startEl ? getFiber(container) : null);
+        var acted = false;
+        var guard = 0;
+        while (fiber && guard++ < 35) {
+            var sn = fiber.stateNode;
+            if (sn && sn.nodeType === 1 && scope && scope !== document && scope.contains && !scope.contains(sn)) {
+                break;
+            }
+            if (sn && typeof sn === 'object' && !sn.nodeType) {
+                try {
+                    var statePaused = Boolean(
+                        sn.state && (
+                            sn.state.isPaused === true ||
+                            sn.state.paused === true ||
+                            sn.state.isAutoScrollPaused === true ||
+                            sn.state.scrollPaused === true
+                        )
+                    );
+                    if (typeof sn.unpause === 'function') {
+                        sn.unpause();
+                        acted = true;
+                    } else if (typeof sn.handleUnpause === 'function') {
+                        sn.handleUnpause();
+                        acted = true;
+                    } else if (typeof sn.onUnpause === 'function') {
+                        sn.onUnpause();
+                        acted = true;
+                    } else if (typeof sn.resumeScroll === 'function') {
+                        sn.resumeScroll();
+                        acted = true;
+                    }
+                    if ((acted || statePaused) && typeof sn.scrollToBottom === 'function') {
+                        sn.scrollToBottom();
+                        acted = true;
+                    }
+                    if (!acted && statePaused && typeof sn.setState === 'function') {
+                        sn.setState({ isPaused: false });
+                        acted = true;
+                    }
+                } catch (e) {}
+            }
+            var props = fiber.memoizedProps;
+            if (props && typeof props === 'object') {
+                try {
+                    if (props.isPaused === true || props.isAutoScrollPaused === true || props.paused === true) {
+                        if (typeof props.onUnpause === 'function') {
+                            props.onUnpause();
+                            acted = true;
+                        } else if (typeof props.unpause === 'function') {
+                            props.unpause();
+                            acted = true;
+                        }
+                        if (typeof props.scrollToBottom === 'function') {
+                            props.scrollToBottom();
+                            acted = true;
+                        }
+                    }
+                } catch (e) {}
+            }
+            if (acted) break;
+            fiber = fiber.return;
+        }
+        return acted;
+    }
+
+    function resumeTwitchChatToLive(container, scroller) {
+        var activeContainer = container || bttvObservedChatNode;
+        var sc = scroller || resolveChatScroller(activeContainer);
+        var token = ++bttvChatResumeToken;
+        if (bttvChatResumeTimer) {
+            clearTimeout(bttvChatResumeTimer);
+            bttvChatResumeTimer = null;
+        }
+
+        var clicked = clickTwitchChatResumeBanner(activeContainer);
+        if (!clicked && sc) {
+            unpauseTwitchChatFiber(sc, activeContainer);
+        }
+
+        if (sc) {
+            var isRev = !!pageConfig.reverseChat;
+            setRawChatScrollTop(sc, isRev ? 0 : sc.scrollHeight);
+            try {
+                sc.dispatchEvent(new Event('scroll', { bubbles: true }));
+            } catch (e) {}
+        }
+
+        requestAnimationFrame(function () {
+            if (token !== bttvChatResumeToken || bttvChatHoverPaused) return;
+            var curContainer = bttvObservedChatNode || activeContainer;
+            var sc2 = resolveChatScroller(curContainer) || sc;
+            var hz = resolveChatHoverZone(curContainer, sc2);
+            if (hz && hz.__tp9MouseInside) return;
+
+            var clickedRaf = clickTwitchChatResumeBanner(curContainer);
+            if (clickedRaf && sc2) {
+                unpauseTwitchChatFiber(sc2, curContainer);
+            }
+            if (sc2 && sc2.isConnected !== false) {
+                var isRev2 = !!pageConfig.reverseChat;
+                setRawChatScrollTop(sc2, isRev2 ? 0 : sc2.scrollHeight);
+                try {
+                    sc2.dispatchEvent(new Event('scroll', { bubbles: true }));
+                } catch (e) {}
+            }
+        });
+
+        if (typeof setTimeout === 'function') {
+            bttvChatResumeTimer = setTimeout(function () {
+                bttvChatResumeTimer = null;
+                if (token !== bttvChatResumeToken || bttvChatHoverPaused) return;
+                var curContainer = bttvObservedChatNode || activeContainer;
+                var sc3 = resolveChatScroller(curContainer) || sc;
+                if (!sc3 || sc3.isConnected === false) return;
+                var hz = resolveChatHoverZone(curContainer, sc3);
+                if (hz && hz.__tp9MouseInside) return;
+
+                var isRev3 = !!pageConfig.reverseChat;
+                var curSt3 = getRawChatScrollTop(sc3);
+                var dist3 = isRev3 ? curSt3 : (sc3.scrollHeight - curSt3 - sc3.clientHeight);
+                var stillBanner = clickTwitchChatResumeBanner(curContainer);
+                if (stillBanner) {
+                    unpauseTwitchChatFiber(sc3, curContainer);
+                }
+                if (stillBanner || dist3 > 5) {
+                    setRawChatScrollTop(sc3, isRev3 ? 0 : sc3.scrollHeight);
+                    try {
+                        sc3.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    } catch (e) {}
+                }
+            }, 60);
+        }
+    }
+
+    function releaseChatHoverPause(snapToLive) {
         var wasPaused = bttvChatHoverPaused;
         var wasManual = bttvChatManualScrolled;
-        var scroller = bttvHoverActiveScroller || resolveChatScroller(bttvObservedChatNode);
+        var wasNotified = bttvChatNotifiedTwitchPause;
+        var activeContainer = bttvObservedChatNode;
+        var scroller = bttvHoverActiveScroller || resolveChatScroller(activeContainer);
 
         bttvChatHoverPaused = false;
         bttvChatManualScrolled = false;
@@ -40585,7 +41401,8 @@ dashboardButton.style.visibility = 'hidden';
         bttvHoverOrigOverflowAnchor = '';
         bttvHoverActiveScroller = null;
 
-        if (!wasPaused || !scroller) return;
+        if (snapToLive === false) return;
+        if (!wasPaused || !scroller || scroller.isConnected === false) return;
 
         var isRev = !!pageConfig.reverseChat;
         var curSt = getRawChatScrollTop(scroller);
@@ -40593,13 +41410,9 @@ dashboardButton.style.visibility = 'hidden';
             ? curSt
             : (scroller.scrollHeight - curSt - scroller.clientHeight);
 
-        if (!forceSnapToLive && wasManual && distFromLive > 55 && document.querySelector('[data-a-target="chat-scroller-footer"]')) {
+        if (wasManual || wasNotified || Math.abs(distFromLive) > 2 || findBestTwitchChatPauseBannerTarget(activeContainer)) {
+            resumeTwitchChatToLive(activeContainer, scroller);
             return;
-        }
-
-        var resumeBtn = document.querySelector('[data-a-target="chat-scroller-footer"] button');
-        if (resumeBtn) {
-            try { resumeBtn.click(); } catch (e) {}
         }
         setRawChatScrollTop(scroller, isRev ? 0 : scroller.scrollHeight);
     }
@@ -40665,7 +41478,7 @@ dashboardButton.style.visibility = 'hidden';
 
         var existing = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
         for (var m = 0; m < existing.length; m++) {
-            processChatMessageNode(existing[m]);
+            processChatMessageNode(existing[m], true);
         }
 
         var scrollerForBind = resolveChatScroller(container);
@@ -40705,6 +41518,12 @@ dashboardButton.style.visibility = 'hidden';
 
             var engageChatHoverPause = function () {
                 if (scriptIsOff() || pageConfig.hoverPause === false) return;
+                bttvChatResumeToken++;
+                if (bttvChatResumeTimer) {
+                    clearTimeout(bttvChatResumeTimer);
+                    bttvChatResumeTimer = null;
+                }
+
                 var activeContainer = bttvObservedChatNode || container;
                 var scroller = resolveChatScroller(activeContainer);
                 if (!scroller) return;
@@ -40722,11 +41541,18 @@ dashboardButton.style.visibility = 'hidden';
                     ? curSt
                     : (scroller.scrollHeight - curSt - scroller.clientHeight);
 
-                // Ne verrouille que si le tchat était déjà au direct (sinon l'utilisateur lisait déjà plus haut)
-                if (distFromLive > 35) return;
-
                 bttvHoverActiveScroller = scroller;
                 bttvChatHoverPaused = true;
+
+                // Si le tchat était déjà remonté plus haut, on garde le mode défilement manuel sans figer l'ancre,
+                // tout en assurant un retour propre au direct à la sortie de la souris.
+                if (distFromLive > 35) {
+                    bttvChatManualScrolled = true;
+                    bttvChatNotifiedTwitchPause = true;
+                    bttvManualMovedAway = true;
+                    return;
+                }
+
                 bttvChatManualScrolled = false;
                 bttvChatNotifiedTwitchPause = false;
                 bttvManualMovedAway = false;
@@ -40743,8 +41569,38 @@ dashboardButton.style.visibility = 'hidden';
 
             var handleChatHoverLeave = function () {
                 hoverZone.__tp9MouseInside = false;
-                if (!bttvChatHoverPaused) return;
-                releaseChatHoverPause(false);
+                if (bttvChatHoverPaused) {
+                    releaseChatHoverPause(true);
+                    return;
+                }
+                if (!scriptIsOff() && pageConfig.hoverPause !== false) {
+                    var activeContainer = bttvObservedChatNode || container;
+                    var sc = resolveChatScroller(activeContainer);
+                    if (sc) {
+                        var isRev = !!pageConfig.reverseChat;
+                        var curSt = getRawChatScrollTop(sc);
+                        var dist = isRev ? curSt : (sc.scrollHeight - curSt - sc.clientHeight);
+                        if (dist > 5 || findBestTwitchChatPauseBannerTarget(activeContainer)) {
+                            resumeTwitchChatToLive(activeContainer, sc);
+                        }
+                    }
+                }
+            };
+
+            var handleManualPauseBannerClick = function () {
+                var activeContainer = bttvObservedChatNode || container;
+                var sc = bttvHoverActiveScroller || resolveChatScroller(activeContainer);
+                bttvChatHoverPaused = false;
+                bttvChatManualScrolled = false;
+                bttvManualMovedAway = false;
+                if (sc) {
+                    setRawChatScrollTop(sc, pageConfig.reverseChat ? 0 : sc.scrollHeight);
+                }
+                requestAnimationFrame(function () {
+                    if (hoverZone.__tp9MouseInside && !scriptIsOff() && pageConfig.hoverPause !== false) {
+                        engageChatHoverPause();
+                    }
+                });
             };
 
             hoverZone.addEventListener('mouseenter', function () {
@@ -40767,18 +41623,29 @@ dashboardButton.style.visibility = 'hidden';
                 var rel = e && e.relatedTarget;
                 if (rel && rel.nodeType === 1) {
                     if (hoverZone.contains(rel)) return;
-                    var floatingEl = rel.closest && rel.closest(
-                        '[data-a-target="chat-scroller-footer"], [data-a-target="viewer-card"], .viewer-card, [role="tooltip"], .tw-balloon'
-                    );
+                    var activeContainer = bttvObservedChatNode || container;
+                    var pauseBannerEl = findChatPauseFloatingAncestor(rel, activeContainer);
+                    var floatingEl = pauseBannerEl || (rel.closest && rel.closest(
+                        '[data-a-target="viewer-card"], .viewer-card, [role="tooltip"], .tw-balloon'
+                    ));
                     if (floatingEl && !hoverZone.contains(floatingEl)) {
+                        var onFloatClick = pauseBannerEl ? function () {
+                            handleManualPauseBannerClick();
+                        } : null;
                         var onFloatLeave = function (ev2) {
                             floatingEl.removeEventListener('mouseleave', onFloatLeave);
+                            if (onFloatClick) {
+                                floatingEl.removeEventListener('click', onFloatClick, true);
+                            }
                             var nextRel = ev2 && ev2.relatedTarget;
                             if (nextRel && nextRel.nodeType === 1 && hoverZone.contains(nextRel)) {
                                 return;
                             }
                             handleChatHoverLeave();
                         };
+                        if (onFloatClick) {
+                            floatingEl.addEventListener('click', onFloatClick, true);
+                        }
                         floatingEl.addEventListener('mouseleave', onFloatLeave);
                         return;
                     }
@@ -40838,20 +41705,8 @@ dashboardButton.style.visibility = 'hidden';
 
             hoverZone.addEventListener('click', function (e) {
                 if (!bttvChatHoverPaused) return;
-                if (e.target && e.target.closest && e.target.closest('[data-a-target="chat-scroller-footer"]')) {
-                    var activeContainer = bttvObservedChatNode || container;
-                    var sc = bttvHoverActiveScroller || resolveChatScroller(activeContainer);
-                    bttvChatHoverPaused = false;
-                    bttvChatManualScrolled = false;
-                    bttvManualMovedAway = false;
-                    if (sc) {
-                        setRawChatScrollTop(sc, pageConfig.reverseChat ? 0 : sc.scrollHeight);
-                    }
-                    requestAnimationFrame(function () {
-                        if (hoverZone.__tp9MouseInside && !scriptIsOff() && pageConfig.hoverPause !== false) {
-                            engageChatHoverPause();
-                        }
-                    });
+                if (findChatPauseFloatingAncestor(e.target, bttvObservedChatNode || container)) {
+                    handleManualPauseBannerClick();
                 }
             }, true);
         }
@@ -42863,16 +43718,17 @@ dashboardButton.style.visibility = 'hidden';
             '[class*="simplebar-"], ' +
             '.stream-chat-header, ' +
             '[data-a-target="stream-chat-header"], ' +
-            '[data-a-target="chat-scroller-footer"], ' +
+            CHAT_PAUSE_FOOTER_SEL + ', ' +
             '[data-test-selector="chat-viewer-list"], ' +
             '[data-a-target="emote-picker"], ' +
             '[role="dialog"], ' +
             '.chat-line__message, ' +
             '[data-a-target="chat-line-message"]'
         )) return true;
-        // Protège la barre de titre « Chat du stream » / « Stream Chat » même si ses classes changent
+        // Protège la barre de titre « Chat du stream » / « Stream Chat » et le bandeau de pause du défilement même si leurs classes changent
         var txt = (el.textContent || '').trim();
         if (/^(chat du stream|stream chat)$/i.test(txt)) return true;
+        if (txt.length >= 8 && txt.length <= 140 && CHAT_PAUSE_TEXT_RE.test(txt)) return true;
         if (el.querySelector && el.querySelector(
             '[data-a-target="stream-chat-header-label"], ' +
             '[data-a-target="right-column__toggle-collapse-btn"], ' +
@@ -42907,7 +43763,7 @@ dashboardButton.style.visibility = 'hidden';
             '.chat-scrollable-area__message-container, ' +
             '[data-test-selector="chat-scrollable-area__message-container"], ' +
             '[data-a-target="chat-input"], ' +
-            '[data-a-target="chat-scroller-footer"], ' +
+            CHAT_PAUSE_FOOTER_SEL + ', ' +
             '[data-test-selector="chat-viewer-list"], ' +
             '[data-a-target="emote-picker"], ' +
             '[role="dialog"], ' +
@@ -43396,6 +44252,8 @@ dashboardButton.style.visibility = 'hidden';
         bttvLastSpamNorm = '';
         bttvLastSpamEl = null;
         bttvLastSpamCount = 1;
+        bttvSlowChatTokens = 1.6;
+        bttvSlowChatLastRefillAt = 0;
         bttvServerAvailableClaimId = null;
         bttvLastGqlPointsPollAt = 0;
         loadBttvChannelEmotes(channel);
