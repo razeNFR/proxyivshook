@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.5
+// @version      1.11.6
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,8 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.6
+// - Mode Adblock : retrait de l'option « Proxys pendant les pubs » dans la section Adblock et garantie d'utiliser uniquement le bloqueur sans proxy (VAFT) lors du passage de Proxy à Adblock || Adblock mode: removed the "Proxies during ads" option from the Adblock section and ensured only the proxy-free blocker (VAFT) is used when switching from Proxy to Adblock
 // 1.11.5
 // - Nouvelles options de Lecture Automatique (Lecteur) : ajout de « Stopper l'autoplay des chaînes hors ligne » (bande-annonce ou dernier stream) et « Stopper l'autoplay des VOD » (vidéos recommandées), et correction de la boucle Lecture/Pause sur « Stopper l'autoplay de l'accueil » || New Autoplay options (Player): added "Stop offline channels autoplay" (welcome trailer or last broadcast) and "Stop VOD autoplay" (recommended videos), and fixed the Play/Pause loop on "Stop homepage autoplay"
 // - Correctif des coupures aléatoires du direct lors des pubs latérales (SDA) : suppression totale des appels à .pause() dans le bloqueur SDA et blindage de la détection des flux live (notamment sous Firefox) pour ne plus jamais mettre le stream en pause || Fixed random live stream cutouts during side-by-side ads (SDA): removed all .pause() calls from the SDA blocker and hardened live stream detection (especially on Firefox) so the stream is never paused
@@ -61,7 +63,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.5';
+    var CURRENT_VERSION = '1.11.6';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -69,7 +71,7 @@
     // custom dans le menu du script.
     var UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/razeNFR/proxyivshook/main/proxyivshook.user.js';
     var UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 heure
-    var CHANGELOG_MAX_VERSIONS = 8;
+    var CHANGELOG_MAX_VERSIONS = 10;
 
     var DEFAULT_TIMEOUT = 2000;
     var DEFAULT_CACHE_DELAY = 60;
@@ -6550,6 +6552,13 @@
                 var headMatch = !!(headEl && (headEl.textContent || '').toLowerCase().indexOf(q) !== -1);
                 var cardHasRow = false;
                 rows.forEach(function (r) {
+                    if (
+                        dashboard.classList.contains('tp9-no-proxy') &&
+                        (r.classList.contains('tp9-proxy-only') || r.classList.contains('tp9-proxy-ads-row'))
+                    ) {
+                        r.classList.add('tp9-search-hidden');
+                        return;
+                    }
                     var txt = (
                         (r.textContent || '') + ' ' +
                         (r.getAttribute('data-tp9-tip') || '') + ' ' +
@@ -6795,12 +6804,12 @@
                                         data-tp9-tip-sub="Aucun blocage de pub : Twitch fonctionne normalement. La page se recharge.">${tp9Icon(14, TP9_ICON_PATHS.power)}<span>Désactivé</span></button>
                                 </div>
 
-                                <label class="tp9-toggle-row tp9-proxy-ads-row"
-                                    data-tp9-tip="Proxys pendant les pubs"
-                                    data-tp9-tip-sub="Hors pub, lecture directe sur Twitch (qualité d'origine, 2K comprise). Pendant une pub, un proxy prend le relais.">
+                                <label class="tp9-toggle-row tp9-proxy-ads-row tp9-proxy-only"
+                                    data-tp9-tip="Proxy uniquement pour les pubs"
+                                    data-tp9-tip-sub="Hors pub, lecture directe sur Twitch (qualité d'origine, 2K comprise) au lieu des proxys. Pendant une pub, un proxy prend le relais.">
                                     <span class="tp9-toggle-label">
                                         ${tp9OptIcon(TP9_ICON_PATHS.proxyAds)}
-                                        <span class="tp9-proxy-ads-text">Proxys pendant les pubs</span>
+                                        <span class="tp9-proxy-ads-text">Proxy uniquement pour les pubs</span>
                                         <span class="tp9-toggle-sub">2K/1080p direct hors pub · Proxy durant la pub</span>
                                     </span>
                                     <span class="tp9-switch">
@@ -9116,22 +9125,18 @@
         dashboard.querySelector('.tp9-proxy-ads-only').checked =
             !!pageConfig.proxyAdsOnly;
 
-        // Même réglage, lu depuis le mode choisi : en Proxy il retire
-        // les proxys du reste de la lecture, en Adblock il les ajoute
-        // pendant les pubs.
+        // Option réservée uniquement au mode Proxy : en mode Adblock, seul
+        // le bloqueur sans proxy (VAFT) est utilisé et cette ligne est masquée.
         var proxyAdsRow = dashboard.querySelector('.tp9-proxy-ads-row');
         if (proxyAdsRow) {
-            var proxyAdsTitle = proxiesOn()
-                ? tt('Proxy uniquement pour les pubs', 'Proxy only for ads')
-                : tt('Proxys pendant les pubs', 'Proxies during ads');
+            var proxyAdsTitle = tt('Proxy uniquement pour les pubs', 'Proxy only for ads');
             proxyAdsRow.querySelector('.tp9-proxy-ads-text').textContent = proxyAdsTitle;
             proxyAdsRow.setAttribute('data-tp9-tip', proxyAdsTitle);
             proxyAdsRow.setAttribute(
                 'data-tp9-tip-sub',
-                proxiesOn()
-                    ? tt('Hors pub, lecture directe sur Twitch (qualité d\'origine, 2K comprise) au lieu des proxys. Pendant une pub, un proxy prend le relais.', 'Outside ads, direct playback on Twitch (original quality, 2K included) instead of proxies. During an ad, a proxy takes over.')
-                    : tt('Pendant une pub, le flux est d\'abord demandé à un proxy, avant les lecteurs Twitch de secours.', 'During an ad, the stream is first requested from a proxy, before the backup Twitch players.')
+                tt('Hors pub, lecture directe sur Twitch (qualité d\'origine, 2K comprise) au lieu des proxys. Pendant une pub, un proxy prend le relais.', 'Outside ads, direct playback on Twitch (original quality, 2K included) instead of proxies. During an ad, a proxy takes over.')
             );
+            proxyAdsRow.style.display = (!proxiesOn() || scriptIsOff()) ? 'none' : '';
         }
 
         // Mode Adblock : forcée (la relance de fin de pub en a besoin
@@ -9406,13 +9411,11 @@
 
         if (activeProxyInfo.sansProxy) {
             hero.classList.add('tp9-hero-live');
-            // Lecture directe dans les deux modes quand les proxys ne
-            // servent que pendant les pubs : le titre dit lequel.
-            valueEl.textContent = !proxyAdsOnlyOn()
-                ? tt('Adblock actif', 'Adblock on')
-                : proxiesOn()
-                    ? tt('Proxy pendant les pubs', 'Proxy during ads')
-                    : tt('Adblock + proxys', 'Adblock + proxies');
+            // En mode Adblock, seul VAFT est actif ("Adblock actif").
+            // En mode Proxy avec l'option dédiée, le titre indique "Proxy pendant les pubs".
+            valueEl.textContent = proxyAdsOnlyOn()
+                ? tt('Proxy pendant les pubs', 'Proxy during ads')
+                : tt('Adblock actif', 'Adblock on');
             subEl.textContent = tt('Lecture directe sur Twitch', 'Direct playback on Twitch');
             // La pub en cours se lit déjà sur le badge du lecteur et dans
             // l'encart Adblock plus bas : ici, le débit seul.
@@ -23782,6 +23785,7 @@ dashboardButton.style.visibility = 'hidden';
             .tp9-proxy-ads-row {
                 margin-top: 8px;
             }
+            #tp9-dashboard.tp9-no-proxy .tp9-proxy-ads-row,
             #tp9-dashboard.tp9-script-off .tp9-proxy-ads-row {
                 display: none !important;
             }
@@ -34487,6 +34491,24 @@ dashboardButton.style.visibility = 'hidden';
                                 __tp_config =
                                     event.data.config;
                                 __tp_channelAll403 = {};
+                                if (
+                                    typeof __sp_streams === 'object' &&
+                                    __sp_streams &&
+                                    __tp_config &&
+                                    (__tp_config.proxiesEnabled === false || !__tp_config.proxyAdsOnly)
+                                ) {
+                                    Object.keys(__sp_streams).forEach(function(ch){
+                                        var st = __sp_streams[ch];
+                                        if (st) {
+                                            st.proxyCache = {};
+                                            st.proxyPending = {};
+                                            if (st.backupType === 'proxy') {
+                                                st.backupType = null;
+                                                st.backupName = null;
+                                            }
+                                        }
+                                    });
+                                }
                                 console.log(
                                     '[TwitchProxy] Configuration mise à jour'
                                 );
@@ -35981,10 +36003,10 @@ dashboardButton.style.visibility = 'hidden';
                     __tp_config.proxyAdsOnly === true
                 ));
             }
-            // Les proxys servent alors de flux de secours prioritaire,
-            // avant les lecteurs intégré, popout et autoplay de vaft.
+            // En mode Proxy avec « Proxy uniquement pour les pubs » (jamais en mode Adblock),
+            // les proxys servent de flux de secours prioritaire avant les lecteurs VAFT.
             function __sp_proxyAds(){
-                return !!(__tp_config && __tp_config.proxyAdsOnly === true);
+                return !!(__tp_config && __tp_config.proxiesEnabled !== false && __tp_config.proxyAdsOnly === true);
             }
             // Dans l'ordre du tri de l'auto-test ; trois au plus, pour
             // ne pas faire attendre la coupure sur toute la liste.
@@ -38056,11 +38078,10 @@ dashboardButton.style.visibility = 'hidden';
         return pageConfig.proxiesEnabled !== false;
     }
 
-    // Proxys gardés pour les seules pubs, en mode Proxy comme en mode
-    // Adblock : la lecture passe par Twitch en direct, et un proxy est
-    // le premier flux de secours pendant la coupure.
+    // Proxys gardés pour les seules pubs, uniquement en mode Proxy :
+    // en mode Adblock, seul le bloqueur sans proxy (VAFT) est actif.
     function proxyAdsOnlyOn() {
-        return pageConfig.proxyAdsOnly === true && !scriptIsOff();
+        return proxiesOn() && pageConfig.proxyAdsOnly === true && !scriptIsOff();
     }
 
     // Lecture directe sur Twitch avec le bloqueur façon vaft : mode
@@ -39576,11 +39597,25 @@ dashboardButton.style.visibility = 'hidden';
         spAd.stripping = false;
         spBuffer.same = 0;
         spHideBadge();
+        if (!on && activeProxyInfo && activeProxyInfo.channel) {
+            activeProxyInfo = {
+                proxyId: null,
+                proxyName: null,
+                channel: activeProxyInfo.channel,
+                direct: true,
+                sansProxy: true,
+                timestamp: Date.now()
+            };
+        } else if (on && !proxyAdsOnlyOn() && activeProxyInfo && activeProxyInfo.sansProxy) {
+            activeProxyInfo = null;
+        }
         logEvent(
             'info',
             on
-                ? 'Proxys réactivés : le flux repasse par les proxys'
-                : 'Proxys désactivés : lecture Twitch directe avec le bloqueur de pub sans proxy'
+                ? (proxyAdsOnlyOn()
+                    ? 'Mode Proxy réactivé (proxy uniquement pendant les pubs)'
+                    : 'Proxys réactivés : le flux repasse par les proxys')
+                : 'Mode Adblock activé : lecture Twitch directe avec uniquement le bloqueur sans proxy (VAFT)'
         );
         renderDashboard();
         if (on) {
@@ -39589,7 +39624,8 @@ dashboardButton.style.visibility = 'hidden';
         // Le mode choisi ne s'applique qu'à la prochaine demande de
         // flux : on relance le lecteur, le temps que le Worker ait
         // reçu la nouvelle configuration.
-        if (!getWatchedChannel()) {
+        var activeCh = getWatchedChannel() || (getTestChannel() && findPlaybackVideo() ? getTestChannel() : null);
+        if (!activeCh) {
             return;
         }
         setTimeout(function () {
@@ -39623,21 +39659,14 @@ dashboardButton.style.visibility = 'hidden';
         logEvent(
             'info',
             on
-                ? 'Proxys pendant les pubs : lecture Twitch directe, un proxy sert de secours le temps d\'une coupure'
-                : proxiesOn()
-                    ? 'Proxys en permanence : le flux repasse par les proxys'
-                    : 'Proxys pendant les pubs coupés : seuls les lecteurs Twitch servent de secours'
+                ? 'Proxy uniquement pour les pubs : lecture Twitch directe, un proxy prend le relais le temps d\'une coupure'
+                : 'Proxys en permanence : le flux repasse par les proxys'
         );
         renderDashboard();
-        // Les proxys n'étaient plus testés en mode Adblock : il faut
-        // savoir lesquels répondent avant la prochaine pub.
-        if (on) {
+        if (on && proxiesOn()) {
             setTimeout(autoTestOnLoad, 3000);
         }
-        // En mode Proxy, le flux change de chemin : la prochaine
-        // demande de flux suit le nouveau réglage. En mode Adblock,
-        // seul le choix du secours change, rien à relancer.
-        if (!proxiesOn() || !getWatchedChannel()) {
+        if (!proxiesOn() || !(getWatchedChannel() || (getTestChannel() && findPlaybackVideo()))) {
             return;
         }
         setTimeout(function () {
@@ -43546,6 +43575,7 @@ dashboardButton.style.visibility = 'hidden';
 
     function getSidebarFallbackProxyUrls(login) {
         var urls = [];
+        if (!proxiesOn() || scriptIsOff()) return urls;
         if (pageConfig && Array.isArray(pageConfig.proxies)) {
             for (var i = 0; i < pageConfig.proxies.length; i++) {
                 var p = pageConfig.proxies[i];
