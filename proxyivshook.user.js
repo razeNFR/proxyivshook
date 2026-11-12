@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.4
+// @version      1.11.5
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,9 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.5
+// - Nouvelles options de Lecture Automatique (Lecteur) : ajout de « Stopper l'autoplay des chaînes hors ligne » (bande-annonce ou dernier stream) et « Stopper l'autoplay des VOD » (vidéos recommandées), et correction de la boucle Lecture/Pause sur « Stopper l'autoplay de l'accueil » || New Autoplay options (Player): added "Stop offline channels autoplay" (welcome trailer or last broadcast) and "Stop VOD autoplay" (recommended videos), and fixed the Play/Pause loop on "Stop homepage autoplay"
+// - Correctif des coupures aléatoires du direct lors des pubs latérales (SDA) : suppression totale des appels à .pause() dans le bloqueur SDA et blindage de la détection des flux live (notamment sous Firefox) pour ne plus jamais mettre le stream en pause || Fixed random live stream cutouts during side-by-side ads (SDA): removed all .pause() calls from the SDA blocker and hardened live stream detection (especially on Firefox) so the stream is never paused
 // 1.11.4
 // - Nouvelle option « Cacher le carrousel promo du tchat » (Auto & Épur.) : masque uniquement le carrousel permanent en haut du tchat (Offrir un abonnement, Créer un clip, Classement), séparée de « Fermer bannières (Hype Train, Sondages) » afin de pouvoir conserver les sondages, prédictions et messages épinglés || New "Hide chat promo carousel" option (Auto & Clean UI): hides only the permanent top-of-chat carousel (Gift a Sub, Create a Clip, Leaderboard), separated from "Close banners (Hype Train, Polls)" so polls, predictions, and pinned messages can stay visible
 // 1.11.3
@@ -58,7 +61,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.4';
+    var CURRENT_VERSION = '1.11.5';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -553,9 +556,19 @@
         'Boutons Capture & PiP': 'Screenshot & PiP buttons',
         'Ajoute Capture PNG et Picture-in-Picture dans la barre du lecteur.': 'Adds PNG Screenshot and Picture-in-Picture buttons to the player bar.',
         'Capture d\'écran PNG en 1 clic et lecteur flottant': '1-click PNG screenshot and floating mini-player',
+        'Lecture Automatique': 'Autoplay',
         'Stopper l\'autoplay de l\'accueil': 'Stop homepage autoplay',
         'Coupe le carrousel vidéo de la page d\'accueil et les bandes-annonces.': 'Stops the homepage video carousel and channel trailers.',
         'Met en pause le carrousel et les bandes-annonces': 'Pauses homepage carousel and channel trailers',
+        'Empêche les vidéos de la page d\'accueil de se lancer automatiquement.': 'Prevents videos on the homepage from playing automatically.',
+        'Coupe la lecture auto des vidéos sur la page d\'accueil': 'Stops automatic video playback on the homepage',
+        'Stopper l\'autoplay hors ligne': 'Stop offline channel autoplay',
+        'Empêche la vidéo de bienvenue ou le dernier stream de se lancer sur les chaînes hors ligne.': 'Prevents the welcome trailer or last broadcast from playing automatically on offline channels.',
+        'Stopper l\'autoplay des chaînes hors ligne': 'Stop offline channels autoplay',
+        'Coupe la vidéo de bienvenue ou le dernier stream hors ligne': 'Stops the welcome video or last stream on offline channels',
+        'Stopper l\'autoplay des VOD': 'Stop VOD autoplay',
+        'Empêche la lecture automatique des vidéos recommandées à la fin d\'une VOD.': 'Prevents recommended videos from playing automatically at the end of a VOD.',
+        'Coupe la lecture auto des vidéos recommandées sur les VOD': 'Stops automatic playback of recommended videos on VODs',
         'Sources d\'Émotes': 'Emote Sources',
         'Émotes BetterTTV (BTTV)': 'BetterTTV Emotes (BTTV)',
         'Affiche les émotes globales et de chaîne BetterTTV dans le tchat.': 'Displays global and channel BetterTTV emotes in chat.',
@@ -849,6 +862,8 @@
         theater: '<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="16.5" y1="5" x2="16.5" y2="19"/>',
         cameraPip: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
         pauseCircle: '<circle cx="12" cy="12" r="9"/><line x1="10" y1="9" x2="10" y2="15"/><line x1="14" y1="9" x2="14" y2="15"/>',
+        autoplayOffline: '<rect x="2" y="4" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="10" y1="8.5" x2="10" y2="13.5"/><line x1="14" y1="8.5" x2="14" y2="13.5"/>',
+        autoplayVod: '<rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="4" x2="6" y2="20"/><line x1="18" y1="4" x2="18" y2="20"/><line x1="10.5" y1="9" x2="10.5" y2="15"/><line x1="13.5" y1="9" x2="13.5" y2="15"/>',
         emoteSparkles: '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/>',
         emoteGif: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/><polygon points="10 9 15 12 10 15 10 9"/>',
         emoteLayers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/>',
@@ -1251,6 +1266,8 @@
             audioBoost: false,
             playerTools: true,
             noHomeAutoplay: false,
+            noOfflineAutoplay: false,
+            noVodAutoplay: false,
             bttvEmotes: true,
             stvEmotes: true,
             gifEmotes: true,
@@ -1452,7 +1469,7 @@
             'hideTwitchPromo', 'hideChatCarousel', 'proxiesEnabled', 'proxyAdsOnly', 'scriptOff',
             'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips',
             'perStreamerVolume', 'wheelVolumeLock', 'audioBoost',
-            'playerTools', 'noHomeAutoplay', 'bttvEmotes', 'stvEmotes',
+            'playerTools', 'noHomeAutoplay', 'noOfflineAutoplay', 'noVodAutoplay', 'bttvEmotes', 'stvEmotes',
             'gifEmotes', 'zeroWidthEmotes', 'emoteMenu', 'tabComplete',
             'colonAutocomplete', 'emoteHover', 'bigEmotes', 'splitChat',
             'chatOnLeft', 'reverseChat', 'anonChat', 'roleHighlights',
@@ -1799,6 +1816,8 @@
                 audioBoost: !!pageConfig.audioBoost,
                 playerTools: pageConfig.playerTools !== false,
                 noHomeAutoplay: !!pageConfig.noHomeAutoplay,
+                noOfflineAutoplay: !!pageConfig.noOfflineAutoplay,
+                noVodAutoplay: !!pageConfig.noVodAutoplay,
                 bttvEmotes: pageConfig.bttvEmotes !== false,
                 stvEmotes: pageConfig.stvEmotes !== false,
                 gifEmotes: pageConfig.gifEmotes !== false,
@@ -4147,6 +4166,578 @@
         return false;
     }
 
+    // ============================================================
+    // CONTRÔLE DE LA LECTURE AUTOMATIQUE (ACCUEIL / HORS LIGNE / VOD)
+    // ============================================================
+    var nativeAutoplayPauseRef = (typeof HTMLMediaElement !== 'undefined' && HTMLMediaElement.prototype && typeof HTMLMediaElement.prototype.pause === 'function')
+        ? HTMLMediaElement.prototype.pause
+        : null;
+    var autoplayManualUnlock = null;
+    var autoplayLastUserNavAt = 0;
+    var autoplayLastSeenVodId = null;
+    var autoplayLastVodEnding = null;
+    var autoplayBlockedVodId = null;
+    var autoplayListenersInstalled = false;
+
+    function getPlayerPartsForVideo(video) {
+        if (!video) return null;
+        var now = Date.now();
+        var cached = video.__tp9AutoParts;
+        if (
+            cached &&
+            (now - cached.at) < 800 &&
+            cached.parts &&
+            ((cached.parts.state && cached.parts.state.props) || (cached.parts.player && cached.parts.player.core))
+        ) {
+            return cached.parts;
+        }
+        var found = null;
+        try {
+            var anchor = (video.closest && video.closest('[data-a-target="video-player"], .video-player')) || video;
+            var fKey = anchor && Object.keys(anchor).find(function (k) {
+                return k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0;
+            });
+            if (fKey && anchor[fKey] && typeof extractTwitchPlayerFromFiberSubtree === 'function') {
+                var anc = anchor[fKey];
+                var topFiber = anc;
+                for (var step = 0; anc && step < 30; step++) {
+                    topFiber = anc;
+                    anc = anc.return;
+                }
+                found = extractTwitchPlayerFromFiberSubtree(topFiber, 3500);
+            }
+        } catch (e) {}
+        if (!found && typeof findTwitchPlayerParts === 'function') {
+            try {
+                var globalParts = findTwitchPlayerParts();
+                if (globalParts && globalParts.player && typeof globalParts.player.getHTMLVideoElement === 'function') {
+                    var pVid = globalParts.player.getHTMLVideoElement();
+                    if (!pVid || pVid === video) {
+                        found = globalParts;
+                    }
+                }
+            } catch (e2) {}
+        }
+        if (found) {
+            video.__tp9AutoParts = { at: now, parts: found };
+        }
+        return found;
+    }
+
+    function getAutoplayStableIdentity(video, parts) {
+        try {
+            var p = parts || getPlayerPartsForVideo(video);
+            var c = p && p.state && p.state.props && p.state.props.content;
+            if (c) {
+                var idPart = c.channelLogin || c.channel || c.vodID || c.id || c.clipSlug || '';
+                if (c.type || idPart) {
+                    return String(c.type || 'media').toLowerCase() + ':' + String(idPart || location.pathname || '').toLowerCase();
+                }
+            }
+        } catch (e) {}
+        return 'path:' + String(location.pathname || '/').toLowerCase();
+    }
+
+    function isHomeCarouselVideo(video) {
+        if (!video || isOwnPlayerVideo(video) || isPreviewOrAuxiliaryVideo(video) || isMiniPlayerVideo(video)) {
+            return false;
+        }
+        try {
+            if (
+                video.closest &&
+                video.closest(
+                    '.front-page-carousel, [data-a-target="front-page-carousel"], ' +
+                    '[data-a-player-type="frontpage"], [class*="front-page-carousel"], ' +
+                    '[class*="featured-content-carousel"]'
+                )
+            ) {
+                return true;
+            }
+            var cleanPath = (location.pathname || '/').replace(/\/+$/, '') || '/';
+            if (cleanPath === '/') {
+                return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function isOfflineChannelAutoplayVideo(video) {
+        if (
+            !video ||
+            isOwnPlayerVideo(video) ||
+            isPreviewOrAuxiliaryVideo(video) ||
+            isMiniPlayerVideo(video) ||
+            isAdVideoElement(video)
+        ) {
+            return false;
+        }
+        try {
+            if (
+                video.closest &&
+                video.closest(
+                    '.channel-trailer, [data-a-target="channel-home-tab-trailer"], ' +
+                    '[data-a-target="home-offline-carousel"], [data-a-player-type="channel_home_carousel"], ' +
+                    '[class*="channel-trailer"]'
+                )
+            ) {
+                return true;
+            }
+            var ch = typeof getTestChannel === 'function' ? getTestChannel() : null;
+            if (!ch) return false;
+            var segs = (location.pathname || '').split('/').filter(Boolean);
+            if (segs.length === 0 || segs.length > 2) return false;
+            if (segs.length === 2 && segs[1].toLowerCase() !== 'home') return false;
+
+            var parts = getPlayerPartsForVideo(video);
+            var content = parts && parts.state && parts.state.props && parts.state.props.content;
+            if (content && content.type) {
+                if (content.type === 'live') {
+                    return false;
+                }
+                return true;
+            }
+            var src = String(video.currentSrc || video.src || '');
+            if (src && /clips\.twitchcdn\.net|clips-media-assets|production\.assets\.clips/i.test(src)) {
+                return true;
+            }
+            var hasOfflineBadge = !!document.querySelector(
+                '.channel-status-info--offline, [data-a-target="player-overlay-ChannelOffline"], [class*="channel-status-info--offline"]'
+            );
+            if (hasOfflineBadge) {
+                var hasLiveBadge = !!document.querySelector(
+                    '[data-a-target="live-ChannelStatusTextIndicator"], .tw-channel-status-text-indicator, .live-indicator-container'
+                );
+                if (!hasLiveBadge) {
+                    return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function getCurrentVodRouteId() {
+        try {
+            var m = (location.pathname || '').match(/^\/(?:videos|[^/]+\/video|[^/]+\/v)\/(\d+)/i);
+            return m ? m[1] : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function trackVodAutoplayTransition() {
+        var curVodId = getCurrentVodRouteId();
+        var now = Date.now();
+        if (curVodId !== autoplayLastSeenVodId) {
+            var prevVodId = autoplayLastSeenVodId;
+            autoplayLastSeenVodId = curVodId;
+            if (
+                curVodId &&
+                prevVodId &&
+                curVodId !== prevVodId &&
+                pageConfig.noVodAutoplay &&
+                autoplayLastVodEnding &&
+                autoplayLastVodEnding.vodId === prevVodId &&
+                (now - autoplayLastVodEnding.at) < 25000 &&
+                (now - autoplayLastUserNavAt) > 3000
+            ) {
+                autoplayBlockedVodId = curVodId;
+                logEvent('info', '🛑 Lecture auto de la VOD recommandée bloquée (#' + curVodId + ')');
+            } else if (!curVodId || (now - autoplayLastUserNavAt) <= 3000) {
+                autoplayBlockedVodId = null;
+            }
+        }
+        if (curVodId) {
+            var v = findPlaybackVideo();
+            if (v && !isOwnPlayerVideo(v) && !isMiniPlayerVideo(v)) {
+                var nearEnd = v.ended || (isFinite(v.duration) && v.duration > 15 && (v.duration - v.currentTime) <= 18);
+                if (nearEnd) {
+                    autoplayLastVodEnding = { vodId: curVodId, at: now };
+                }
+            }
+        }
+    }
+
+    function cancelVodRecommendedOverlay() {
+        if (scriptIsOff() || !pageConfig.noVodAutoplay) return;
+        var curVodId = getCurrentVodRouteId();
+        if (!curVodId) return;
+        try {
+            var directBtns = document.querySelectorAll(
+                '[data-a-target="player-overlay-autoplay-cancel"], ' +
+                '[data-a-target="autoplay-overlay-cancel-button"], ' +
+                '[data-a-target="recommended-video-autoplay-cancel"], ' +
+                '[data-test-selector="autoplay-overlay-cancel"], ' +
+                '[data-a-target*="autoplay"][data-a-target*="cancel"]'
+            );
+            for (var i = 0; i < directBtns.length; i++) {
+                var btn = directBtns[i];
+                if (!btn || btn.__tp9VodAutoplayCancelled || btn.disabled) continue;
+                var rect = btn.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                btn.__tp9VodAutoplayCancelled = true;
+                try { btn.click(); } catch (e0) {}
+                logEvent('info', '🛑 Compte à rebours de VOD recommandée annulé automatiquement');
+                return;
+            }
+
+            var v = findPlaybackVideo();
+            var isNearVodEnd = v && (v.ended || (isFinite(v.duration) && v.duration > 15 && (v.duration - v.currentTime) <= 25));
+            if (!isNearVodEnd) return;
+            var playerBox = document.querySelector('[data-a-target="video-player"], .video-player');
+            if (!playerBox) return;
+            var overlayBtns = playerBox.querySelectorAll('button');
+            for (var j = 0; j < overlayBtns.length; j++) {
+                var ob = overlayBtns[j];
+                if (!ob || ob.__tp9VodAutoplayCancelled || ob.disabled) continue;
+                if (ob.closest('[data-a-target="player-controls"], [data-a-target="player-settings-menu"], .tp9dvr')) continue;
+                var obLabel = ((ob.textContent || '') + ' ' + (ob.getAttribute('aria-label') || '')).trim();
+                if (!/^(?:annuler|cancel)$/i.test(obLabel)) continue;
+                var card = ob.parentElement && ob.parentElement.parentElement ? ob.parentElement.parentElement : ob.parentElement;
+                var cardTxt = card ? (card.textContent || '') : '';
+                if (/à suivre|up next|prochaine|recommended|recommand/i.test(cardTxt) || v.ended) {
+                    var obRect = ob.getBoundingClientRect();
+                    if (obRect.width <= 0 || obRect.height <= 0) continue;
+                    ob.__tp9VodAutoplayCancelled = true;
+                    try { ob.click(); } catch (e1) {}
+                    logEvent('info', '🛑 Vidéo recommandée en fin de VOD annulée automatiquement');
+                    return;
+                }
+            }
+        } catch (e) {}
+    }
+
+    function isVodRecommendedAutoplayVideo(video) {
+        if (
+            !video ||
+            !pageConfig.noVodAutoplay ||
+            isOwnPlayerVideo(video) ||
+            isPreviewOrAuxiliaryVideo(video) ||
+            isMiniPlayerVideo(video) ||
+            isAdVideoElement(video)
+        ) {
+            return false;
+        }
+        var curVodId = getCurrentVodRouteId();
+        return Boolean(curVodId && autoplayBlockedVodId && curVodId === autoplayBlockedVodId);
+    }
+
+    function resolveAutoplayRoot(node) {
+        if (!node || !node.closest) return null;
+        return node.closest(
+            '.video-player, [data-a-target="video-player"], ' +
+            '.channel-trailer, [data-a-target="channel-home-tab-trailer"], ' +
+            '.front-page-carousel, [data-a-target="front-page-carousel"]'
+        );
+    }
+
+    function unlockAutoplayForTarget(node) {
+        var root = resolveAutoplayRoot(node) || document.body;
+        var vid = root && root.querySelector ? root.querySelector('video') : null;
+        var stableId = vid ? getAutoplayStableIdentity(vid, null) : ('path:' + String(location.pathname || '/').toLowerCase());
+        autoplayManualUnlock = {
+            root: root,
+            path: location.pathname || '/',
+            stableId: stableId,
+            until: Date.now() + 6500
+        };
+        if (root && root.querySelectorAll) {
+            var vids = root.querySelectorAll('video');
+            for (var i = 0; i < vids.length; i++) {
+                vids[i].__tp9UserUnlocked = true;
+                vids[i].__tp9UnlockStableId = stableId;
+                vids[i].__tp9AutoplayPaused = false;
+            }
+        }
+    }
+
+    function lockAutoplayOnUserPause(node) {
+        var root = resolveAutoplayRoot(node);
+        if (!root) return;
+        if (autoplayManualUnlock && autoplayManualUnlock.root === root) {
+            autoplayManualUnlock = null;
+        }
+        if (root.querySelectorAll) {
+            var vids = root.querySelectorAll('video');
+            for (var i = 0; i < vids.length; i++) {
+                if (isHomeCarouselVideo(vids[i]) || isOfflineChannelAutoplayVideo(vids[i]) || isVodRecommendedAutoplayVideo(vids[i])) {
+                    vids[i].__tp9UserUnlocked = false;
+                    vids[i].__tp9AutoplayPaused = true;
+                }
+            }
+        }
+    }
+
+    function isVideoUnlockedByUser(video, parts) {
+        if (!video) return false;
+        var now = Date.now();
+        var curStableId = getAutoplayStableIdentity(video, parts);
+        if (video.__tp9UserUnlocked) {
+            if (!video.__tp9UnlockStableId || video.__tp9UnlockStableId.indexOf('path:') === 0) {
+                video.__tp9UnlockStableId = curStableId;
+                return true;
+            }
+            if (video.__tp9UnlockStableId === curStableId) {
+                return true;
+            }
+            // Le carrousel ou le lecteur a changé de chaîne / VOD sans nouveau clic Play
+            video.__tp9UserUnlocked = false;
+            video.__tp9UnlockStableId = '';
+        }
+        if (autoplayManualUnlock && now < autoplayManualUnlock.until) {
+            var sameRoot = !autoplayManualUnlock.root ||
+                autoplayManualUnlock.root === document.body ||
+                (autoplayManualUnlock.root.contains && autoplayManualUnlock.root.contains(video));
+            var sameTarget = (autoplayManualUnlock.path === (location.pathname || '/')) &&
+                (
+                    !autoplayManualUnlock.stableId ||
+                    autoplayManualUnlock.stableId.indexOf('path:') === 0 ||
+                    autoplayManualUnlock.stableId === curStableId
+                );
+            if (sameRoot && sameTarget) {
+                video.__tp9UserUnlocked = true;
+                video.__tp9UnlockStableId = curStableId;
+                video.__tp9AutoplayPaused = false;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function shouldBlockAutoplayForVideo(video) {
+        if (scriptIsOff() || !video || !(video instanceof HTMLVideoElement)) {
+            return false;
+        }
+        trackVodAutoplayTransition();
+        var matched =
+            (!!pageConfig.noHomeAutoplay && isHomeCarouselVideo(video)) ||
+            (!!pageConfig.noOfflineAutoplay && isOfflineChannelAutoplayVideo(video)) ||
+            (!!pageConfig.noVodAutoplay && isVodRecommendedAutoplayVideo(video));
+        if (!matched) {
+            if (video.__tp9AutoplayPaused) {
+                video.__tp9AutoplayPaused = false;
+            }
+            return false;
+        }
+        if (isVideoUnlockedByUser(video, null)) {
+            return false;
+        }
+        return true;
+    }
+
+    function isAutoplayProtectedPause(video) {
+        if (!video) return false;
+        if (video.__tp9AutoplayPaused) return true;
+        if (shouldBlockAutoplayForVideo(video)) return true;
+        if (video.paused && (isHomeCarouselVideo(video) || isOfflineChannelAutoplayVideo(video))) {
+            return true;
+        }
+        return false;
+    }
+
+    function createAutoplayBlockedPromise() {
+        var err;
+        try {
+            err = new DOMException('The play() request was interrupted because autoplay is disabled.', 'NotAllowedError');
+        } catch (e) {
+            err = new Error('Autoplay disabled');
+            err.name = 'NotAllowedError';
+        }
+        var p = Promise.reject(err);
+        p.catch(function () {});
+        return p;
+    }
+
+    function pauseAutoplayVideo(video) {
+        if (!video || video.__tp9PausingNow) return;
+        video.__tp9PausingNow = true;
+        try {
+            video.autoplay = false;
+            try { video.removeAttribute('autoplay'); } catch (e0) {}
+            video.__tp9AutoplayPaused = true;
+            if (!video.paused && nativeAutoplayPauseRef) {
+                try { nativeAutoplayPauseRef.call(video); } catch (e1) {}
+            }
+        } finally {
+            video.__tp9PausingNow = false;
+        }
+        if (video.__tp9CtrlPauseQueued) return;
+        video.__tp9CtrlPauseQueued = true;
+        var syncControllerPause = function () {
+            video.__tp9CtrlPauseQueued = false;
+            if (!video.isConnected || !shouldBlockAutoplayForVideo(video)) return;
+            video.__tp9AutoplayPaused = true;
+            var parts = getPlayerPartsForVideo(video);
+            var player = parts && parts.player;
+            if (player && typeof player.pause === 'function') {
+                try {
+                    var alreadyPaused = typeof player.isPaused === 'function' ? player.isPaused() : false;
+                    if (!alreadyPaused) {
+                        player.pause();
+                    }
+                } catch (e2) {}
+            }
+            if (!video.paused && nativeAutoplayPauseRef) {
+                try { nativeAutoplayPauseRef.call(video); } catch (e3) {}
+            }
+        };
+        setTimeout(syncControllerPause, 0);
+        setTimeout(function () {
+            if (video.isConnected && shouldBlockAutoplayForVideo(video)) {
+                syncControllerPause();
+            }
+        }, 140);
+    }
+
+    function enforceAutoplayPolicies(forceResetUnlock) {
+        if (scriptIsOff()) return;
+        trackVodAutoplayTransition();
+        if (pageConfig.noVodAutoplay) {
+            cancelVodRecommendedOverlay();
+        }
+        if (!pageConfig.noHomeAutoplay && !pageConfig.noOfflineAutoplay && !pageConfig.noVodAutoplay) {
+            return;
+        }
+        if (forceResetUnlock) {
+            autoplayManualUnlock = null;
+        }
+        var videos = document.querySelectorAll('video');
+        for (var i = 0; i < videos.length; i++) {
+            var v = videos[i];
+            if (forceResetUnlock) {
+                if (
+                    (pageConfig.noHomeAutoplay && isHomeCarouselVideo(v)) ||
+                    (pageConfig.noOfflineAutoplay && isOfflineChannelAutoplayVideo(v)) ||
+                    (pageConfig.noVodAutoplay && isVodRecommendedAutoplayVideo(v))
+                ) {
+                    v.__tp9UserUnlocked = false;
+                    v.__tp9UnlockStableId = '';
+                }
+            }
+            if (shouldBlockAutoplayForVideo(v)) {
+                if (!v.paused || !v.__tp9AutoplayPaused || v.autoplay) {
+                    pauseAutoplayVideo(v);
+                }
+            }
+        }
+    }
+
+    function handleAutoplayOptionToggle(optionKey, enabled) {
+        if (enabled) {
+            enforceAutoplayPolicies(true);
+        } else {
+            var videos = document.querySelectorAll('video');
+            for (var i = 0; i < videos.length; i++) {
+                var v = videos[i];
+                if (
+                    (optionKey === 'noHomeAutoplay' && isHomeCarouselVideo(v)) ||
+                    (optionKey === 'noOfflineAutoplay' && isOfflineChannelAutoplayVideo(v)) ||
+                    (optionKey === 'noVodAutoplay' && isVodRecommendedAutoplayVideo(v))
+                ) {
+                    v.__tp9AutoplayPaused = false;
+                }
+            }
+            if (optionKey === 'noVodAutoplay') {
+                autoplayBlockedVodId = null;
+            }
+        }
+    }
+
+    function installAutoplayCaptureHooks() {
+        if (autoplayListenersInstalled || typeof window === 'undefined' || typeof document === 'undefined') {
+            return;
+        }
+        autoplayListenersInstalled = true;
+
+        var onUserPointerOrClick = function (event) {
+            if (!event || !event.isTrusted || scriptIsOff()) return;
+            if (typeof event.button === 'number' && event.button !== 0) return;
+            var t = event.target && event.target.nodeType === 3 ? event.target.parentElement : event.target;
+            if (!t || !t.closest) return;
+
+            // Mémorise tout clic de navigation de l'utilisateur (ex: clic volontaire sur une VOD)
+            if (t.closest('a[href]') || !t.closest('[data-a-target="video-player"], .video-player')) {
+                autoplayLastUserNavAt = Date.now();
+            }
+
+            var playBtn = t.closest(
+                '[data-a-target="player-play-pause-button"], ' +
+                '[data-a-target="player-overlay-play-button"], ' +
+                '.channel-trailer button, [data-a-target="channel-home-tab-trailer"] button'
+            );
+            var surface = !playBtn
+                ? t.closest('[data-a-target="player-overlay-click-handler"]')
+                : null;
+            var directTrailerVid = (!playBtn && !surface && t.tagName === 'VIDEO' && t.closest('.channel-trailer, [data-a-target="channel-home-tab-trailer"]'))
+                ? t
+                : null;
+
+            if (!playBtn && !surface && !directTrailerVid) return;
+            if (playBtn) {
+                var btnLabel = ((playBtn.getAttribute('aria-label') || '') + ' ' + (playBtn.getAttribute('data-a-target') || '')).toLowerCase();
+                if (/mute|unmute|son|volume|plein|fullscreen|settings|param|clip|théâtre|theatre/i.test(btnLabel) && btnLabel.indexOf('play') < 0 && btnLabel.indexOf('lecture') < 0 && btnLabel.indexOf('pause') < 0) {
+                    return;
+                }
+            }
+
+            var root = resolveAutoplayRoot(t);
+            var vid = root && root.querySelector ? root.querySelector('video') : directTrailerVid;
+            if (!vid || vid.paused || vid.ended) {
+                unlockAutoplayForTarget(root || t);
+            } else if (event.type === 'click') {
+                lockAutoplayOnUserPause(root || t);
+            }
+        };
+
+        window.addEventListener('pointerdown', onUserPointerOrClick, true);
+        window.addEventListener('click', onUserPointerOrClick, true);
+
+        window.addEventListener('keydown', function (event) {
+            if (!event || !event.isTrusted || scriptIsOff()) return;
+            var t = event.target && event.target.nodeType === 3 ? event.target.parentElement : event.target;
+            if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], [data-a-target="chat-input"]')) {
+                return;
+            }
+            if (event.key === 'Enter' && t && t.closest && t.closest('a[href]')) {
+                autoplayLastUserNavAt = Date.now();
+            }
+            if (event.key === ' ' || event.key === 'k' || event.key === 'K' || event.key === 'Enter') {
+                var root = (t && resolveAutoplayRoot(t)) || document.querySelector('.front-page-carousel .video-player, [data-a-target="video-player"], .video-player');
+                if (root) {
+                    var vid = root.querySelector('video');
+                    if (!vid || vid.paused || vid.ended) {
+                        unlockAutoplayForTarget(root);
+                    }
+                }
+            }
+        }, true);
+
+        var onMediaAutoplayEvent = function (event) {
+            if (scriptIsOff()) return;
+            var v = event && event.target;
+            if (!v || !(v instanceof HTMLVideoElement)) return;
+            if (shouldBlockAutoplayForVideo(v)) {
+                pauseAutoplayVideo(v);
+            }
+        };
+        document.addEventListener('loadedmetadata', onMediaAutoplayEvent, true);
+        document.addEventListener('play', onMediaAutoplayEvent, true);
+        document.addEventListener('playing', onMediaAutoplayEvent, true);
+        document.addEventListener('ended', function (event) {
+            if (scriptIsOff()) return;
+            var v = event && event.target;
+            if (v && (v instanceof HTMLVideoElement)) {
+                trackVodAutoplayTransition();
+                if (pageConfig.noVodAutoplay) {
+                    cancelVodRecommendedOverlay();
+                    setTimeout(cancelVodRecommendedOverlay, 180);
+                    setTimeout(cancelVodRecommendedOverlay, 600);
+                }
+            }
+        }, true);
+    }
+
+    installAutoplayCaptureHooks();
+
     function playerRootHasAdSignal(playerRoot) {
         if (!playerRoot) return false;
         try {
@@ -4173,6 +4764,52 @@
         return false;
     }
 
+    var SDA_EXPLICIT_CONTAINER_SELECTORS =
+        '[data-a-target*="sda-"],[data-test-selector="sad-overlay"],' +
+        '[data-test-selector*="stream-display-ad"],[data-test-selector*="ad-banner"],[class*="stream-display-ad"]';
+
+    function isConfirmedLiveOrLongStreamVideo(video) {
+        if (!video || video.nodeType !== 1) return false;
+        if (isOwnPlayerVideo(video) || isPreviewOrAuxiliaryVideo(video)) return false;
+        try {
+            if (video.closest && video.closest(SDA_EXPLICIT_CONTAINER_SELECTORS)) {
+                return false;
+            }
+            var src = String(video.currentSrc || video.src || '');
+            if (src && src.indexOf('blob:') !== 0 && src.indexOf('data:') !== 0) {
+                return false;
+            }
+            var dur = video.duration;
+            // Flux direct MediaSource (Infinity sous Chromium, ~9223372036855 s sous Firefox)
+            // ou VOD > 5 min : ne peut jamais être un spot publicitaire (<= 180 s).
+            // Attention : NaN (avant loadedmetadata) est volontairement exclu ici.
+            if (dur === Infinity || (typeof dur === 'number' && isFinite(dur) && dur > 300)) {
+                return true;
+            }
+            var isShortFiniteAdCandidate = (
+                typeof dur === 'number' &&
+                isFinite(dur) &&
+                dur > 0 &&
+                dur <= 180 &&
+                Boolean(getTestChannel())
+            );
+            if (!isShortFiniteAdCandidate) {
+                var parts = getPlayerPartsForVideo(video);
+                if (parts && parts.player && typeof parts.player.getHTMLVideoElement === 'function') {
+                    var pVid = parts.player.getHTMLVideoElement();
+                    if (pVid === video) {
+                        var c = parts.state && parts.state.props && parts.state.props.content;
+                        var cType = c && c.type ? String(c.type).toLowerCase() : '';
+                        if (cType === 'live' || cType === 'vod') {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (e) {}
+        return false;
+    }
+
     function isAdVideoElement(video) {
         if (!video || video.nodeType !== 1) return false;
         if (isOwnPlayerVideo(video) || isPreviewOrAuxiliaryVideo(video) || isMiniPlayerVideo(video)) {
@@ -4182,13 +4819,7 @@
             return false;
         }
         try {
-            if (
-                video.closest &&
-                video.closest(
-                    '[data-a-target^="sda-"],[data-test-selector="sad-overlay"],' +
-                    '[data-test-selector*="stream-display-ad"],[data-test-selector*="ad-banner"],[class*="stream-display-ad"]'
-                )
-            ) {
+            if (video.closest && video.closest(SDA_EXPLICIT_CONTAINER_SELECTORS)) {
                 return true;
             }
             var src = String(video.currentSrc || video.src || '');
@@ -4196,6 +4827,11 @@
             // Hors clips/bandes-annonces déjà exclus plus haut, une URL directe http(s) est une pub.
             if (src && src.indexOf('blob:') !== 0 && src.indexOf('data:') !== 0) {
                 return true;
+            }
+            // Protection absolue : un flux live MSE (Infinity / durée géante Firefox) ou une VOD > 5 min
+            // ou dvrLiveVideo ne doit JAMAIS être classé comme vidéo publicitaire.
+            if (video === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(video)) {
+                return false;
             }
             var playerRoot = video.closest
                 ? video.closest('.video-player__default-player, .video-player, [data-a-target="video-player"]')
@@ -4206,8 +4842,30 @@
                 for (var i = 0; i < allVids.length; i++) {
                     var v = allVids[i];
                     if (v === video || isOwnPlayerVideo(v) || isPreviewOrAuxiliaryVideo(v)) continue;
+                    if (
+                        (v.classList && v.classList.contains('tp9-sda-hidden')) ||
+                        (v.closest && (v.closest('.tp9-sda-hidden') || v.closest(SDA_EXPLICIT_CONTAINER_SELECTORS)))
+                    ) {
+                        continue;
+                    }
+                    var vSrc = String(v.currentSrc || v.src || '');
+                    if (vSrc && vSrc.indexOf('blob:') !== 0 && vSrc.indexOf('data:') !== 0) {
+                        continue;
+                    }
+                    if (!vSrc && v.readyState === 0 && v.paused) {
+                        continue;
+                    }
+                    if (
+                        getTestChannel() &&
+                        typeof v.duration === 'number' &&
+                        isFinite(v.duration) &&
+                        v.duration > 0 &&
+                        v.duration <= 180
+                    ) {
+                        continue;
+                    }
                     otherStreamVid = v;
-                    if (v === lastVerifiedStreamVideo || v === dvrLiveVideo) break;
+                    if (v === lastVerifiedStreamVideo || v === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(v)) break;
                 }
             }
             // Pour une vidéo MediaSource (blob:) ou en cours de montage (src vide pendant setSrc),
@@ -4215,6 +4873,11 @@
             // de flux dans le lecteur : masquer l'unique <video> blob: crée un écran noir définitif
             // (notamment pendant setSrc où video.duration est brièvement fini <= 180 s ou sur un live 9:16).
             if (!otherStreamVid) {
+                return false;
+            }
+            var inMainVideoRef = Boolean(video.closest && video.closest('[data-a-target="video-ref"], .video-ref'));
+            var otherInMainVideoRef = Boolean(otherStreamVid.closest && otherStreamVid.closest('[data-a-target="video-ref"], .video-ref'));
+            if (inMainVideoRef && !otherInMainVideoRef) {
                 return false;
             }
             var hasCorroboratingAdSignal = Boolean(otherStreamVid) || playerRootHasAdSignal(playerRoot);
@@ -4243,7 +4906,11 @@
                 ) {
                     branch = branch.parentElement;
                 }
-                if (branch && !branch.contains(otherStreamVid)) {
+                if (
+                    branch &&
+                    !branch.contains(otherStreamVid) &&
+                    (typeof isProtectedPlayerUiBranch !== 'function' || !isProtectedPlayerUiBranch(branch))
+                ) {
                     var branchTxt = (branch.textContent || '').trim();
                     if (SDA_BADGE_TEXT_RE.test(branchTxt)) {
                         return true;
@@ -4278,12 +4945,21 @@
             if (isAdVideoElement(mv)) {
                 continue;
             }
-            var score = 0;
             var src = String(mv.currentSrc || mv.src || '');
+            if (!src && mv.readyState === 0 && mv.paused && mainVideos.length > 1) {
+                continue;
+            }
+            var score = 0;
             if (src.indexOf('blob:') === 0) score += 40;
-            if (mv === lastVerifiedStreamVideo || mv === dvrLiveVideo) score += 50;
-            if (mv.videoWidth > 0 && mv.videoWidth >= mv.videoHeight) score += 25;
-            if (!isFinite(mv.duration) || mv.duration > 300) score += 20;
+            if (mv === dvrLiveVideo && (src.indexOf('blob:') === 0 || mv.readyState > 0)) score += 50;
+            else if (mv === lastVerifiedStreamVideo && (src.indexOf('blob:') === 0 || mv.readyState > 0)) score += 20;
+            if (!mv.paused && mv.readyState >= 2) score += 25;
+            if (mv.closest && mv.closest('[data-a-target="video-ref"], .video-ref')) score += 15;
+            if (mv.videoWidth > 0 && mv.videoWidth >= mv.videoHeight) score += 20;
+            var mvDur = mv.duration;
+            if (mvDur === Infinity || (typeof mvDur === 'number' && isFinite(mvDur) && mvDur > 300)) {
+                score += 35;
+            }
             if (score > bestScore) {
                 bestScore = score;
                 bestMain = mv;
@@ -5481,7 +6157,9 @@
                                 var video = findPlaybackVideo();
 
                                 if (video) {
-                                    if (hiddenDescriptor.get.call(document)) {
+                                    if (typeof isAutoplayProtectedPause === 'function' && isAutoplayProtectedPause(video)) {
+                                        wasVideoPlaying = false;
+                                    } else if (hiddenDescriptor.get.call(document)) {
                                         wasVideoPlaying = !video.paused && !video.ended;
                                     } else if (
                                         wasVideoPlaying &&
@@ -6333,16 +7011,48 @@
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
+                            </div>
+
+                            <div class="tp9-bento-card">
+                                <div class="tp9-bento-head">
+                                    <span>Lecture Automatique</span>
+                                </div>
                                 <label class="tp9-toggle-row"
                                     data-tp9-tip="Stopper l'autoplay de l'accueil"
-                                    data-tp9-tip-sub="Coupe le carrousel vidéo de la page d'accueil et les bandes-annonces.">
+                                    data-tp9-tip-sub="Empêche les vidéos de la page d'accueil de se lancer automatiquement.">
                                     <span class="tp9-toggle-label">
                                         ${tp9OptIcon(TP9_ICON_PATHS.pauseCircle)}
                                         <span>Stopper l'autoplay de l'accueil</span>
-                                        <span class="tp9-toggle-sub">Met en pause le carrousel et les bandes-annonces</span>
+                                        <span class="tp9-toggle-sub">Coupe la lecture auto des vidéos sur la page d'accueil</span>
                                     </span>
                                     <span class="tp9-switch">
                                         <input type="checkbox" class="tp9-no-home-autoplay">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+                                <label class="tp9-toggle-row"
+                                    data-tp9-tip="Stopper l'autoplay hors ligne"
+                                    data-tp9-tip-sub="Empêche la vidéo de bienvenue ou le dernier stream de se lancer sur les chaînes hors ligne.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.autoplayOffline)}
+                                        <span>Stopper l'autoplay des chaînes hors ligne</span>
+                                        <span class="tp9-toggle-sub">Coupe la vidéo de bienvenue ou le dernier stream hors ligne</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-no-offline-autoplay">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+                                <label class="tp9-toggle-row"
+                                    data-tp9-tip="Stopper l'autoplay des VOD"
+                                    data-tp9-tip-sub="Empêche la lecture automatique des vidéos recommandées à la fin d'une VOD.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.autoplayVod)}
+                                        <span>Stopper l'autoplay des VOD</span>
+                                        <span class="tp9-toggle-sub">Coupe la lecture auto des vidéos recommandées sur les VOD</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-no-vod-autoplay">
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
@@ -7234,6 +7944,8 @@
             ['.tp9-wheel-lock', 'wheelVolumeLock'],
             ['.tp9-player-tools', 'playerTools'],
             ['.tp9-no-home-autoplay', 'noHomeAutoplay'],
+            ['.tp9-no-offline-autoplay', 'noOfflineAutoplay'],
+            ['.tp9-no-vod-autoplay', 'noVodAutoplay'],
             ['.tp9-bttv-emotes', 'bttvEmotes'],
             ['.tp9-stv-emotes', 'stvEmotes'],
             ['.tp9-gif-emotes', 'gifEmotes'],
@@ -7285,6 +7997,12 @@
                 }
                 if (pair[1] === 'autoExpandSidebar' && typeof handleExpandSidebarToggle === 'function') {
                     handleExpandSidebarToggle(event.target.checked);
+                }
+                if (
+                    (pair[1] === 'noHomeAutoplay' || pair[1] === 'noOfflineAutoplay' || pair[1] === 'noVodAutoplay') &&
+                    typeof handleAutoplayOptionToggle === 'function'
+                ) {
+                    handleAutoplayOptionToggle(pair[1], event.target.checked);
                 }
                 if (typeof syncBttvFeatures === 'function') {
                     syncBttvFeatures();
@@ -8517,6 +9235,8 @@
             ['.tp9-wheel-lock', pageConfig.wheelVolumeLock !== false],
             ['.tp9-player-tools', pageConfig.playerTools !== false],
             ['.tp9-no-home-autoplay', !!pageConfig.noHomeAutoplay],
+            ['.tp9-no-offline-autoplay', !!pageConfig.noOfflineAutoplay],
+            ['.tp9-no-vod-autoplay', !!pageConfig.noVodAutoplay],
             ['.tp9-bttv-emotes', pageConfig.bttvEmotes !== false],
             ['.tp9-stv-emotes', pageConfig.stvEmotes !== false],
             ['.tp9-gif-emotes', pageConfig.gifEmotes !== false],
@@ -13273,6 +13993,10 @@ function showAddProxyForm() {
                         !isOwnPlayerVideo(this)
                     ) {
                         var selfVid = this;
+                        if (typeof shouldBlockAutoplayForVideo === 'function' && shouldBlockAutoplayForVideo(selfVid)) {
+                            pauseAutoplayVideo(selfVid);
+                            return createAutoplayBlockedPromise();
+                        }
                         if (!selfVid.__tp9SdaMetaHooked) {
                             selfVid.__tp9SdaMetaHooked = true;
                             selfVid.addEventListener('loadedmetadata', function () {
@@ -13588,12 +14312,17 @@ function showAddProxyForm() {
             return;
         }
         var v = dvrPlayerVideo(player);
-        var onLiveChannel = Boolean(getTestChannel());
+        var onLiveChannel = Boolean(getTestChannel()) && !isClipOrTrailerContext(v) && !isOfflineChannelAutoplayVideo(v);
         if (onLiveChannel && (!v || isLivePlayerBrokenOrStuck(v))) {
             rescueLivePlayerIfStuck(true);
             return;
         }
         var wantsPlay = !v || v.paused || v.ended;
+        if (wantsPlay) {
+            unlockAutoplayForTarget(player);
+        } else {
+            lockAutoplayOnUserPause(player);
+        }
         if (onLiveChannel) {
             setUserExplicitLivePause(!wantsPlay);
         }
@@ -14750,7 +15479,10 @@ function showAddProxyForm() {
 
     function neutralizeSdaBranch(node, rootBoundary, mainVideo) {
         if (!node || node.nodeType !== 1 || !rootBoundary) return false;
-        if (mainVideo && node.contains(mainVideo)) return false;
+        if (mainVideo && (node === mainVideo || node.contains(mainVideo))) return false;
+        if (node.tagName === 'VIDEO' && (node === dvrVideo || node === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(node))) {
+            return false;
+        }
         if (isProtectedPlayerUiBranch(node)) return false;
         var sdaRoot = node.closest ? node.closest(SDA_SELECTORS) : null;
         if (sdaRoot && (!rootBoundary.contains(sdaRoot) || sdaRoot === rootBoundary || (mainVideo && sdaRoot.contains(mainVideo)))) {
@@ -14788,6 +15520,15 @@ function showAddProxyForm() {
             }
         }
         if (isProtectedPlayerUiBranch(branch)) return false;
+        try {
+            var branchVids = branch.querySelectorAll('video');
+            for (var bvIdx = 0; bvIdx < branchVids.length; bvIdx++) {
+                var bv = branchVids[bvIdx];
+                if (bv === mainVideo || bv === dvrVideo || bv === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(bv)) {
+                    return false;
+                }
+            }
+        } catch (e0) {}
         var newlyHidden = !branch.classList.contains('tp9-sda-hidden');
         branch.classList.remove('tp9-sda-unshrunk');
         node.classList.remove('tp9-sda-unshrunk');
@@ -14798,18 +15539,27 @@ function showAddProxyForm() {
             for (var u = 0; u < unshrunkDesc.length; u++) {
                 unshrunkDesc[u].classList.remove('tp9-sda-unshrunk');
             }
+            // Ne jamais appeler .pause() ni retirer src : une pub latérale (SDA) doit simplement
+            // rester masquée et muette pendant qu'elle s'écoule, sans aucun risque de couper le live.
+            if ((node.tagName === 'VIDEO' || node.tagName === 'AUDIO') && node !== mainVideo && node !== dvrVideo && node !== dvrLiveVideo) {
+                setVideoVolumeRaw(node, 0, true);
+            }
             var mediaEls = branch.querySelectorAll('video, audio');
             for (var i = 0; i < mediaEls.length; i++) {
                 var m = mediaEls[i];
-                if (m === mainVideo || m === dvrVideo) continue;
+                if (
+                    m === mainVideo ||
+                    m === dvrVideo ||
+                    m === dvrLiveVideo ||
+                    isOwnPlayerVideo(m) ||
+                    (m.tagName === 'VIDEO' && isConfirmedLiveOrLongStreamVideo(m))
+                ) {
+                    continue;
+                }
                 try {
                     m.classList.remove('tp9-sda-unshrunk');
                     m.classList.add('tp9-sda-hidden');
                     setVideoVolumeRaw(m, 0, true);
-                    m.pause();
-                    if (m.src && String(m.src).indexOf('blob:') !== 0) {
-                        m.removeAttribute('src');
-                    }
                 } catch (e) {}
             }
             var iframes = branch.querySelectorAll('iframe');
@@ -14909,14 +15659,18 @@ function showAddProxyForm() {
             }
         } catch (e) {}
 
-        // 2. Détection de toute balise <video> publicitaire (format 9:16 vertical, URL directe, durée courte ou seconde vidéo)
+        // 2. Détection de toute balise <video> publicitaire (format 9:16 vertical, URL directe ou durée courte confirmée)
+        // sans jamais mettre en pause la vidéo afin d'éviter toute coupure du direct.
         try {
             var allVideos = playerRoot.querySelectorAll('video');
             for (var vIdx = 0; vIdx < allVideos.length; vIdx++) {
                 var vid = allVideos[vIdx];
                 if (
                     vid === dvrVideo ||
+                    vid === dvrLiveVideo ||
                     isOwnPlayerVideo(vid) ||
+                    isPreviewOrAuxiliaryVideo(vid) ||
+                    isConfirmedLiveOrLongStreamVideo(vid) ||
                     (vid.classList && vid.classList.contains('tp9-sidebar-preview-video'))
                 ) {
                     continue;
@@ -14933,10 +15687,9 @@ function showAddProxyForm() {
                     }
                     continue;
                 }
-                if (isAdVideoElement(vid) || (mainVideo && vid !== mainVideo)) {
+                if (vid !== mainVideo && isAdVideoElement(vid)) {
                     try {
                         setVideoVolumeRaw(vid, 0, true);
-                        vid.pause();
                     } catch (e2) {}
                     if (neutralizeSdaBranch(vid, playerRoot, mainVideo)) {
                         blockedAny = true;
@@ -14997,8 +15750,8 @@ function showAddProxyForm() {
                                     SDA_BADGE_TEXT_RE.test(sibTxt) ||
                                     /\b(?:Publicité|Advertisement|Sponsorisé|Sponsored)\b/i.test(sibTxt) ||
                                     !!sib.querySelector(
-                                        'iframe:not(.extension-view__iframe), video, ' +
-                                        '[data-a-target^="sda-"], [data-a-target*="video-ad"], ' +
+                                        'iframe:not(.extension-view__iframe):not([src*="ext-twitch.tv"]), video, ' +
+                                        '[data-a-target*="sda-"], [data-a-target*="video-ad"], ' +
                                         '[data-test-selector*="stream-display-ad"], [data-test-selector*="ad-banner"], ' +
                                         '[data-test-selector="sad-overlay"]'
                                     )
@@ -15835,7 +16588,7 @@ function showAddProxyForm() {
             return 'aucun appel à pause() : le navigateur l\'a décidée';
         }
         var stack = call.stack;
-        var ours = stack.match(/\b(spPlayerTask|dvrPauseLive|dvrTwitchNativePlayPause|spResumeAfterAd)\b/);
+        var ours = stack.match(/\b(spPlayerTask|dvrPauseLive|dvrTwitchNativePlayPause|spResumeAfterAd|pauseAutoplayVideo)\b/);
         if (ours) {
             return 'ce script (' + ours[1] + ')';
         }
@@ -15907,7 +16660,7 @@ function showAddProxyForm() {
             return;
         }
         var video = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
-        if (video && (isOwnPlayerVideo(video) || isMiniPlayerVideo(video))) {
+        if (video && (isOwnPlayerVideo(video) || isMiniPlayerVideo(video) || isAutoplayProtectedPause(video))) {
             video = null;
         }
         if (video && video !== diagVideo) {
@@ -16067,7 +16820,7 @@ function showAddProxyForm() {
             return;
         }
         var video = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
-        if (video && (isOwnPlayerVideo(video) || isMiniPlayerVideo(video))) {
+        if (video && (isOwnPlayerVideo(video) || isMiniPlayerVideo(video) || isAutoplayProtectedPause(video))) {
             video = null;
         }
         var prev = streamLastLive && streamLastLive.channel === channel ? streamLastLive : null;
@@ -16179,6 +16932,10 @@ function showAddProxyForm() {
         var video = (dvrLiveVideo && dvrLiveVideo.isConnected)
             ? dvrLiveVideo
             : findPlaybackVideo();
+        if (video && isAutoplayProtectedPause(video)) {
+            watchdogReset();
+            return;
+        }
         if (
             !video ||
             isOwnPlayerVideo(video) ||
@@ -20092,7 +20849,7 @@ function showAddProxyForm() {
 
         var video = channel ? findPlaybackVideo() : null;
 
-        if (!video) {
+        if (!video || isAutoplayProtectedPause(video)) {
             nativePauseVideo = null;
             nativePauseAt = 0;
 
@@ -38674,6 +39431,11 @@ dashboardButton.style.visibility = 'hidden';
                 return;
             }
             var video = player.getHTMLVideoElement && player.getHTMLVideoElement();
+            if (video && isAutoplayProtectedPause(video)) {
+                spBuffer.same = 0;
+                spBuffer.deadTicks = 0;
+                return;
+            }
             if (spAd.active) {
                 // Si le lecteur IVS a cessé de relire la playlist .m3u8 depuis > 12 s
                 // (ex: décodeur stoppé sur un segment vide) ou est tombé en erreur média,
@@ -44530,22 +45292,8 @@ dashboardButton.style.visibility = 'hidden';
             }
         }
 
-        // 4. Stopper l'autoplay de la page d'accueil et des bandes-annonces
-        if (pageConfig.noHomeAutoplay) {
-            var path = location.pathname || '/';
-            if (path === '/' || path === '/directory') {
-                var homeVideos = document.querySelectorAll('.front-page-carousel video, [data-a-target="front-page-carousel"] video');
-                homeVideos.forEach(function (v) {
-                    if (!v.paused) {
-                        try { v.pause(); } catch (e) {}
-                    }
-                });
-            }
-            var trailerVideo = document.querySelector('.channel-trailer video, [data-a-target="channel-home-tab-trailer"] video');
-            if (trailerVideo && !trailerVideo.paused) {
-                try { trailerVideo.pause(); } catch (e) {}
-            }
-        }
+        // 4. Contrôle de la lecture automatique (Accueil, Chaînes hors ligne, VOD recommandées)
+        enforceAutoplayPolicies(false);
     }
 
     function syncBttvFeatures() {
