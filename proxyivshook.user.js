@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.6
+// @version      1.11.7
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,9 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.7
+// - Blocage en amont des pubs sur le côté (SDA) façon uBlock Origin sans jamais relancer le lecteur : blocage réseau/script/iframe dès document-start des SDK publicitaires (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, vidéos m.media-amazon.com), neutralisation de la requête GraphQL FetchAdsService_FetchAds et retrait silencieux des balises HLS #EXT-X-DATERANGE twitch-maf-ad, combinés aux règles cosmétiques exactes d'uBlock Origin (EasyList + uAssets) gardant le lecteur à 100 % sans aucun appel à .play() ni rechargement || uBlock Origin-style upstream blocking of side-by-side ads (SDA) without ever restarting the player: document-start network/script/iframe blocking of ad SDKs (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, m.media-amazon.com videos), GraphQL FetchAdsService_FetchAds neutralization, and silent stripping of HLS #EXT-X-DATERANGE twitch-maf-ad tags, paired with exact uBlock Origin cosmetic rules keeping the player at 100% with zero .play() calls or reloads
+// - Menu d'Émotes & Émojis complet façon BetterTTV : ajout des émotes Twitch natives du streamer (followers, abonnés et verrouillées 🔒 avec avatar), des chaînes abonnées, des émotes Twitch débloquées (🔓), des 310+ émotes Twitch Global, de toutes les émotes 7TV/FFZ/BTTV sans limite, et du catalogue complet de 1 870 émojis standard en 8 catégories avec recherche et auto-complétion :shortcode: || Complete BetterTTV-style Emote & Emoji Picker: added streamer's native Twitch emotes (follower, sub, and locked 🔒 with avatar), subscribed channels, unlocked Twitch emotes (🔓), 310+ Twitch Global emotes, uncapped 7TV/FFZ/BTTV emotes, and the full 1,870 standard emoji catalog across 8 categories with :shortcode: search and autocomplete
 // 1.11.6
 // - Mode Adblock : retrait de l'option « Proxys pendant les pubs » dans la section Adblock et garantie d'utiliser uniquement le bloqueur sans proxy (VAFT) lors du passage de Proxy à Adblock || Adblock mode: removed the "Proxies during ads" option from the Adblock section and ensured only the proxy-free blocker (VAFT) is used when switching from Proxy to Adblock
 // 1.11.5
@@ -63,7 +66,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.6';
+    var CURRENT_VERSION = '1.11.7';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -4740,15 +4743,34 @@
 
     installAutoplayCaptureHooks();
 
+    var SDA_PLAYER_MODIFIER_CLASSES_RE = /\bvideo-player--stream-display-ad_(?:lower-third|squeezeback|vertical-video|left-third)\b/;
+
+    // Sélecteurs stricts des vrais conteneurs de pub SDA (ne matche JAMAIS .video-player--stream-display-ad_*
+    // posé sur le conteneur vidéo principal ni la sonde 1x1 .adsbox de détection anti-adblock Twitch).
+    var SDA_EXPLICIT_CONTAINER_SELECTORS =
+        '.stream-display-ad__wrapper:not(.adsbox),' +
+        '[class^="stream-display-ad__"]:not(.adsbox),' +
+        '[class*=" stream-display-ad__"]:not(.adsbox),' +
+        '[data-test-selector="sda-wrapper"],' +
+        '[data-test-selector="sda-container"],' +
+        '[data-test-selector="sda-transform"],' +
+        '[data-test-selector="sda-frame"],' +
+        '[data-test-selector^="sda-iframe"],' +
+        '[data-test-selector="shoppable-sda-wrapper"],' +
+        '[data-a-target="sda-wrapper"],' +
+        '[data-a-target="sda-container"],' +
+        '[data-a-target="sda-frame"],' +
+        '[data-test-selector="sad-overlay"],' +
+        '[data-test-selector="ad-banner-default-text"]';
+
     function playerRootHasAdSignal(playerRoot) {
         if (!playerRoot) return false;
         try {
             if (
                 playerRoot.querySelector(
                     '[data-a-target="video-ad-label"], [data-a-target="video-ad-countdown"], ' +
-                    '[aria-label="Publicité"], [aria-label="Ad"], [data-a-target^="sda-"], ' +
-                    '[data-test-selector="sad-overlay"], [data-test-selector*="stream-display-ad"], ' +
-                    '[data-test-selector*="ad-banner"], [class*="stream-display-ad"]'
+                    '[aria-label="Publicité"], [aria-label="Ad"], ' +
+                    SDA_EXPLICIT_CONTAINER_SELECTORS
                 )
             ) {
                 return true;
@@ -4765,10 +4787,6 @@
         } catch (e) {}
         return false;
     }
-
-    var SDA_EXPLICIT_CONTAINER_SELECTORS =
-        '[data-a-target*="sda-"],[data-test-selector="sad-overlay"],' +
-        '[data-test-selector*="stream-display-ad"],[data-test-selector*="ad-banner"],[class*="stream-display-ad"]';
 
     function isConfirmedLiveOrLongStreamVideo(video) {
         if (!video || video.nodeType !== 1) return false;
@@ -14003,13 +14021,13 @@ function showAddProxyForm() {
                         if (!selfVid.__tp9SdaMetaHooked) {
                             selfVid.__tp9SdaMetaHooked = true;
                             selfVid.addEventListener('loadedmetadata', function () {
-                                if (typeof sweepStreamDisplayAds === 'function') {
-                                    sweepStreamDisplayAds();
+                                if (typeof scheduleSdaSweep === 'function') {
+                                    scheduleSdaSweep();
                                 }
                             });
                         }
-                        if (typeof sweepStreamDisplayAds === 'function') {
-                            sweepStreamDisplayAds();
+                        if (typeof scheduleSdaSweep === 'function') {
+                            scheduleSdaSweep();
                         }
                         if (isAdVideoElement(selfVid)) {
                             setVideoVolumeRaw(selfVid, 0, true);
@@ -15422,19 +15440,10 @@ function showAddProxyForm() {
     var TWITCH_AD_OVERLAY =
         '[data-a-target="video-ad-label"],' +
         '[data-a-target="video-ad-countdown"],' +
-        '[data-test-selector="ad-banner-default-text"],' +
-        '[class*="stream-display-ad"]';
+        '[data-test-selector="ad-banner-default-text"]';
 
     var SDA_SELECTORS =
-        '[data-a-target*="sda-"],' +
-        '[data-a-target="sda-wrapper"],' +
-        '[data-a-target="sda-container"],' +
-        '[data-a-target="sda-frame"],' +
-        '[data-test-selector="sad-overlay"],' +
-        '[data-test-selector="ad-banner-default-text"],' +
-        '[data-test-selector*="stream-display-ad"],' +
-        '[data-test-selector*="ad-banner"],' +
-        '[class*="stream-display-ad"],' +
+        SDA_EXPLICIT_CONTAINER_SELECTORS + ',' +
         'iframe[src*="imasdk.googleapis.com"],' +
         'iframe[src*="amazon-adsystem.com"],' +
         'iframe[src*="doubleclick.net"]';
@@ -15442,10 +15451,31 @@ function showAddProxyForm() {
     var sdaObserver = null;
     var sdaObserverTarget = null;
     var sdaRafPending = false;
-    var lastSdaBlockedLogAt = 0;
+    var sdaSweeping = false;
+
+    function scheduleSdaSweep() {
+        if (sdaRafPending || scriptIsOff()) return;
+        sdaRafPending = true;
+        requestAnimationFrame(function () {
+            sdaRafPending = false;
+            sweepStreamDisplayAds();
+        });
+    }
+
+    var PROTECTED_PLAYER_UI_SELECTORS =
+        '.video-player__container,.video-ref,[data-a-target="video-ref"],' +
+        '.video-player__overlay,[data-a-target="player-overlay-click-handler"],' +
+        '.player-overlay-background,.player-controls,[data-a-target="player-controls"],' +
+        '[data-a-target="player-settings-menu"],' +
+        '#tp9-dashboard,#tp9-stats,#tp9-player-button,.tp9dvr-bar,.tp9-sp-badge,.tp9-player-tool-btn,' +
+        '.extension-taskbar,.extensions-dock__layout,.extension-container,' +
+        '.extensions-video-overlay-size-container,[data-a-target="extension-taskbar"]';
 
     function isProtectedPlayerUiBranch(el) {
         if (!el || el.nodeType !== 1) return true;
+        if (typeof el.className === 'string' && SDA_PLAYER_MODIFIER_CLASSES_RE.test(el.className)) {
+            return true;
+        }
         if (
             el.id === 'tp9-dashboard' ||
             el.id === 'tp9-stats' ||
@@ -15454,335 +15484,86 @@ function showAddProxyForm() {
         ) {
             return true;
         }
-        if (
-            el.matches &&
-            el.matches(
-                '.video-player__container,.video-ref,[data-a-target="video-ref"],' +
-                '.video-player__overlay,[data-a-target="player-overlay-click-handler"],' +
-                '.player-controls,[data-a-target="player-controls"],' +
-                '[data-a-target="player-settings-menu"],' +
-                '.extension-taskbar,.extensions-dock__layout,.extension-container,' +
-                '.extensions-video-overlay-size-container,[data-a-target="extension-taskbar"]'
-            )
-        ) {
+        if (el.matches && el.matches(PROTECTED_PLAYER_UI_SELECTORS)) {
             return true;
         }
-        if (
-            el.querySelector &&
-            el.querySelector(
-                '[data-a-target="video-ref"],.video-ref,.video-player__container,' +
-                '[data-a-target="player-controls"],[data-a-target="player-settings-menu"],' +
-                '#tp9-dashboard,.tp9dvr-bar'
-            )
-        ) {
+        if (el.querySelector && el.querySelector(PROTECTED_PLAYER_UI_SELECTORS)) {
             return true;
         }
         return false;
-    }
-
-    function neutralizeSdaBranch(node, rootBoundary, mainVideo) {
-        if (!node || node.nodeType !== 1 || !rootBoundary) return false;
-        if (mainVideo && (node === mainVideo || node.contains(mainVideo))) return false;
-        if (node.tagName === 'VIDEO' && (node === dvrVideo || node === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(node))) {
-            return false;
-        }
-        if (isProtectedPlayerUiBranch(node)) return false;
-        var sdaRoot = node.closest ? node.closest(SDA_SELECTORS) : null;
-        if (sdaRoot && (!rootBoundary.contains(sdaRoot) || sdaRoot === rootBoundary || (mainVideo && sdaRoot.contains(mainVideo)))) {
-            sdaRoot = null;
-        }
-        var branch = node;
-        if (!mainVideo) {
-            // Pendant setSrc (~50-200 ms), la nouvelle <video> n'est pas encore montée :
-            // on ne remonte jamais au-delà d'un conteneur SDA explicite pour ne pas masquer
-            // la branche dans laquelle Twitch va insérer le flux principal.
-            if (sdaRoot && !isProtectedPlayerUiBranch(sdaRoot)) {
-                branch = sdaRoot;
-            } else {
-                var rRect = rootBoundary.getBoundingClientRect();
-                var nRect = node.getBoundingClientRect();
-                if (
-                    rRect.width > 200 &&
-                    rRect.height > 120 &&
-                    nRect.width > rRect.width * 0.6 &&
-                    nRect.height > rRect.height * 0.6 &&
-                    !(node.matches && node.matches(SDA_SELECTORS))
-                ) {
-                    return false;
-                }
-            }
-        } else {
-            while (
-                branch.parentElement &&
-                branch.parentElement !== rootBoundary &&
-                rootBoundary.contains(branch.parentElement) &&
-                !branch.parentElement.contains(mainVideo) &&
-                !isProtectedPlayerUiBranch(branch.parentElement)
-            ) {
-                branch = branch.parentElement;
-            }
-        }
-        if (isProtectedPlayerUiBranch(branch)) return false;
-        try {
-            var branchVids = branch.querySelectorAll('video');
-            for (var bvIdx = 0; bvIdx < branchVids.length; bvIdx++) {
-                var bv = branchVids[bvIdx];
-                if (bv === mainVideo || bv === dvrVideo || bv === dvrLiveVideo || isConfirmedLiveOrLongStreamVideo(bv)) {
-                    return false;
-                }
-            }
-        } catch (e0) {}
-        var newlyHidden = !branch.classList.contains('tp9-sda-hidden');
-        branch.classList.remove('tp9-sda-unshrunk');
-        node.classList.remove('tp9-sda-unshrunk');
-        branch.classList.add('tp9-sda-hidden');
-        node.classList.add('tp9-sda-hidden');
-        try {
-            var unshrunkDesc = branch.querySelectorAll('.tp9-sda-unshrunk');
-            for (var u = 0; u < unshrunkDesc.length; u++) {
-                unshrunkDesc[u].classList.remove('tp9-sda-unshrunk');
-            }
-            // Ne jamais appeler .pause() ni retirer src : une pub latérale (SDA) doit simplement
-            // rester masquée et muette pendant qu'elle s'écoule, sans aucun risque de couper le live.
-            if ((node.tagName === 'VIDEO' || node.tagName === 'AUDIO') && node !== mainVideo && node !== dvrVideo && node !== dvrLiveVideo) {
-                setVideoVolumeRaw(node, 0, true);
-            }
-            var mediaEls = branch.querySelectorAll('video, audio');
-            for (var i = 0; i < mediaEls.length; i++) {
-                var m = mediaEls[i];
-                if (
-                    m === mainVideo ||
-                    m === dvrVideo ||
-                    m === dvrLiveVideo ||
-                    isOwnPlayerVideo(m) ||
-                    (m.tagName === 'VIDEO' && isConfirmedLiveOrLongStreamVideo(m))
-                ) {
-                    continue;
-                }
-                try {
-                    m.classList.remove('tp9-sda-unshrunk');
-                    m.classList.add('tp9-sda-hidden');
-                    setVideoVolumeRaw(m, 0, true);
-                } catch (e) {}
-            }
-            var iframes = branch.querySelectorAll('iframe');
-            for (var j = 0; j < iframes.length; j++) {
-                var ifr = iframes[j];
-                if (ifr.classList && ifr.classList.contains('extension-view__iframe')) continue;
-                if (ifr.src && ifr.src.indexOf('ext-twitch.tv') >= 0) continue;
-                try {
-                    ifr.src = 'about:blank';
-                } catch (e2) {}
-            }
-        } catch (e) {}
-        return newlyHidden;
     }
 
     function clearStraySdaHiddenOnPlayer(root) {
         try {
             var scope = root || document.querySelector('.video-player__default-player, .video-player, [data-a-target="video-player"]');
             if (!scope) return;
-            var protectedNodes = scope.querySelectorAll(
-                '.video-player__container, .video-ref, [data-a-target="video-ref"], ' +
-                '.video-player__overlay, [data-a-target="player-overlay-click-handler"], ' +
-                '[data-a-target="player-controls"]'
-            );
-            for (var i = 0; i < protectedNodes.length; i++) {
-                var pn = protectedNodes[i];
-                var cur = pn;
-                while (cur && cur !== document.body) {
-                    if (cur.classList && cur.classList.contains('tp9-sda-hidden')) {
-                        cur.classList.remove('tp9-sda-hidden');
-                    }
-                    if (cur === scope) break;
-                    cur = cur.parentElement;
+            var hiddenNodes = scope.querySelectorAll('.tp9-sda-hidden');
+            for (var i = 0; i < hiddenNodes.length; i++) {
+                var hn = hiddenNodes[i];
+                if (isProtectedPlayerUiBranch(hn)) {
+                    hn.classList.remove('tp9-sda-hidden');
                 }
             }
         } catch (e) {}
     }
 
-    // Bloque les Stream Display Ads (SDA : bannières/vidéos verticales ou en L glissées
-    // à côté du lecteur, ex. "Pub 0:06") et force le conteneur vidéo principal à garder
-    // 100 % de la surface du lecteur sans jamais étirer le conteneur publicitaire.
+    // Filet passif léger en complément du blocage réseau amont + règles CSS façon uBlock Origin :
+    // coupe uniquement le son d'éventuelles vidéos publicitaires externes (ex. m.media-amazon.com)
+    // sans JAMAIS relancer le lecteur, sans JAMAIS appeler .play()/.pause() sur le stream principal
+    // et sans JAMAIS modifier les styles ou classes du conteneur vidéo principal.
     function sweepStreamDisplayAds() {
-        if (scriptIsOff() || isClipOrTrailerContext(null)) return false;
+        if (sdaSweeping || scriptIsOff() || isClipOrTrailerContext(null)) return false;
         var playerRoot = document.querySelector('.video-player__default-player, .video-player, [data-a-target="video-player"]');
         if (!playerRoot) return false;
-        if (
-            playerRoot.classList.contains('persistent-player--mini') ||
-            playerRoot.classList.contains('video-player__container--mini') ||
-            playerRoot.getAttribute('data-a-player-state') === 'mini' ||
-            (playerRoot.closest && playerRoot.closest('.persistent-player--mini, .video-player__container--mini, [data-a-player-state="mini"]'))
-        ) {
-            return false;
-        }
 
-        clearStraySdaHiddenOnPlayer(playerRoot);
-
-        var mainVideo = findPlaybackVideo();
-        if (mainVideo && isAdVideoElement(mainVideo)) {
-            mainVideo = null;
-        }
-        var blockedAny = false;
-
-        // 0. Nettoyage immédiat de tout .tp9-sda-unshrunk posé par erreur sur une branche ne contenant pas mainVideo,
-        // et retrait de tout .tp9-sda-hidden résiduel sur la branche contenant désormais mainVideo.
+        sdaSweeping = true;
+        var mutedAny = false;
         try {
-            if (mainVideo && playerRoot.contains(mainVideo)) {
-                var anc = mainVideo;
-                while (anc && anc !== document.body) {
-                    if (anc.classList && anc.classList.contains('tp9-sda-hidden')) {
-                        anc.classList.remove('tp9-sda-hidden');
-                    }
-                    if (anc === playerRoot) break;
-                    anc = anc.parentElement;
-                }
+            var mainVideo = findPlaybackVideo();
+            if (mainVideo && isAdVideoElement(mainVideo)) {
+                mainVideo = null;
             }
-            var prevUnshrunk = playerRoot.querySelectorAll('.tp9-sda-unshrunk');
-            for (var uIdx = 0; uIdx < prevUnshrunk.length; uIdx++) {
-                var uEl = prevUnshrunk[uIdx];
-                if (
-                    !mainVideo ||
-                    (uEl !== mainVideo && !uEl.contains(mainVideo)) ||
-                    uEl.classList.contains('tp9-sda-hidden') ||
-                    (uEl.closest && uEl.closest('.tp9-sda-hidden'))
-                ) {
-                    uEl.classList.remove('tp9-sda-unshrunk');
-                }
-            }
-        } catch (e) {}
-
-        // 1. Masquage de tous les conteneurs SDA explicites
-        try {
-            var sdaNodes = playerRoot.querySelectorAll(SDA_SELECTORS);
-            for (var i = 0; i < sdaNodes.length; i++) {
-                if (neutralizeSdaBranch(sdaNodes[i], playerRoot, mainVideo)) {
-                    blockedAny = true;
-                }
-            }
-        } catch (e) {}
-
-        // 2. Détection de toute balise <video> publicitaire (format 9:16 vertical, URL directe ou durée courte confirmée)
-        // sans jamais mettre en pause la vidéo afin d'éviter toute coupure du direct.
-        try {
-            var allVideos = playerRoot.querySelectorAll('video');
+            var allVideos = document.querySelectorAll('.video-player video, .chat-shell video');
             for (var vIdx = 0; vIdx < allVideos.length; vIdx++) {
                 var vid = allVideos[vIdx];
                 if (
+                    !vid ||
+                    vid === mainVideo ||
                     vid === dvrVideo ||
                     vid === dvrLiveVideo ||
                     isOwnPlayerVideo(vid) ||
                     isPreviewOrAuxiliaryVideo(vid) ||
-                    isConfirmedLiveOrLongStreamVideo(vid) ||
-                    (vid.classList && vid.classList.contains('tp9-sidebar-preview-video'))
+                    isConfirmedLiveOrLongStreamVideo(vid)
                 ) {
                     continue;
                 }
                 var vidSrc = String(vid.currentSrc || vid.src || '');
-                var isSoleStreamCandidate = (
-                    allVideos.length === 1 &&
-                    (!vidSrc || vidSrc.indexOf('blob:') === 0) &&
-                    !(vid.closest && vid.closest(SDA_SELECTORS))
+                var isExternalAdVid = (
+                    /^https?:\/\/m\.media-amazon\.com\//i.test(vidSrc) ||
+                    Boolean(vid.closest && vid.closest(SDA_EXPLICIT_CONTAINER_SELECTORS))
                 );
-                if (isSoleStreamCandidate) {
-                    if (vid.classList && vid.classList.contains('tp9-sda-hidden')) {
-                        vid.classList.remove('tp9-sda-hidden');
-                    }
-                    continue;
-                }
-                if (vid !== mainVideo && isAdVideoElement(vid)) {
+                if (isExternalAdVid || isAdVideoElement(vid)) {
                     try {
                         setVideoVolumeRaw(vid, 0, true);
-                    } catch (e2) {}
-                    if (neutralizeSdaBranch(vid, playerRoot, mainVideo)) {
-                        blockedAny = true;
-                    }
-                }
-            }
-        } catch (e) {}
-
-        // 3. Détection des badges "Pub 0:06" / "Pub 0:02" / "Publicité" placés dans un panneau ou calque pub
-        try {
-            var badges = playerRoot.querySelectorAll(
-                '[data-a-target="video-ad-label"], [data-a-target="video-ad-countdown"], [aria-label="Publicité"], [aria-label="Ad"]'
-            );
-            for (var bIdx = 0; bIdx < badges.length; bIdx++) {
-                var b = badges[bIdx];
-                if (!b || (mainVideo && b.contains(mainVideo)) || isProtectedPlayerUiBranch(b)) continue;
-                if (neutralizeSdaBranch(b, playerRoot, mainVideo)) {
-                    blockedAny = true;
-                }
-            }
-            var textCandidates = playerRoot.querySelectorAll('span, div, p, strong, b');
-            for (var tIdx = 0; tIdx < textCandidates.length; tIdx++) {
-                var tc = textCandidates[tIdx];
-                if (!tc || tc.children.length > 5) continue;
-                if ((mainVideo && tc.contains(mainVideo)) || isProtectedPlayerUiBranch(tc)) continue;
-                if (tc.closest && tc.closest('.tp9-sda-hidden')) continue;
-                var rawTxt = (tc.textContent || '').trim();
-                if (rawTxt.length >= 4 && rawTxt.length <= 30 && /^(?:Pub|Ad|Publicité|Advertisement)\s*[:·-]?\s*\d+:\d+/i.test(rawTxt)) {
-                    if (neutralizeSdaBranch(tc, playerRoot, mainVideo)) {
-                        blockedAny = true;
-                    }
-                }
-            }
-        } catch (e) {}
-
-        // 4. Si le conteneur vidéo du flux principal a été rétréci ("squeeze-back", ex. ~65 % de la largeur/hauteur)
-        // pour loger une pub verticale à droite comme "Pub 0:06", on masque la branche latérale pub
-        // et on rétablit uniquement la branche du flux principal à 100 %.
-        if (mainVideo && !isAdVideoElement(mainVideo) && playerRoot.contains(mainVideo)) {
-            var rootRect = playerRoot.getBoundingClientRect();
-            if (rootRect.width > 300 && rootRect.height > 180) {
-                var vidRect = mainVideo.getBoundingClientRect();
-                var isShrunk = (
-                    vidRect.width > 80 &&
-                    (vidRect.width < rootRect.width * 0.96 || vidRect.height < rootRect.height * 0.96)
-                );
-                if (isShrunk || blockedAny) {
-                    var cur = mainVideo;
-                    while (cur && cur !== playerRoot && cur !== document.body) {
-                        if (cur.parentElement && cur.parentElement !== document.body && playerRoot.contains(cur.parentElement)) {
-                            var siblings = cur.parentElement.children;
-                            for (var sIdx = 0; sIdx < siblings.length; sIdx++) {
-                                var sib = siblings[sIdx];
-                                if (sib === cur || sib.contains(mainVideo) || isProtectedPlayerUiBranch(sib)) continue;
-                                if (sib.classList.contains('tp9-sda-hidden')) continue;
-                                var sibTxt = (sib.textContent || '').trim();
-                                var looksLikeAdPanel = (
-                                    SDA_BADGE_TEXT_RE.test(sibTxt) ||
-                                    /\b(?:Publicité|Advertisement|Sponsorisé|Sponsored)\b/i.test(sibTxt) ||
-                                    !!sib.querySelector(
-                                        'iframe:not(.extension-view__iframe):not([src*="ext-twitch.tv"]), video, ' +
-                                        '[data-a-target*="sda-"], [data-a-target*="video-ad"], ' +
-                                        '[data-test-selector*="stream-display-ad"], [data-test-selector*="ad-banner"], ' +
-                                        '[data-test-selector="sad-overlay"]'
-                                    )
-                                );
-                                if (looksLikeAdPanel) {
-                                    if (neutralizeSdaBranch(sib, playerRoot, mainVideo)) {
-                                        blockedAny = true;
-                                    }
-                                }
-                            }
+                    } catch (eMute) {}
+                    var sdaWrap = vid.closest ? vid.closest(SDA_EXPLICIT_CONTAINER_SELECTORS) : null;
+                    if (sdaWrap && (!mainVideo || !sdaWrap.contains(mainVideo)) && !isProtectedPlayerUiBranch(sdaWrap)) {
+                        if (!sdaWrap.classList.contains('tp9-sda-hidden')) {
+                            sdaWrap.classList.add('tp9-sda-hidden');
+                            mutedAny = true;
                         }
-                        var r = cur.getBoundingClientRect();
-                        if (r.width > 0 && (r.width < rootRect.width * 0.96 || r.height < rootRect.height * 0.96)) {
-                            if (!cur.classList.contains('tp9-sda-unshrunk')) {
-                                cur.classList.add('tp9-sda-unshrunk');
-                            }
+                    } else if (!isProtectedPlayerUiBranch(vid) && (!mainVideo || vid !== mainVideo)) {
+                        if (!vid.classList.contains('tp9-sda-hidden')) {
+                            vid.classList.add('tp9-sda-hidden');
+                            mutedAny = true;
                         }
-                        cur = cur.parentElement;
                     }
                 }
             }
+        } catch (e) {} finally {
+            sdaSweeping = false;
         }
-
-        if (blockedAny && (Date.now() - lastSdaBlockedLogAt) > 8000) {
-            lastSdaBlockedLogAt = Date.now();
-            logEvent('info', '🛡️ Bannière/vidéo publicitaire à côté du lecteur (SDA) bloquée et taille 100 % rétablie');
-        }
-        return blockedAny;
+        return mutedAny;
     }
 
     function ensureSdaObserver() {
@@ -15793,20 +15574,19 @@ function showAddProxyForm() {
             try { sdaObserver.disconnect(); } catch (e) {}
         }
         sdaObserverTarget = playerRoot;
-        sdaObserver = new MutationObserver(function () {
-            if (sdaRafPending || scriptIsOff()) return;
-            sdaRafPending = true;
-            requestAnimationFrame(function () {
-                sdaRafPending = false;
-                sweepStreamDisplayAds();
-            });
+        sdaObserver = new MutationObserver(function (mutations) {
+            if (sdaSweeping || sdaRafPending || scriptIsOff()) return;
+            for (var i = 0; i < mutations.length; i++) {
+                if (mutations[i].addedNodes && mutations[i].addedNodes.length > 0) {
+                    scheduleSdaSweep();
+                    break;
+                }
+            }
         });
         try {
             sdaObserver.observe(playerRoot, {
                 childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class']
+                subtree: true
             });
         } catch (e) {}
         sweepStreamDisplayAds();
@@ -16969,7 +16749,28 @@ function showAddProxyForm() {
             watchdogTime = video.currentTime;
             watchdogSince = now;
             watchdogStarted = true;
+            video.__tp9WatchdogPlayTriedAt = 0;
             return;
+        }
+        if (
+            video.paused &&
+            !video.ended &&
+            !video.error &&
+            watchdogStarted &&
+            (now - watchdogSince) >= 1200 &&
+            (now - (video.__tp9WatchdogPlayTriedAt || 0)) >= 4000
+        ) {
+            video.__tp9WatchdogPlayTriedAt = now;
+            try {
+                var wParts = findTwitchPlayerParts();
+                if (wParts && wParts.player && typeof wParts.player.play === 'function') {
+                    wParts.player.play();
+                }
+                if (video.paused) {
+                    var wp = video.play();
+                    if (wp && typeof wp.catch === 'function') wp.catch(function () {});
+                }
+            } catch (eWp) {}
         }
         var limit = watchdogStarted ? WATCHDOG_STALL_MS : WATCHDOG_START_MS;
         if ((now - watchdogSince) < limit) {
@@ -26593,12 +26394,14 @@ dashboardButton.style.visibility = 'hidden';
                 height: 20px !important;
                 fill: currentColor !important;
             }
-            /* Sélecteur d'Émotes façon BetterTTV */
+            /* Sélecteur d'Émotes & Émojis complet façon BetterTTV */
             .tp9-emote-picker {
                 position: fixed;
                 z-index: 2147483646;
-                width: 356px;
-                height: 410px;
+                width: 392px;
+                height: 448px;
+                max-width: calc(100vw - 16px);
+                max-height: calc(100vh - 16px);
                 border-radius: 10px;
                 background: #18181b;
                 border: 1px solid rgba(255, 255, 255, 0.14);
@@ -26655,19 +26458,33 @@ dashboardButton.style.visibility = 'hidden';
                 overflow: hidden;
             }
             .tp9-ep-rail {
-                width: 42px;
+                width: 44px;
                 background: #141417;
                 border-right: 1px solid rgba(255, 255, 255, 0.07);
                 padding: 6px 4px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                gap: 4px;
+                gap: 3px;
+                flex: none;
+                overflow-y: auto;
+                overflow-x: hidden;
+                scrollbar-width: none;
+            }
+            .tp9-ep-rail::-webkit-scrollbar {
+                display: none;
+            }
+            .tp9-ep-rail-sep {
+                width: 22px;
+                height: 1px;
+                background: rgba(255, 255, 255, 0.09);
+                margin: 2px 0;
                 flex: none;
             }
             .tp9-ep-cat {
-                width: 32px;
+                width: 34px;
                 height: 32px;
+                flex: none;
                 border: 0;
                 border-radius: 6px;
                 background: transparent;
@@ -26678,6 +26495,19 @@ dashboardButton.style.visibility = 'hidden';
                 align-items: center;
                 justify-content: center;
                 transition: background .14s, color .14s;
+                padding: 0;
+            }
+            .tp9-ep-cat img {
+                width: 24px;
+                height: 24px;
+                border-radius: 5px;
+                object-fit: cover;
+                pointer-events: none;
+            }
+            .tp9-ep-cat svg {
+                width: 18px;
+                height: 18px;
+                pointer-events: none;
             }
             .tp9-ep-cat:hover {
                 background: rgba(255, 255, 255, 0.08);
@@ -26686,7 +26516,7 @@ dashboardButton.style.visibility = 'hidden';
             .tp9-ep-cat.tp9-ep-active {
                 background: rgba(145, 71, 255, 0.25);
                 color: #d4b8ff;
-                box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.5);
+                box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.55);
             }
             .tp9-ep-scroll {
                 flex: 1;
@@ -26711,38 +26541,86 @@ dashboardButton.style.visibility = 'hidden';
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
+                gap: 6px;
+            }
+            .tp9-ep-sec-title-left {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .tp9-ep-sec-title-left img {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                object-fit: cover;
+                flex: none;
+            }
+            .tp9-ep-sec-count {
+                font-size: 10px;
+                font-weight: 600;
+                color: #7a7a8c;
+                flex: none;
             }
             .tp9-ep-sec-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
-                gap: 4px;
+                grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+                gap: 3px;
                 margin-bottom: 10px;
             }
             .tp9-ep-item {
-                height: 36px;
-                border-radius: 6px;
+                height: 32px;
+                border-radius: 5px;
                 background: transparent;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
                 position: relative;
+                user-select: none;
             }
             .tp9-ep-item:hover {
-                background: rgba(255, 255, 255, 0.12);
+                background: rgba(255, 255, 255, 0.13);
             }
             .tp9-ep-item.tp9-ep-fav::after {
                 content: '★';
                 position: absolute;
-                top: 1px;
+                top: 0;
                 right: 2px;
                 font-size: 8px;
                 color: #ffd166;
+                pointer-events: none;
+            }
+            .tp9-ep-item.tp9-ep-locked {
+                cursor: not-allowed;
+            }
+            .tp9-ep-item.tp9-ep-locked img {
+                opacity: 0.44;
+                filter: grayscale(0.2);
+            }
+            .tp9-ep-item.tp9-ep-locked::before {
+                content: '🔒';
+                position: absolute;
+                bottom: 0;
+                right: 0;
+                font-size: 9px;
+                line-height: 1;
+                z-index: 1;
+                pointer-events: none;
+                filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
             }
             .tp9-ep-item img {
-                max-width: 28px;
-                max-height: 28px;
+                max-width: 26px;
+                max-height: 26px;
                 object-fit: contain;
+                pointer-events: none;
+            }
+            .tp9-ep-emoji-fb {
+                font-size: 20px;
+                line-height: 1;
                 pointer-events: none;
             }
             .tp9-ep-preview {
@@ -26776,6 +26654,14 @@ dashboardButton.style.visibility = 'hidden';
             .tp9-ep-prev-src {
                 font-size: 10.5px;
                 color: #adadb8;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .tp9-ep-prev-lock {
+                font-size: 13px;
+                flex: none;
+                opacity: 0.85;
             }
             .tp9-ep-foot {
                 padding: 4px 10px;
@@ -26785,6 +26671,7 @@ dashboardButton.style.visibility = 'hidden';
                 color: #8e8e9e;
                 display: flex;
                 justify-content: space-between;
+                gap: 6px;
             }
             /* Autocomplétion Tab / :code au-dessus du tchat */
             #tp9-emote-autocomplete {
@@ -26945,33 +26832,48 @@ dashboardButton.style.visibility = 'hidden';
                 overflow: hidden;
                 text-overflow: ellipsis;
             }
-            /* Blocage des bannières/vidéos pub affichées à côté du lecteur (Stream Display Ads / SDA) */
+            /* Blocage cosmétique identique à uBlock Origin (EasyList + uAssets filters/quick-fixes) :
+               masque uniquement les vrais conteneurs SDA (sans toucher à la sonde 1x1 .adsbox ni aux classes
+               .video-player--stream-display-ad_* du lecteur principal) et maintient le lecteur à 100 % en pur CSS
+               sans jamais relancer le lecteur ni appeler .play()/.pause(). */
             html:not([data-tp9-off="1"]) .tp9-sda-hidden,
-            html:not([data-tp9-off="1"]) [data-a-target*="sda-"],
+            html:not([data-tp9-off="1"]) .stream-display-ad__wrapper:not(.adsbox),
+            html:not([data-tp9-off="1"]) [class^="stream-display-ad__"]:not(.adsbox),
+            html:not([data-tp9-off="1"]) [class*=" stream-display-ad__"]:not(.adsbox),
+            html:not([data-tp9-off="1"]) [data-test-selector="sda-wrapper"],
+            html:not([data-tp9-off="1"]) [data-test-selector="sda-container"],
+            html:not([data-tp9-off="1"]) [data-test-selector="sda-transform"],
+            html:not([data-tp9-off="1"]) [data-test-selector="sda-frame"],
+            html:not([data-tp9-off="1"]) [data-test-selector^="sda-iframe"],
+            html:not([data-tp9-off="1"]) [data-test-selector="shoppable-sda-wrapper"],
             html:not([data-tp9-off="1"]) [data-a-target="sda-wrapper"],
             html:not([data-tp9-off="1"]) [data-a-target="sda-container"],
             html:not([data-tp9-off="1"]) [data-a-target="sda-frame"],
             html:not([data-tp9-off="1"]) [data-test-selector="sad-overlay"],
             html:not([data-tp9-off="1"]) [data-test-selector="ad-banner-default-text"],
-            html:not([data-tp9-off="1"]) [data-test-selector*="stream-display-ad"],
-            html:not([data-tp9-off="1"]) [data-test-selector*="ad-banner"],
-            html:not([data-tp9-off="1"]) [class*="stream-display-ad"] {
+            html:not([data-tp9-off="1"]) button[aria-label="Learn more about this ad"],
+            html:not([data-tp9-off="1"]) button[aria-label*="En savoir plus sur cette pub"],
+            html:not([data-tp9-off="1"]) iframe[src*="amazon-adsystem.com"],
+            html:not([data-tp9-off="1"]) iframe[src*="imasdk.googleapis.com"],
+            html:not([data-tp9-off="1"]) iframe[src*="doubleclick.net"] {
                 display: none !important;
-                width: 0 !important;
-                height: 0 !important;
-                max-width: 0 !important;
-                max-height: 0 !important;
-                opacity: 0 !important;
-                visibility: hidden !important;
-                pointer-events: none !important;
-                overflow: hidden !important;
             }
-            html:not([data-tp9-off="1"]) .tp9-sda-unshrunk:not(.tp9-sda-hidden) {
+            html:not([data-tp9-off="1"]) .stream-display-ad__wrapper + div > div[style^="position:"] > div[class^="Layout-sc-"]:has(video[src^="https://m.media-amazon.com"]),
+            html:not([data-tp9-off="1"]) .chat-shell > div[class^="Layout-sc-"] > div[style^="transition:"]:has(video[src^="https://m.media-amazon.com"]),
+            html:not([data-tp9-off="1"]) .video-player__overlay .player-overlay-background:has(> div[class^="Layout-"] > div[class^="Layout-"] > div[class^="Layout-"] > a:is([href*="/how-to-allow-ads-browser"], [href="https://www.twitch.tv/turbo"])) {
+                display: none !important;
+            }
+            html:not([data-tp9-off="1"]) .video-player--stream-display-ad_lower-third,
+            html:not([data-tp9-off="1"]) .video-player--stream-display-ad_squeezeback,
+            html:not([data-tp9-off="1"]) .video-player--stream-display-ad_vertical-video,
+            html:not([data-tp9-off="1"]) .video-player--stream-display-ad_left-third {
                 width: 100% !important;
                 height: 100% !important;
                 max-width: 100% !important;
                 max-height: 100% !important;
                 inset: 0 !important;
+                inset-inline-start: 0 !important;
+                inset-inline-end: 0 !important;
                 top: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
@@ -35198,7 +35100,7 @@ dashboardButton.style.visibility = 'hidden';
                     var line = row.trim();
                     if (
                         /^#EXT-X-DATERANGE/i.test(line) &&
-                        /stitched|twitch-ad|X-TV-TWITCH-AD/i.test(line)
+                        /stitched|twitch-ad|X-TV-TWITCH-AD|twitch-maf-ad|X-TTV-MAF-AD/i.test(line)
                     ) {
                         removed++;
                         __tp_noteAdLine(kinds, line);
@@ -35287,6 +35189,30 @@ dashboardButton.style.visibility = 'hidden';
                 }
             }
 
+            function __tp_stripMafOnly(text, url){
+                var rows = text.split("\\n");
+                var out = [];
+                rows.forEach(function(row){
+                    var line = row.trim();
+                    if (
+                        /^#EXT-X-DATERANGE/i.test(line) &&
+                        /twitch-maf-ad|X-TTV-MAF-AD/i.test(line)
+                    ) {
+                        return;
+                    }
+                    if (line && line.charAt(0) !== "#") {
+                        try {
+                            out.push(new URL(line, url).href);
+                        } catch(e) {
+                            out.push(row);
+                        }
+                        return;
+                    }
+                    out.push(row);
+                });
+                return out.join("\\n");
+            }
+
             function __tp_cleanAds(url, response){
                 try {
                     return response
@@ -35294,10 +35220,19 @@ dashboardButton.style.visibility = 'hidden';
                         .text()
                         .then(function(text){
                             __tp_checkAds(url, text);
-                            if (
-                                text.indexOf("#EXTINF") < 0 ||
-                                !__tp_adMarker(text)
-                            ) {
+                            if (text.indexOf("#EXTINF") < 0) {
+                                return response;
+                            }
+                            if (!__tp_adMarker(text)) {
+                                if (/twitch-maf-ad|X-TTV-MAF-AD/i.test(text)) {
+                                    var mafHeaders = new Headers(response.headers);
+                                    mafHeaders.delete("content-length");
+                                    return new Response(__tp_stripMafOnly(text, url), {
+                                        status: response.status,
+                                        statusText: response.statusText,
+                                        headers: mafHeaders
+                                    });
+                                }
                                 return response;
                             }
 
@@ -36972,9 +36907,9 @@ dashboardButton.style.visibility = 'hidden';
                     dropCount++;
                 }
                 var isAdMetaLine = function(ln){
-                    return (ln.indexOf("#EXT-X-DATERANGE") === 0 && (ln.indexOf(__sp_MARK) >= 0 || /twitch-ad|X-TV-TWITCH-AD/i.test(ln))) ||
+                    return (ln.indexOf("#EXT-X-DATERANGE") === 0 && (ln.indexOf(__sp_MARK) >= 0 || /twitch-ad|X-TV-TWITCH-AD|twitch-maf-ad|X-TTV-MAF-AD/i.test(ln))) ||
                         /^#EXT-X-(SCTE35|CUE-OUT|CUE-OUT-CONT|CUE-IN)/i.test(ln) ||
-                        (ln.charAt(0) === "#" && /X-TV-TWITCH-AD/i.test(ln));
+                        (ln.charAt(0) === "#" && /X-TV-TWITCH-AD|X-TTV-MAF-AD/i.test(ln));
                 };
                 if (dropCount <= 0) {
                     var cleanOnly = [];
@@ -37341,6 +37276,18 @@ dashboardButton.style.visibility = 'hidden';
                     if (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000) {
                         return __sp_cleanAfter(text, info);
                     }
+                    if (/twitch-maf-ad|X-TTV-MAF-AD/i.test(text)) {
+                        var mafLines = __sp_lines(text);
+                        var mafOut = [];
+                        for (var mi = 0; mi < mafLines.length; mi++) {
+                            var ml = mafLines[mi];
+                            if (ml.indexOf("#EXT-X-DATERANGE") === 0 && /twitch-maf-ad|X-TTV-MAF-AD/i.test(ml)) {
+                                continue;
+                            }
+                            mafOut.push(ml);
+                        }
+                        return mafOut.join(__sp_NL);
+                    }
                 }
                 return text;
             }
@@ -37348,6 +37295,9 @@ dashboardButton.style.visibility = 'hidden';
             function __sp_media(originalURL, response){
                 var info = __sp_byUrl[originalURL.trim()];
                 if (!info || !response || response.status !== 200) {
+                    if (response && response.status === 200) {
+                        return __tp_cleanAds(originalURL, response);
+                    }
                     return response;
                 }
                 return response.text().then(function(text){
@@ -37378,6 +37328,10 @@ dashboardButton.style.visibility = 'hidden';
                             input.url;
                     }
                 } catch(e) {}
+
+                if (/^https?:\\/\\/(?:[a-z0-9-]+\\.)*(?:amazon-adsystem\\.com|edge\\.ads\\.twitch\\.tv|imasdk\\.googleapis\\.com|(?:securepubads|pubads|googleads)\\.g\\.doubleclick\\.net|googlesyndication\\.com|flashtalking\\.com|moatads\\.com)(?:\\/|$|[?#])/i.test(originalURL)) {
+                    return Promise.reject(new TypeError("Failed to fetch"));
+                }
 
                 var lowerURL =
                     originalURL.toLowerCase();
@@ -38229,18 +38183,218 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
+    // ============================================================
+    // BLOCAGE RÉSEAU / SCRIPT / IFRAME EN AMONT FAÇON UBLOCK ORIGIN
+    // ============================================================
+    // Réplique exactement l'approche d'uBlock Origin (EasyList + uAssets) :
+    // bloque avant tout chargement les SDK et enchères publicitaires (apstag.js,
+    // amazon-adsystem.com, edge.ads.twitch.tv, Google IMA imasdk.googleapis.com,
+    // doubleclick, googlesyndication, flashtalking, moatads, vidéos m.media-amazon.com)
+    // et neutralise FetchAdsService_FetchAds pour qu'aucune pub latérale (SDA) ne se
+    // charge ni ne mette jamais le lecteur en pause.
+    var AD_NETWORK_BLOCK_RE = /^(?:https?:)?\/\/(?:[a-z0-9-]+\.)*(?:amazon-adsystem\.com|edge\.ads\.twitch\.tv|imasdk\.googleapis\.com|(?:securepubads|pubads|googleads)\.g\.doubleclick\.net|googlesyndication\.com|flashtalking\.com|moatads\.com)(?:\/|$|[?#])|^(?:https?:)?\/\/m\.media-amazon\.com\/images\/[^?#]*\.(?:mp4|webm|m4v)(?:[?#]|$)/i;
+    var AMAZON_ADBLOCK_PROBE_RE = /^https?:\/\/s\.amazon-adsystem\.com\/?$/i;
+
+    function isBlockedAdNetworkUrl(rawUrl) {
+        if (!rawUrl || typeof rawUrl !== 'string') return false;
+        var u = rawUrl.trim();
+        if (!u) return false;
+        if (u.indexOf('//') === 0 || u.indexOf('http://') === 0 || u.indexOf('https://') === 0) {
+            return AD_NETWORK_BLOCK_RE.test(u);
+        }
+        try {
+            var resolved = new URL(u, window.location.href).href;
+            return AD_NETWORK_BLOCK_RE.test(resolved);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function interceptGqlFetchAdsRequest(bodyStr) {
+        if (!bodyStr || typeof bodyStr !== 'string' || bodyStr.indexOf('FetchAdsService_FetchAds') < 0) {
+            return null;
+        }
+        try {
+            var parsed = JSON.parse(bodyStr);
+            if (!Array.isArray(parsed)) {
+                if (parsed && parsed.operationName === 'FetchAdsService_FetchAds') {
+                    return {
+                        immediateResponse: new Response('{"data":{"fetchAds":null}}', {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        }),
+                        batchIndices: null
+                    };
+                }
+                return null;
+            }
+            var indices = [];
+            for (var i = 0; i < parsed.length; i++) {
+                if (parsed[i] && parsed[i].operationName === 'FetchAdsService_FetchAds') {
+                    indices.push(i);
+                }
+            }
+            if (!indices.length) return null;
+            if (indices.length === parsed.length) {
+                var emptyBatch = [];
+                for (var j = 0; j < parsed.length; j++) {
+                    emptyBatch.push({ data: { fetchAds: null } });
+                }
+                return {
+                    immediateResponse: new Response(JSON.stringify(emptyBatch), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' }
+                    }),
+                    batchIndices: null
+                };
+            }
+            return { immediateResponse: null, batchIndices: indices };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    (function installUpstreamAdNetworkHooks() {
+        // 1. XMLHttpRequest (identique à ERR_BLOCKED_BY_CLIENT d'uBlock Origin)
+        try {
+            var nativeXhrOpen = XMLHttpRequest.prototype.open;
+            var nativeXhrSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                var uStr = typeof url === 'string' ? url : (url ? String(url) : '');
+                this.__tp9BlockedAdUrl = (!scriptIsOff() && isBlockedAdNetworkUrl(uStr)) ? uStr : '';
+                if (this.__tp9BlockedAdUrl) {
+                    return nativeXhrOpen.call(this, method || 'GET', 'data:text/plain,', true);
+                }
+                return nativeXhrOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function () {
+                if (!scriptIsOff() && this.__tp9BlockedAdUrl) {
+                    var selfXhr = this;
+                    setTimeout(function () {
+                        try { selfXhr.dispatchEvent(new Event('error')); } catch (e1) {}
+                        try { selfXhr.dispatchEvent(new Event('loadend')); } catch (e2) {}
+                    }, 0);
+                    return;
+                }
+                return nativeXhrSend.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        // 2. Balises <script> (apstag.js, ima3.js, gpt.js) et <iframe> publicitaires
+        function neutralizeAdElementSrc(el, val) {
+            if (!el || scriptIsOff() || !isBlockedAdNetworkUrl(val)) return false;
+            var tag = el.tagName;
+            if (tag === 'SCRIPT') {
+                setTimeout(function () {
+                    try { el.dispatchEvent(new Event('error')); } catch (e) {}
+                }, 0);
+                return true;
+            }
+            if (tag === 'IFRAME') {
+                return true;
+            }
+            return false;
+        }
+
+        try {
+            var nativeSetAttribute = Element.prototype.setAttribute;
+            Element.prototype.setAttribute = function (name, value) {
+                if (
+                    !scriptIsOff() &&
+                    (this.tagName === 'SCRIPT' || this.tagName === 'IFRAME') &&
+                    typeof name === 'string' &&
+                    name.toLowerCase() === 'src' &&
+                    neutralizeAdElementSrc(this, String(value || ''))
+                ) {
+                    if (this.tagName === 'IFRAME') {
+                        return nativeSetAttribute.call(this, 'src', 'about:blank');
+                    }
+                    return;
+                }
+                return nativeSetAttribute.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        try {
+            var scriptSrcDesc = typeof HTMLScriptElement !== 'undefined'
+                ? Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src')
+                : null;
+            if (scriptSrcDesc && scriptSrcDesc.configurable && typeof scriptSrcDesc.set === 'function') {
+                Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+                    configurable: true,
+                    enumerable: scriptSrcDesc.enumerable,
+                    get: scriptSrcDesc.get,
+                    set: function (val) {
+                        if (neutralizeAdElementSrc(this, String(val || ''))) {
+                            return;
+                        }
+                        return scriptSrcDesc.set.call(this, val);
+                    }
+                });
+            }
+        } catch (e) {}
+
+        try {
+            var iframeSrcDesc = typeof HTMLIFrameElement !== 'undefined'
+                ? Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src')
+                : null;
+            if (iframeSrcDesc && iframeSrcDesc.configurable && typeof iframeSrcDesc.set === 'function') {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+                    configurable: true,
+                    enumerable: iframeSrcDesc.enumerable,
+                    get: iframeSrcDesc.get,
+                    set: function (val) {
+                        if (neutralizeAdElementSrc(this, String(val || ''))) {
+                            return iframeSrcDesc.set.call(this, 'about:blank');
+                        }
+                        return iframeSrcDesc.set.call(this, val);
+                    }
+                });
+            }
+        } catch (e) {}
+
+        // 3. Popups publicitaires window.open (équivalent +js(nowoif, /amazon-adsystem|flashtalking/))
+        try {
+            var nativeWindowOpen = window.open;
+            if (typeof nativeWindowOpen === 'function') {
+                window.open = function (url) {
+                    if (!scriptIsOff() && url && isBlockedAdNetworkUrl(String(url))) {
+                        return null;
+                    }
+                    return nativeWindowOpen.apply(this, arguments);
+                };
+            }
+        } catch (e) {}
+    })();
+
     window.fetch = function (input, init) {
         var isGql = false;
+        var fetchAdsIntercept = null;
         try {
             var url = typeof input === 'string'
                 ? input
                 : (input && input.url) || '';
+            if (!scriptIsOff() && url) {
+                var reqMethod = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+                if (reqMethod === 'HEAD' && AMAZON_ADBLOCK_PROBE_RE.test(url.trim())) {
+                    return Promise.resolve(new Response('', { status: 200 }));
+                }
+                if (isBlockedAdNetworkUrl(url)) {
+                    return Promise.reject(new TypeError('Failed to fetch'));
+                }
+            }
             if (url.indexOf('gql.twitch.tv') >= 0) {
                 isGql = true;
                 if (init && init.headers) {
                     spNoteHeaders(init.headers);
                 } else if (input && input.headers) {
                     spNoteHeaders(input.headers);
+                }
+                if (!scriptIsOff() && init && typeof init.body === 'string') {
+                    fetchAdsIntercept = interceptGqlFetchAdsRequest(init.body);
+                    if (fetchAdsIntercept && fetchAdsIntercept.immediateResponse) {
+                        return Promise.resolve(fetchAdsIntercept.immediateResponse);
+                    }
                 }
                 if (init && vaftPlaybackOn() && typeof init.body === 'string') {
                     var body = spRewriteTokenBody(init.body);
@@ -38251,6 +38405,33 @@ dashboardButton.style.visibility = 'hidden';
             }
         } catch (e) {}
         var p = spNativeFetch.call(window, input, init);
+        if (fetchAdsIntercept && fetchAdsIntercept.batchIndices && p && typeof p.then === 'function') {
+            var targetIndices = fetchAdsIntercept.batchIndices;
+            p = p.then(function (res) {
+                if (!res || !res.ok) return res;
+                return res.clone().text().then(function (txt) {
+                    try {
+                        var arr = JSON.parse(txt);
+                        if (Array.isArray(arr)) {
+                            for (var k = 0; k < targetIndices.length; k++) {
+                                var idx = targetIndices[k];
+                                if (idx >= 0 && idx < arr.length) {
+                                    arr[idx] = { data: { fetchAds: null } };
+                                }
+                            }
+                            var h = new Headers(res.headers);
+                            h.delete('content-length');
+                            return new Response(JSON.stringify(arr), {
+                                status: res.status,
+                                statusText: res.statusText,
+                                headers: h
+                            });
+                        }
+                    } catch (eBatch) {}
+                    return res;
+                }).catch(function () { return res; });
+            });
+        }
         if (isGql && p && typeof p.then === 'function') {
             p.then(function (res) {
                 try {
@@ -40102,6 +40283,22 @@ dashboardButton.style.visibility = 'hidden';
     var bttvChannelEmotes = [];
     var bttvGlobalsLoaded = false;
     var bttvCurrentChannel = null;
+    var twitchGlobalEmotes = [];
+    var twitchChannelEmotes = [];
+    var twitchChannelMeta = { login: '', displayName: '', avatar: '' };
+    var twitchRawUserChannelSets = [];
+    var twitchSubscribedSections = [];
+    var twitchUnlockedEmotes = [];
+    var twitchUnlockedEmoteMap = new Map();
+    var twitchGlobalsLoaded = false;
+    var twitchUserEmotesAuthUsed = false;
+    var twitchUserOwnedEmoteIds = new Set();
+    var twitchUserOwnedSetIds = new Set();
+    var emojiCatalogSections = null;
+    var emojiCatalogFlat = null;
+    var emojiCatalogByCode = null;
+    var bttvPickerObserver = null;
+    var bttvPickerItemMap = new Map();
     var bttvChatObserver = null;
     var bttvChatResizeObserver = null;
     var bttvObservedChatNode = null;
@@ -40800,6 +40997,9 @@ dashboardButton.style.visibility = 'hidden';
             if (em.source === '7TV') {
                 return raw.replace('/1x.webp', '/1x_static.webp').replace('/3x.webp', '/3x_static.webp');
             }
+            if (em.source === 'Twitch') {
+                return raw.replace('/default/dark/', '/static/dark/');
+            }
         }
         return raw;
     }
@@ -40866,14 +41066,18 @@ dashboardButton.style.visibility = 'hidden';
         if (dashboard) {
             var badge = dashboard.querySelector('.tp9-emotes-status-count');
             if (badge) {
-                badge.textContent = bttvEmoteMap.size + ' émotes';
+                var totalAvailable = bttvEmoteMap.size + twitchUnlockedEmoteMap.size;
+                badge.textContent = totalAvailable + ' émotes';
             }
         }
         if (bttvEmoteMap.size > 0) {
             rescanExistingChatForEmotes();
-            if (typeof updateChatInputEmoteMirror === 'function') {
-                updateChatInputEmoteMirror();
-            }
+        }
+        if (typeof updateChatInputEmoteMirror === 'function') {
+            updateChatInputEmoteMirror();
+        }
+        if (bttvPickerEl && bttvPickerEl.style.display === 'flex' && typeof renderEmotePickerGrid === 'function') {
+            renderEmotePickerGrid();
         }
     }
 
@@ -40883,7 +41087,257 @@ dashboardButton.style.visibility = 'hidden';
             .catch(function () { return null; });
     }
 
+    function buildTwitchEmoteObj(rawEm, opts) {
+        if (!rawEm) return null;
+        var id = String(rawEm.id || '');
+        var code = String(rawEm.token || rawEm.code || '');
+        if (!id || !code) return null;
+        var o = opts || {};
+        return {
+            id: id,
+            setID: rawEm.setID ? String(rawEm.setID) : '',
+            code: code,
+            url1x: 'https://static-cdn.jtvnw.net/emoticons/v2/' + encodeURIComponent(id) + '/default/dark/1.0',
+            url3x: 'https://static-cdn.jtvnw.net/emoticons/v2/' + encodeURIComponent(id) + '/default/dark/3.0',
+            source: 'Twitch',
+            subSource: o.subSource || 'de Twitch Global',
+            isChannel: !!o.isChannel,
+            animated: rawEm.assetType === 'ANIMATED',
+            locked: !!o.locked,
+            tierLabel: o.tierLabel || '',
+            zeroWidth: false
+        };
+    }
+
+    function reconcileTwitchEmoteState() {
+        twitchUnlockedEmoteMap.clear();
+        var curLogin = (bttvCurrentChannel || '').toLowerCase();
+
+        // 1. Déverrouille sur la chaîne courante toute émote possédée dans currentUser.emoteSets
+        // et fusionne les éventuelles émotes possédées supplémentaires (ex: paliers Bits débloqués)
+        var chById = new Map();
+        for (var i = 0; i < twitchChannelEmotes.length; i++) {
+            var ce = twitchChannelEmotes[i];
+            if (ce.id && (twitchUserOwnedEmoteIds.has(ce.id) || (ce.setID && twitchUserOwnedSetIds.has(ce.setID)))) {
+                ce.locked = false;
+            }
+            if (ce.id) chById.set(ce.id, ce);
+        }
+
+        twitchSubscribedSections = [];
+        for (var s = 0; s < twitchRawUserChannelSets.length; s++) {
+            var sec = twitchRawUserChannelSets[s];
+            if (!sec || !sec.items || !sec.items.length) continue;
+            if (curLogin && sec.login === curLogin) {
+                if (!twitchChannelMeta.avatar && sec.avatar) twitchChannelMeta.avatar = sec.avatar;
+                if (!twitchChannelMeta.displayName && sec.displayName) twitchChannelMeta.displayName = sec.displayName;
+                for (var k = 0; k < sec.items.length; k++) {
+                    var ownEm = sec.items[k];
+                    if (ownEm.id && chById.has(ownEm.id)) {
+                        chById.get(ownEm.id).locked = false;
+                    } else if (ownEm.id) {
+                        var extraCopy = Object.assign({}, ownEm, { locked: false, isChannel: true });
+                        twitchChannelEmotes.push(extraCopy);
+                        chById.set(extraCopy.id, extraCopy);
+                    }
+                }
+            } else {
+                twitchSubscribedSections.push(sec);
+            }
+        }
+
+        function registerUnlocked(list) {
+            for (var idx = 0; idx < list.length; idx++) {
+                var item = list[idx];
+                if (item && item.code && !item.locked && !twitchUnlockedEmoteMap.has(item.code)) {
+                    twitchUnlockedEmoteMap.set(item.code, item);
+                }
+            }
+        }
+        registerUnlocked(twitchChannelEmotes);
+        for (var subIdx = 0; subIdx < twitchSubscribedSections.length; subIdx++) {
+            registerUnlocked(twitchSubscribedSections[subIdx].items);
+        }
+        registerUnlocked(twitchUnlockedEmotes);
+        registerUnlocked(twitchGlobalEmotes);
+
+        if (dashboard) {
+            var badge = dashboard.querySelector('.tp9-emotes-status-count');
+            if (badge) {
+                badge.textContent = (bttvEmoteMap.size + twitchUnlockedEmoteMap.size) + ' émotes';
+            }
+        }
+        if (typeof updateChatInputEmoteMirror === 'function') {
+            updateChatInputEmoteMirror();
+        }
+        if (bttvPickerEl && bttvPickerEl.style.display === 'flex' && typeof renderEmotePickerGrid === 'function') {
+            renderEmotePickerGrid();
+        }
+    }
+
+    function sendTwitchEmoteGql(bodyObj) {
+        if (typeof sendAuthenticatedTwitchGql === 'function') {
+            return sendAuthenticatedTwitchGql(bodyObj);
+        }
+        return fetch('https://gql.twitch.tv/gql', {
+            method: 'POST',
+            headers: {
+                'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(bodyObj)
+        }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+    }
+
+    function loadTwitchGlobalAndUserEmotes(forceAuthRetry) {
+        var hasAuthNow = Boolean(typeof getTwitchAuthHeaderFallback === 'function' && getTwitchAuthHeaderFallback());
+        if (twitchGlobalsLoaded && !(forceAuthRetry && hasAuthNow && !twitchUserEmotesAuthUsed)) {
+            return;
+        }
+        twitchGlobalsLoaded = true;
+        if (hasAuthNow) {
+            twitchUserEmotesAuthUsed = true;
+        }
+
+        // Restauration instantanée depuis sessionStorage au F5
+        if (!forceAuthRetry) {
+            try {
+                var rawGlob = sessionStorage.getItem('tp9_twitch_glob_v1');
+                if (rawGlob) {
+                    var parsedGlob = JSON.parse(rawGlob);
+                    if (parsedGlob && Array.isArray(parsedGlob.items) && parsedGlob.items.length) {
+                        twitchGlobalEmotes = parsedGlob.items;
+                    }
+                }
+                var rawUser = sessionStorage.getItem('tp9_twitch_user_v1');
+                if (rawUser) {
+                    var parsedUser = JSON.parse(rawUser);
+                    if (parsedUser && Array.isArray(parsedUser.ownedIds)) {
+                        parsedUser.ownedIds.forEach(function (id) { twitchUserOwnedEmoteIds.add(id); });
+                        (parsedUser.ownedSets || []).forEach(function (sid) { twitchUserOwnedSetIds.add(sid); });
+                        twitchRawUserChannelSets = Array.isArray(parsedUser.channelSets) ? parsedUser.channelSets : [];
+                        twitchUnlockedEmotes = Array.isArray(parsedUser.unlocked) ? parsedUser.unlocked : [];
+                    }
+                }
+                if (twitchGlobalEmotes.length) {
+                    reconcileTwitchEmoteState();
+                }
+            } catch (e) {}
+        }
+
+        sendTwitchEmoteGql({
+            query: 'query{emoteSet(id:"0"){id emotes{id token setID assetType}}currentUser{id emoteSets{id owner{id login displayName profileImageURL(width:70)}emotes{id token setID assetType}}}}'
+        }).then(function (res) {
+            var data = res && res.data;
+            var globRaw = data && data.emoteSet && Array.isArray(data.emoteSet.emotes) ? data.emoteSet.emotes : null;
+            var userSets = data && data.currentUser && Array.isArray(data.currentUser.emoteSets) ? data.currentUser.emoteSets : null;
+
+            var finishWithGlobals = function (globItems) {
+                if (globItems && globItems.length) {
+                    twitchGlobalEmotes = globItems;
+                    try {
+                        sessionStorage.setItem('tp9_twitch_glob_v1', JSON.stringify({ ts: Date.now(), items: globItems }));
+                    } catch (e) {}
+                }
+                var globalIds = new Set();
+                twitchGlobalEmotes.forEach(function (ge) { if (ge.id) globalIds.add(ge.id); });
+
+                if (userSets) {
+                    twitchUserEmotesAuthUsed = true;
+                    var byOwner = new Map();
+                    var unlockedList = [];
+                    var seenUnlocked = new Set();
+                    userSets.forEach(function (setObj) {
+                        if (!setObj || !Array.isArray(setObj.emotes)) return;
+                        var sid = String(setObj.id || '');
+                        if (sid) twitchUserOwnedSetIds.add(sid);
+                        setObj.emotes.forEach(function (em) {
+                            if (em && em.id) twitchUserOwnedEmoteIds.add(String(em.id));
+                        });
+                        if (sid === '0') return;
+                        if (setObj.owner && setObj.owner.login) {
+                            var oLogin = String(setObj.owner.login).toLowerCase();
+                            var oName = setObj.owner.displayName || setObj.owner.login;
+                            var oAvatar = setObj.owner.profileImageURL || '';
+                            if (!byOwner.has(oLogin)) {
+                                byOwner.set(oLogin, {
+                                    id: 'tw_sub_' + oLogin,
+                                    login: oLogin,
+                                    displayName: oName,
+                                    avatar: oAvatar,
+                                    seen: new Set(),
+                                    items: []
+                                });
+                            }
+                            var bucket = byOwner.get(oLogin);
+                            if (!bucket.avatar && oAvatar) bucket.avatar = oAvatar;
+                            setObj.emotes.forEach(function (em) {
+                                var built = buildTwitchEmoteObj(em, {
+                                    subSource: 'de ' + oName,
+                                    isChannel: false,
+                                    locked: false
+                                });
+                                if (built && !bucket.seen.has(built.id)) {
+                                    bucket.seen.add(built.id);
+                                    bucket.items.push(built);
+                                }
+                            });
+                        } else {
+                            setObj.emotes.forEach(function (em) {
+                                var builtU = buildTwitchEmoteObj(em, {
+                                    subSource: 'Débloquée Twitch',
+                                    isChannel: false,
+                                    locked: false
+                                });
+                                if (builtU && !globalIds.has(builtU.id) && !seenUnlocked.has(builtU.id)) {
+                                    seenUnlocked.add(builtU.id);
+                                    unlockedList.push(builtU);
+                                }
+                            });
+                        }
+                    });
+                    twitchRawUserChannelSets = Array.from(byOwner.values()).map(function (b) {
+                        return { id: b.id, login: b.login, displayName: b.displayName, avatar: b.avatar, items: b.items };
+                    });
+                    twitchUnlockedEmotes = unlockedList;
+                    try {
+                        sessionStorage.setItem('tp9_twitch_user_v1', JSON.stringify({
+                            ts: Date.now(),
+                            ownedIds: Array.from(twitchUserOwnedEmoteIds),
+                            ownedSets: Array.from(twitchUserOwnedSetIds),
+                            channelSets: twitchRawUserChannelSets,
+                            unlocked: twitchUnlockedEmotes
+                        }));
+                    } catch (e2) {}
+                }
+                reconcileTwitchEmoteState();
+            };
+
+            if (globRaw && globRaw.length) {
+                var mappedGlob = [];
+                globRaw.forEach(function (em) {
+                    var b = buildTwitchEmoteObj(em, { subSource: 'de Twitch Global', isChannel: false, locked: false });
+                    if (b) mappedGlob.push(b);
+                });
+                finishWithGlobals(mappedGlob);
+            } else if (!twitchGlobalEmotes.length) {
+                fetchJsonSafe('https://api.ivr.fi/v2/twitch/emotes/sets?set_id=0').then(function (ivrArr) {
+                    var list = ivrArr && ivrArr[0] && Array.isArray(ivrArr[0].emoteList) ? ivrArr[0].emoteList : [];
+                    var mapped = [];
+                    list.forEach(function (em) {
+                        var b = buildTwitchEmoteObj(em, { subSource: 'de Twitch Global', isChannel: false, locked: false });
+                        if (b) mapped.push(b);
+                    });
+                    finishWithGlobals(mapped);
+                });
+            } else {
+                finishWithGlobals(null);
+            }
+        });
+    }
+
     function loadBttvGlobalEmotes() {
+        loadTwitchGlobalAndUserEmotes(false);
         if (bttvGlobalsLoaded) return;
         bttvGlobalsLoaded = true;
 
@@ -40980,28 +41434,24 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function resolveTwitchChannelId(login) {
-        // Lance GQL Twitch et FFZ en parallèle au lieu d'attendre FFZ avant GQL
-        var pGql = fetch('https://gql.twitch.tv/gql', {
-            method: 'POST',
-            headers: {
-                'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                query: 'query($login:String!){user(login:$login){id}}',
-                variables: { login: login }
-            })
-        }).then(function (r) { return r.ok ? r.json() : null; }).then(function (gql) {
-            return gql && gql.data && gql.data.user && gql.data.user.id ? String(gql.data.user.id) : null;
+        // Lance en parallèle GQL Twitch (ID + avatar + émotes natives du streamer + état follow/sub), FFZ et IVR (paliers Bits / secours)
+        var pGql = sendTwitchEmoteGql({
+            query: 'query($login:String!){user(login:$login){id login displayName profileImageURL(width:70) channel{localEmoteSets{id emotes{id token setID assetType}}} subscriptionProducts{id tier emotes{id token setID assetType}} self{subscriptionBenefit{tier} follower{followedAt}}}}',
+            variables: { login: login }
+        }).then(function (gql) {
+            return gql && gql.data && gql.data.user ? gql.data.user : null;
         }).catch(function () { return null; });
 
         var pFfz = fetchJsonSafe('https://api.frankerfacez.com/v1/room/' + encodeURIComponent(login));
+        var pIvr = fetchJsonSafe('https://api.ivr.fi/v2/twitch/emotes/channel/' + encodeURIComponent(login));
 
-        return Promise.all([pGql, pFfz]).then(function (arr) {
-            var gqlId = arr[0];
+        return Promise.all([pGql, pFfz, pIvr]).then(function (arr) {
+            var gqlUser = arr[0];
             var ffzData = arr[1];
+            var ivrData = arr[2];
+            var gqlId = gqlUser && gqlUser.id ? String(gqlUser.id) : null;
             var ffzId = ffzData && ffzData.room && ffzData.room.twitch_id ? String(ffzData.room.twitch_id) : null;
-            return { twitchId: gqlId || ffzId, ffzData: ffzData };
+            return { twitchId: gqlId || ffzId, gqlUser: gqlUser, ffzData: ffzData, ivrData: ivrData };
         });
     }
 
@@ -41010,14 +41460,21 @@ dashboardButton.style.visibility = 'hidden';
         if (!login) {
             bttvCurrentChannel = null;
             bttvChannelEmotes = [];
+            twitchChannelEmotes = [];
+            twitchChannelMeta = { login: '', displayName: '', avatar: '' };
             rebuildBttvEmoteMap();
+            reconcileTwitchEmoteState();
             return;
         }
         bttvCurrentChannel = login;
+        if (!twitchGlobalsLoaded || (!twitchUserEmotesAuthUsed && typeof getTwitchAuthHeaderFallback === 'function' && getTwitchAuthHeaderFallback())) {
+            loadTwitchGlobalAndUserEmotes(true);
+        }
 
         // 0. Restauration instantanée (0 ms) depuis sessionStorage au refresh F5,
         // ou purge immédiate des émotes de la chaîne précédente lors d'un changement de stream
         var cacheKey = 'tp9_emotes_ch_' + login;
+        var twCacheKey = 'tp9_tw_emotes_ch_' + login;
         var restoredFromCache = false;
         try {
             var rawChCache = sessionStorage.getItem(cacheKey);
@@ -41029,6 +41486,22 @@ dashboardButton.style.visibility = 'hidden';
                     rebuildBttvEmoteMap();
                 }
             }
+            var rawTwChCache = sessionStorage.getItem(twCacheKey);
+            if (rawTwChCache) {
+                var parsedTwCh = JSON.parse(rawTwChCache);
+                if (parsedTwCh && Array.isArray(parsedTwCh.items)) {
+                    twitchChannelEmotes = parsedTwCh.items;
+                    twitchChannelMeta = parsedTwCh.meta || { login: login, displayName: login, avatar: '' };
+                    reconcileTwitchEmoteState();
+                } else {
+                    twitchChannelEmotes = [];
+                    twitchChannelMeta = { login: login, displayName: login, avatar: '' };
+                }
+            } else {
+                twitchChannelEmotes = [];
+                twitchChannelMeta = { login: login, displayName: login, avatar: '' };
+                reconcileTwitchEmoteState();
+            }
         } catch (e) {}
         if (!restoredFromCache && bttvChannelEmotes.length > 0) {
             bttvChannelEmotes = [];
@@ -41037,6 +41510,95 @@ dashboardButton.style.visibility = 'hidden';
 
         resolveTwitchChannelId(login).then(function (info) {
             if (bttvCurrentChannel !== login) return;
+
+            // Extraction complète des émotes Twitch natives du streamer (Follower + Abonnés Tier 1/2/3 + Bits)
+            var gqlUser = info.gqlUser;
+            var ivrData = info.ivrData;
+            var dispName = (gqlUser && gqlUser.displayName) || login;
+            var avatarUrl = (gqlUser && gqlUser.profileImageURL) || (info.ffzData && info.ffzData.room && info.ffzData.room.moderator_badge) || '';
+            twitchChannelMeta = { login: login, displayName: dispName, avatar: avatarUrl };
+
+            var isBroadcasterSelf = Boolean(bttvDetectedUserLogin && bttvDetectedUserLogin.toLowerCase() === login);
+            var domFollows = Boolean(document.querySelector('[data-a-target="unfollow-button"]'));
+            var gqlFollows = Boolean(gqlUser && gqlUser.self && gqlUser.self.follower);
+            var userSubTier = 0;
+            if (isBroadcasterSelf) {
+                userSubTier = 3000;
+            } else if (gqlUser && gqlUser.self && gqlUser.self.subscriptionBenefit && gqlUser.self.subscriptionBenefit.tier) {
+                userSubTier = parseInt(gqlUser.self.subscriptionBenefit.tier, 10) || 1000;
+            }
+            var hasAuth = Boolean(typeof getTwitchAuthHeaderFallback === 'function' && getTwitchAuthHeaderFallback());
+            var followerUnlocked = isBroadcasterSelf || gqlFollows || domFollows || userSubTier > 0;
+
+            var nativeCollected = [];
+            var seenNativeIds = new Set();
+            function pushNative(rawEm, opts) {
+                var built = buildTwitchEmoteObj(rawEm, opts);
+                if (!built || seenNativeIds.has(built.id)) return;
+                if (twitchUserOwnedEmoteIds.has(built.id) || (built.setID && twitchUserOwnedSetIds.has(built.setID))) {
+                    built.locked = false;
+                }
+                seenNativeIds.add(built.id);
+                nativeCollected.push(built);
+            }
+
+            // 1) Follower emotes (GQL localEmoteSets ou IVR localEmotes)
+            var localSets = (gqlUser && gqlUser.channel && Array.isArray(gqlUser.channel.localEmoteSets))
+                ? gqlUser.channel.localEmoteSets
+                : (ivrData && Array.isArray(ivrData.localEmotes) ? ivrData.localEmotes : []);
+            localSets.forEach(function (ls) {
+                if (!ls || !Array.isArray(ls.emotes)) return;
+                ls.emotes.forEach(function (em) {
+                    pushNative(em, {
+                        subSource: 'de ' + dispName + ' (Follower)',
+                        isChannel: true,
+                        locked: hasAuth ? !followerUnlocked : true,
+                        tierLabel: 'Follower'
+                    });
+                });
+            });
+
+            // 2) Subscription Tier 1 / Tier 2 / Tier 3 emotes (GQL subscriptionProducts ou IVR subProducts)
+            var subProds = (gqlUser && Array.isArray(gqlUser.subscriptionProducts) && gqlUser.subscriptionProducts.length)
+                ? gqlUser.subscriptionProducts
+                : (ivrData && Array.isArray(ivrData.subProducts) ? ivrData.subProducts : []);
+            subProds.forEach(function (prod) {
+                if (!prod || !Array.isArray(prod.emotes)) return;
+                var tierNum = parseInt(prod.tier, 10) || 1000;
+                var tierName = tierNum >= 3000 ? 'Sub Tier 3' : (tierNum >= 2000 ? 'Sub Tier 2' : 'Abonné');
+                var isUnlockedTier = userSubTier >= tierNum;
+                prod.emotes.forEach(function (em) {
+                    pushNative(em, {
+                        subSource: 'de ' + dispName,
+                        isChannel: true,
+                        locked: !isUnlockedTier,
+                        tierLabel: tierName
+                    });
+                });
+            });
+
+            // 3) Bits tier emotes (IVR bitEmotes)
+            if (ivrData && Array.isArray(ivrData.bitEmotes)) {
+                ivrData.bitEmotes.forEach(function (em) {
+                    pushNative(em, {
+                        subSource: 'de ' + dispName + ' (Bits)',
+                        isChannel: true,
+                        locked: !isBroadcasterSelf,
+                        tierLabel: 'Bits'
+                    });
+                });
+            }
+
+            twitchChannelEmotes = nativeCollected;
+            reconcileTwitchEmoteState();
+            try {
+                sessionStorage.setItem(twCacheKey, JSON.stringify({
+                    ts: Date.now(),
+                    meta: twitchChannelMeta,
+                    items: twitchChannelEmotes
+                }));
+            } catch (eTw) {}
+
             var collected = [];
 
             if (info.ffzData && info.ffzData.sets) {
@@ -42656,11 +43218,13 @@ dashboardButton.style.visibility = 'hidden';
 
     function updateChatInputEmoteMirror() {
         var input = document.querySelector('[data-a-target="chat-input"]');
+        var hasThirdParty = (pageConfig.bttvEmotes !== false || pageConfig.stvEmotes !== false) && bttvEmoteMap.size > 0;
+        var hasTwitchLookup = twitchUnlockedEmoteMap.size > 0;
         if (
             !input ||
             scriptIsOff() ||
-            (pageConfig.bttvEmotes === false && pageConfig.stvEmotes === false) ||
-            !bttvEmoteMap.size
+            (!hasThirdParty && !hasTwitchLookup) ||
+            (input.querySelector && input.querySelector('img'))
         ) {
             if (input) input.classList.remove('tp9-has-input-emotes');
             if (bttvInputMirrorEl) bttvInputMirrorEl.style.display = 'none';
@@ -42706,7 +43270,8 @@ dashboardButton.style.visibility = 'hidden';
         var parts = raw.split(/(\s+)/);
         var hasAnyEmote = false;
         for (var i = 0; i < parts.length; i++) {
-            if (bttvEmoteMap.has(parts[i])) {
+            var pTok = parts[i];
+            if ((hasThirdParty && bttvEmoteMap.has(pTok)) || (hasTwitchLookup && twitchUnlockedEmoteMap.has(pTok))) {
                 hasAnyEmote = true;
                 break;
             }
@@ -42762,7 +43327,7 @@ dashboardButton.style.visibility = 'hidden';
         var html = '';
         for (var j = 0; j < parts.length; j++) {
             var tok = parts[j];
-            var em = bttvEmoteMap.get(tok);
+            var em = (hasThirdParty && bttvEmoteMap.get(tok)) || (hasTwitchLookup && twitchUnlockedEmoteMap.get(tok)) || null;
             if (em) {
                 var u1 = resolveEmoteDisplayUrl(em, false);
                 html += '<span class="tp9-cim-emote">' +
@@ -43120,6 +43685,463 @@ dashboardButton.style.visibility = 'hidden';
         return false;
     }
 
+    var EMOJI_COMPACT_DB = {
+        people: [
+            "😀:grinning,smile,happy;😃:smiley,happy,joy;😄:smile,happy,joy;😁:grin;😆:laughing,satisfied,happy,haha",
+            "😅:sweat_smile,hot;🤣:rofl,lol,laughing;😂:joy,tears;🙂:slightly_smiling_face;🙃:upside_down_face",
+            "🫠:melting_face,sarcasm,dread;😉:wink,flirt;😊:blush,proud;😇:innocent,angel",
+            "🥰:smiling_face_with_three_hearts,love;😍:heart_eyes,love,crush;🤩:star_struck,eyes;😘:kissing_heart,flirt",
+            "😗:kissing;☺️:relaxed,blush,pleased;😚:kissing_closed_eyes;😙:kissing_smiling_eyes;🥲:smiling_face_with_tear",
+            "😋:yum,tongue,lick;😛:stuck_out_tongue;😜:stuck_out_tongue_winking_eye,prank,silly;🤪:zany_face,goofy,wacky",
+            "😝:stuck_out_tongue_closed_eyes,prank;🤑:money_mouth_face,rich;🤗:hugs;🤭:hand_over_mouth,quiet,whoops",
+            "🫢:face_with_open_eyes_and_hand_over_mouth,gasp,shock;🫣:face_with_peeking_eye;🤫:shushing_face,silence,quiet",
+            "🤔:thinking;🫡:saluting_face,respect;🤐:zipper_mouth_face,silence,hush;🤨:raised_eyebrow,suspicious",
+            "😐:neutral_face,meh;😑:expressionless;😶:no_mouth,mute,silence;🫥:dotted_line_face,invisible",
+            "😶‍🌫️:face_in_clouds;😏:smirk,smug;😒:unamused,meh;🙄:roll_eyes;😬:grimacing;😮‍💨:face_exhaling",
+            "🤥:lying_face,liar;🫨:shaking_face,shock;😌:relieved,whew;😔:pensive;😪:sleepy,tired;🤤:drooling_face",
+            "😴:sleeping,zzz;😷:mask,sick,ill;🤒:face_with_thermometer,sick;🤕:face_with_head_bandage,hurt",
+            "🤢:nauseated_face,sick,barf;🤮:vomiting_face,barf,sick;🤧:sneezing_face,achoo,sick;🥵:hot_face,heat,sweating",
+            "🥶:cold_face,freezing,ice;😵:dizzy_face;🥴:woozy_face,groggy;😵‍💫:face_with_spiral_eyes",
+            "🤯:exploding_head,mind,blown;🤠:cowboy_hat_face;🥳:partying_face,celebration,birthday;🥸:disguised_face",
+            "😎:sunglasses,cool;🤓:nerd_face,geek,glasses;🧐:monocle_face;😕:confused;🫤:face_with_diagonal_mouth,confused",
+            "😟:worried,nervous;🙁:slightly_frowning_face;☹️:frowning_face;😮:open_mouth,surprise,impressed",
+            "😯:hushed,silence,speechless;😲:astonished,amazed,gasp;😳:flushed;🥺:pleading_face,puppy,eyes",
+            "🥹:face_holding_back_tears,tears,gratitude;😦:frowning;😧:anguished,stunned;😨:fearful,scared,shocked",
+            "😰:cold_sweat,nervous;😥:disappointed_relieved,phew,sweat;😢:cry,sad,tear;😭:sob,sad,cry",
+            "😱:scream,horror,shocked;😖:confounded;😣:persevere,struggling;😞:disappointed,sad;😓:sweat;😩:weary,tired",
+            "😫:tired_face,upset,whine;🥱:yawning_face;😤:triumph,smug;😡:rage,pout,angry;😠:angry,mad,annoyed",
+            "🤬:cursing_face,foul;😈:smiling_imp,devil,evil;👿:imp,angry,devil;💀:skull,dead,danger",
+            "☠️:skull_and_crossbones,danger,pirate;💩:hankey,poop,shit,crap;🤡:clown_face;👹:japanese_ogre,monster",
+            "👺:japanese_goblin;👻:ghost,halloween;👽:alien,ufo;👾:space_invader,game,retro;🤖:robot;😺:smiley_cat",
+            "😸:smile_cat;😹:joy_cat;😻:heart_eyes_cat;😼:smirk_cat;😽:kissing_cat;🙀:scream_cat,horror",
+            "😿:crying_cat_face,sad,tear;😾:pouting_cat;🙈:see_no_evil,monkey,blind;🙉:hear_no_evil,monkey,deaf",
+            "🙊:speak_no_evil,monkey,mute;💌:love_letter,email,envelope;💘:cupid,love,heart;💝:gift_heart,chocolates",
+            "💖:sparkling_heart;💗:heartpulse;💓:heartbeat;💞:revolving_hearts;💕:two_hearts;💟:heart_decoration",
+            "❣️:heavy_heart_exclamation;💔:broken_heart;❤️‍🔥:heart_on_fire;❤️‍🩹:mending_heart;❤️:heart,love;🩷:pink_heart",
+            "🧡:orange_heart;💛:yellow_heart;💚:green_heart;💙:blue_heart;🩵:light_blue_heart;💜:purple_heart;🤎:brown_heart",
+            "🖤:black_heart;🩶:grey_heart;🤍:white_heart;💋:kiss,lipstick;💯:100,score,perfect;💢:anger,angry",
+            "💥:boom,collision,explode;💫:dizzy,star;💦:sweat_drops,water,workout;💨:dash,wind,blow;🕳️:hole",
+            "💬:speech_balloon,comment;👁️‍🗨️:eye_speech_bubble;🗨️:left_speech_bubble;🗯️:right_anger_bubble",
+            "💭:thought_balloon,thinking;💤:zzz,sleeping;👋:wave,goodbye;🤚:raised_back_of_hand",
+            "🖐️:raised_hand_with_fingers_splayed;✋:hand,raised_hand,highfive,stop;🖖:vulcan_salute,prosper,spock",
+            "🫱:rightwards_hand;🫲:leftwards_hand;🫳:palm_down_hand;🫴:palm_up_hand;🫷:leftwards_pushing_hand",
+            "🫸:rightwards_pushing_hand;👌:ok_hand;🤌:pinched_fingers;🤏:pinching_hand;✌️:v,victory,peace",
+            "🤞:crossed_fingers,luck,hopeful;🫰:hand_with_index_finger_and_thumb_crossed;🤟:love_you_gesture;🤘:metal",
+            "🤙:call_me_hand;👈:point_left;👉:point_right;👆:point_up_2;🖕:middle_finger,fu;👇:point_down;☝️:point_up",
+            "🫵:index_pointing_at_the_viewer;👍:+1,thumbsup,approve,ok;👎:-1,thumbsdown,disapprove,bury",
+            "✊:fist_raised,fist,power;👊:fist_oncoming,facepunch,punch,attack;🤛:fist_left;🤜:fist_right",
+            "👏:clap,praise,applause;🙌:raised_hands,hooray;🫶:heart_hands,love;👐:open_hands;🤲:palms_up_together",
+            "🤝:handshake,deal;🙏:pray,please,hope;✍️:writing_hand;💅:nail_care,beauty,manicure;🤳:selfie",
+            "💪:muscle,flex,bicep;🦾:mechanical_arm;🦿:mechanical_leg;🦵:leg;🦶:foot;👂:ear,hear,sound",
+            "🦻:ear_with_hearing_aid;👃:nose,smell;🧠:brain;🫀:anatomical_heart;🫁:lungs;🦷:tooth;🦴:bone;👀:eyes,look,see",
+            "👁️:eye;👅:tongue,taste;👄:lips,kiss;🫦:biting_lip;👶:baby,child,newborn;🧒:child;👦:boy,child;👧:girl,child",
+            "🧑:adult;👱:blond_haired_person;👨:man,mustache,father;🧔:bearded_person;🧔‍♂️:man_beard;🧔‍♀️:woman_beard",
+            "👨‍🦰:red_haired_man;👨‍🦱:curly_haired_man;👨‍🦳:white_haired_man;👨‍🦲:bald_man;👩:woman,girls",
+            "👩‍🦰:red_haired_woman;🧑‍🦰:person_red_hair;👩‍🦱:curly_haired_woman;🧑‍🦱:person_curly_hair",
+            "👩‍🦳:white_haired_woman;🧑‍🦳:person_white_hair;👩‍🦲:bald_woman;🧑‍🦲:person_bald",
+            "👱‍♀️:blond_haired_woman,blonde_woman;👱‍♂️:blond_haired_man;🧓:older_adult;👴:older_man;👵:older_woman",
+            "🙍:frowning_person;🙍‍♂️:frowning_man;🙍‍♀️:frowning_woman;🙎:pouting_face;🙎‍♂️:pouting_man;🙎‍♀️:pouting_woman",
+            "🙅:no_good,stop,halt;🙅‍♂️:no_good_man,ng_man,stop,halt;🙅‍♀️:no_good_woman,ng_woman,stop,halt;🙆:ok_person",
+            "🙆‍♂️:ok_man;🙆‍♀️:ok_woman;💁:tipping_hand_person,information_desk_person",
+            "💁‍♂️:tipping_hand_man,sassy_man,information;💁‍♀️:tipping_hand_woman,sassy_woman,information;🙋:raising_hand",
+            "🙋‍♂️:raising_hand_man;🙋‍♀️:raising_hand_woman;🧏:deaf_person;🧏‍♂️:deaf_man;🧏‍♀️:deaf_woman",
+            "🙇:bow,respect,thanks;🙇‍♂️:bowing_man,respect,thanks;🙇‍♀️:bowing_woman,respect,thanks;🤦:facepalm",
+            "🤦‍♂️:man_facepalming;🤦‍♀️:woman_facepalming;🤷:shrug;🤷‍♂️:man_shrugging;🤷‍♀️:woman_shrugging",
+            "🧑‍⚕️:health_worker;👨‍⚕️:man_health_worker,doctor,nurse;👩‍⚕️:woman_health_worker,doctor,nurse;🧑‍🎓:student",
+            "👨‍🎓:man_student,graduation;👩‍🎓:woman_student,graduation;🧑‍🏫:teacher;👨‍🏫:man_teacher,school,professor",
+            "👩‍🏫:woman_teacher,school,professor;🧑‍⚖️:judge;👨‍⚖️:man_judge,justice;👩‍⚖️:woman_judge,justice;🧑‍🌾:farmer",
+            "👨‍🌾:man_farmer;👩‍🌾:woman_farmer;🧑‍🍳:cook;👨‍🍳:man_cook,chef;👩‍🍳:woman_cook,chef;🧑‍🔧:mechanic",
+            "👨‍🔧:man_mechanic;👩‍🔧:woman_mechanic;🧑‍🏭:factory_worker;👨‍🏭:man_factory_worker;👩‍🏭:woman_factory_worker",
+            "🧑‍💼:office_worker;👨‍💼:man_office_worker,business;👩‍💼:woman_office_worker,business;🧑‍🔬:scientist",
+            "👨‍🔬:man_scientist,research;👩‍🔬:woman_scientist,research;🧑‍💻:technologist;👨‍💻:man_technologist,coder",
+            "👩‍💻:woman_technologist,coder;🧑‍🎤:singer;👨‍🎤:man_singer,rockstar;👩‍🎤:woman_singer,rockstar;🧑‍🎨:artist",
+            "👨‍🎨:man_artist,painter;👩‍🎨:woman_artist,painter;🧑‍✈️:pilot;👨‍✈️:man_pilot;👩‍✈️:woman_pilot",
+            "🧑‍🚀:astronaut;👨‍🚀:man_astronaut,space;👩‍🚀:woman_astronaut,space;🧑‍🚒:firefighter;👨‍🚒:man_firefighter",
+            "👩‍🚒:woman_firefighter;👮:police_officer,cop,law;👮‍♂️:policeman,law,cop;👮‍♀️:policewoman,law,cop",
+            "🕵️:detective,sleuth;🕵️‍♂️:male_detective,sleuth;🕵️‍♀️:female_detective,sleuth;💂:guard;💂‍♂️:guardsman",
+            "💂‍♀️:guardswoman;🥷:ninja;👷:construction_worker,helmet;👷‍♂️:construction_worker_man,helmet",
+            "👷‍♀️:construction_worker_woman,helmet;🫅:person_with_crown;🤴:prince,crown,royal;👸:princess,crown,royal",
+            "👳:person_with_turban;👳‍♂️:man_with_turban;👳‍♀️:woman_with_turban;👲:man_with_gua_pi_mao",
+            "🧕:woman_with_headscarf,hijab;🤵:person_in_tuxedo,groom,marriage;🤵‍♂️:man_in_tuxedo;🤵‍♀️:woman_in_tuxedo",
+            "👰:person_with_veil,marriage,wedding;👰‍♂️:man_with_veil;👰‍♀️:woman_with_veil,bride_with_veil;🤰:pregnant_woman",
+            "🫃:pregnant_man;🫄:pregnant_person;🤱:breast_feeding,nursing;👩‍🍼:woman_feeding_baby;👨‍🍼:man_feeding_baby",
+            "🧑‍🍼:person_feeding_baby;👼:angel;🎅:santa,christmas;🤶:mrs_claus,santa;🧑‍🎄:mx_claus;🦸:superhero",
+            "🦸‍♂️:superhero_man;🦸‍♀️:superhero_woman;🦹:supervillain;🦹‍♂️:supervillain_man;🦹‍♀️:supervillain_woman",
+            "🧙:mage,wizard;🧙‍♂️:mage_man,wizard;🧙‍♀️:mage_woman,wizard;🧚:fairy;🧚‍♂️:fairy_man;🧚‍♀️:fairy_woman",
+            "🧛:vampire;🧛‍♂️:vampire_man;🧛‍♀️:vampire_woman;🧜:merperson;🧜‍♂️:merman;🧜‍♀️:mermaid;🧝:elf;🧝‍♂️:elf_man",
+            "🧝‍♀️:elf_woman;🧞:genie;🧞‍♂️:genie_man;🧞‍♀️:genie_woman;🧟:zombie;🧟‍♂️:zombie_man;🧟‍♀️:zombie_woman",
+            "🧌:troll;💆:massage,spa;💆‍♂️:massage_man,spa;💆‍♀️:massage_woman,spa;💇:haircut,beauty;💇‍♂️:haircut_man",
+            "💇‍♀️:haircut_woman;🚶:walking;🚶‍♂️:walking_man;🚶‍♀️:walking_woman;🧍:standing_person;🧍‍♂️:standing_man",
+            "🧍‍♀️:standing_woman;🧎:kneeling_person;🧎‍♂️:kneeling_man;🧎‍♀️:kneeling_woman;🧑‍🦯:person_with_probing_cane",
+            "👨‍🦯:man_with_probing_cane;👩‍🦯:woman_with_probing_cane;🧑‍🦼:person_in_motorized_wheelchair",
+            "👨‍🦼:man_in_motorized_wheelchair;👩‍🦼:woman_in_motorized_wheelchair;🧑‍🦽:person_in_manual_wheelchair",
+            "👨‍🦽:man_in_manual_wheelchair;👩‍🦽:woman_in_manual_wheelchair;🏃:runner,running,exercise,workout",
+            "🏃‍♂️:running_man,exercise,workout;🏃‍♀️:running_woman,exercise,workout;💃:woman_dancing,dancer,dress",
+            "🕺:man_dancing,dancer;🕴️:business_suit_levitating;👯:dancers,bunny;👯‍♂️:dancing_men,bunny",
+            "👯‍♀️:dancing_women,bunny;🧖:sauna_person,steamy;🧖‍♂️:sauna_man,steamy;🧖‍♀️:sauna_woman,steamy",
+            "🧗:climbing,bouldering;🧗‍♂️:climbing_man,bouldering;🧗‍♀️:climbing_woman,bouldering;🤺:person_fencing",
+            "🏇:horse_racing;⛷️:skier;🏂:snowboarder;🏌️:golfing;🏌️‍♂️:golfing_man;🏌️‍♀️:golfing_woman;🏄:surfer",
+            "🏄‍♂️:surfing_man;🏄‍♀️:surfing_woman;🚣:rowboat;🚣‍♂️:rowing_man;🚣‍♀️:rowing_woman;🏊:swimmer",
+            "🏊‍♂️:swimming_man;🏊‍♀️:swimming_woman;⛹️:bouncing_ball_person,basketball",
+            "⛹️‍♂️:bouncing_ball_man,basketball_man;⛹️‍♀️:bouncing_ball_woman,basketball_woman;🏋️:weight_lifting,gym,workout",
+            "🏋️‍♂️:weight_lifting_man,gym,workout;🏋️‍♀️:weight_lifting_woman,gym,workout;🚴:bicyclist;🚴‍♂️:biking_man",
+            "🚴‍♀️:biking_woman;🚵:mountain_bicyclist;🚵‍♂️:mountain_biking_man;🚵‍♀️:mountain_biking_woman;🤸:cartwheeling",
+            "🤸‍♂️:man_cartwheeling;🤸‍♀️:woman_cartwheeling;🤼:wrestling;🤼‍♂️:men_wrestling;🤼‍♀️:women_wrestling",
+            "🤽:water_polo;🤽‍♂️:man_playing_water_polo;🤽‍♀️:woman_playing_water_polo;🤾:handball_person",
+            "🤾‍♂️:man_playing_handball;🤾‍♀️:woman_playing_handball;🤹:juggling_person;🤹‍♂️:man_juggling",
+            "🤹‍♀️:woman_juggling;🧘:lotus_position,meditation;🧘‍♂️:lotus_position_man,meditation",
+            "🧘‍♀️:lotus_position_woman,meditation;🛀:bath,shower;🛌:sleeping_bed;🧑‍🤝‍🧑:people_holding_hands,couple,date",
+            "👭:two_women_holding_hands,couple,date;👫:couple,date;👬:two_men_holding_hands,couple,date;💏:couplekiss",
+            "👩‍❤️‍💋‍👨:couplekiss_man_woman;👨‍❤️‍💋‍👨:couplekiss_man_man;👩‍❤️‍💋‍👩:couplekiss_woman_woman",
+            "💑:couple_with_heart;👩‍❤️‍👨:couple_with_heart_woman_man;👨‍❤️‍👨:couple_with_heart_man_man",
+            "👩‍❤️‍👩:couple_with_heart_woman_woman;👪:family,home,parents;👨‍👩‍👦:family_man_woman_boy",
+            "👨‍👩‍👧:family_man_woman_girl;👨‍👩‍👧‍👦:family_man_woman_girl_boy;👨‍👩‍👦‍👦:family_man_woman_boy_boy",
+            "👨‍👩‍👧‍👧:family_man_woman_girl_girl;👨‍👨‍👦:family_man_man_boy;👨‍👨‍👧:family_man_man_girl",
+            "👨‍👨‍👧‍👦:family_man_man_girl_boy;👨‍👨‍👦‍👦:family_man_man_boy_boy;👨‍👨‍👧‍👧:family_man_man_girl_girl",
+            "👩‍👩‍👦:family_woman_woman_boy;👩‍👩‍👧:family_woman_woman_girl;👩‍👩‍👧‍👦:family_woman_woman_girl_boy",
+            "👩‍👩‍👦‍👦:family_woman_woman_boy_boy;👩‍👩‍👧‍👧:family_woman_woman_girl_girl;👨‍👦:family_man_boy",
+            "👨‍👦‍👦:family_man_boy_boy;👨‍👧:family_man_girl;👨‍👧‍👦:family_man_girl_boy;👨‍👧‍👧:family_man_girl_girl",
+            "👩‍👦:family_woman_boy;👩‍👦‍👦:family_woman_boy_boy;👩‍👧:family_woman_girl;👩‍👧‍👦:family_woman_girl_boy",
+            "👩‍👧‍👧:family_woman_girl_girl;🗣️:speaking_head;👤:bust_in_silhouette,user;👥:busts_in_silhouette,users,group",
+            "🫂:people_hugging;👣:footprints,feet,tracks"
+        ].join(';'),
+        nature: [
+            "🐵:monkey_face;🐒:monkey;🦍:gorilla;🦧:orangutan;🐶:dog,pet;🐕:dog2;🦮:guide_dog;🐕‍🦺:service_dog",
+            "🐩:poodle,dog;🐺:wolf;🦊:fox_face;🦝:raccoon;🐱:cat,pet;🐈:cat2;🐈‍⬛:black_cat;🦁:lion;🐯:tiger;🐅:tiger2",
+            "🐆:leopard;🐴:horse;🫎:moose,canada;🫏:donkey,mule;🐎:racehorse,speed;🦄:unicorn;🦓:zebra;🦌:deer;🦬:bison",
+            "🐮:cow;🐂:ox;🐃:water_buffalo;🐄:cow2;🐷:pig;🐖:pig2;🐗:boar;🐽:pig_nose;🐏:ram;🐑:sheep;🐐:goat",
+            "🐪:dromedary_camel,desert;🐫:camel;🦙:llama;🦒:giraffe;🐘:elephant;🦣:mammoth;🦏:rhinoceros;🦛:hippopotamus",
+            "🐭:mouse;🐁:mouse2;🐀:rat;🐹:hamster,pet;🐰:rabbit,bunny;🐇:rabbit2;🐿️:chipmunk;🦫:beaver;🦔:hedgehog;🦇:bat",
+            "🐻:bear;🐻‍❄️:polar_bear;🐨:koala;🐼:panda_face;🦥:sloth;🦦:otter;🦨:skunk;🦘:kangaroo;🦡:badger",
+            "🐾:feet,paw_prints;🦃:turkey,thanksgiving;🐔:chicken;🐓:rooster;🐣:hatching_chick;🐤:baby_chick;🐥:hatched_chick",
+            "🐦:bird;🐧:penguin;🕊️:dove,peace;🦅:eagle;🦆:duck;🦢:swan;🦉:owl;🦤:dodo;🪶:feather;🦩:flamingo;🦚:peacock",
+            "🦜:parrot;🪽:wing,fly;🐦‍⬛:black_bird;🪿:goose,honk;🐸:frog;🐊:crocodile;🐢:turtle,slow;🦎:lizard;🐍:snake",
+            "🐲:dragon_face;🐉:dragon;🦕:sauropod,dinosaur;🦖:t-rex,dinosaur;🐳:whale,sea;🐋:whale2;🐬:dolphin,flipper",
+            "🦭:seal;🐟:fish;🐠:tropical_fish;🐡:blowfish;🦈:shark;🐙:octopus;🐚:shell,sea,beach;🪸:coral;🪼:jellyfish",
+            "🐌:snail,slow;🦋:butterfly;🐛:bug;🐜:ant;🐝:bee,honeybee;🪲:beetle;🐞:lady_beetle,bug;🦗:cricket;🪳:cockroach",
+            "🕷️:spider;🕸️:spider_web;🦂:scorpion;🦟:mosquito;🪰:fly;🪱:worm;🦠:microbe,germ;💐:bouquet,flowers",
+            "🌸:cherry_blossom,flower,spring;💮:white_flower;🪷:lotus;🏵️:rosette;🌹:rose,flower;🥀:wilted_flower;🌺:hibiscus",
+            "🌻:sunflower;🌼:blossom;🌷:tulip,flower;🪻:hyacinth;🌱:seedling,plant;🪴:potted_plant;🌲:evergreen_tree,wood",
+            "🌳:deciduous_tree,wood;🌴:palm_tree;🌵:cactus;🌾:ear_of_rice;🌿:herb;☘️:shamrock;🍀:four_leaf_clover,luck",
+            "🍁:maple_leaf,canada;🍂:fallen_leaf,autumn;🍃:leaves,leaf;🪹:empty_nest;🪺:nest_with_eggs;🍄:mushroom,fungus"
+        ].join(';'),
+        food: [
+            "🍇:grapes;🍈:melon;🍉:watermelon;🍊:tangerine,orange,mandarin;🍋:lemon;🍌:banana,fruit;🍍:pineapple;🥭:mango",
+            "🍎:apple;🍏:green_apple,fruit;🍐:pear;🍑:peach;🍒:cherries,fruit;🍓:strawberry,fruit;🫐:blueberries",
+            "🥝:kiwi_fruit;🍅:tomato;🫒:olive;🥥:coconut;🥑:avocado;🍆:eggplant,aubergine;🥔:potato;🥕:carrot;🌽:corn",
+            "🌶️:hot_pepper,spicy;🫑:bell_pepper;🥒:cucumber;🥬:leafy_green;🥦:broccoli;🧄:garlic;🧅:onion;🥜:peanuts",
+            "🫘:beans;🌰:chestnut;🫚:ginger_root;🫛:pea_pod;🍞:bread,toast;🥐:croissant;🥖:baguette_bread;🫓:flatbread",
+            "🥨:pretzel;🥯:bagel;🥞:pancakes;🧇:waffle;🧀:cheese;🍖:meat_on_bone;🍗:poultry_leg,meat,chicken;🥩:cut_of_meat",
+            "🥓:bacon;🍔:hamburger,burger;🍟:fries;🍕:pizza;🌭:hotdog;🥪:sandwich;🌮:taco;🌯:burrito;🫔:tamale",
+            "🥙:stuffed_flatbread;🧆:falafel;🥚:egg;🍳:fried_egg,breakfast;🥘:shallow_pan_of_food,paella,curry;🍲:stew",
+            "🫕:fondue;🥣:bowl_with_spoon;🥗:green_salad;🍿:popcorn;🧈:butter;🧂:salt;🥫:canned_food;🍱:bento;🍘:rice_cracker",
+            "🍙:rice_ball;🍚:rice;🍛:curry;🍜:ramen,noodle;🍝:spaghetti,pasta;🍠:sweet_potato;🍢:oden;🍣:sushi",
+            "🍤:fried_shrimp,tempura;🍥:fish_cake;🥮:moon_cake;🍡:dango;🥟:dumpling;🥠:fortune_cookie;🥡:takeout_box;🦀:crab",
+            "🦞:lobster;🦐:shrimp;🦑:squid;🦪:oyster;🍦:icecream;🍧:shaved_ice;🍨:ice_cream;🍩:doughnut;🍪:cookie",
+            "🎂:birthday,party;🍰:cake,dessert;🧁:cupcake;🥧:pie;🍫:chocolate_bar;🍬:candy,sweet;🍭:lollipop;🍮:custard",
+            "🍯:honey_pot;🍼:baby_bottle,milk;🥛:milk_glass;☕:coffee,cafe,espresso;🫖:teapot;🍵:tea,green,breakfast;🍶:sake",
+            "🍾:champagne,bottle,bubbly;🍷:wine_glass;🍸:cocktail,drink;🍹:tropical_drink,summer,vacation;🍺:beer,drink",
+            "🍻:beers,drinks;🥂:clinking_glasses,cheers,toast;🥃:tumbler_glass,whisky;🫗:pouring_liquid;🥤:cup_with_straw",
+            "🧋:bubble_tea;🧃:beverage_box;🧉:mate;🧊:ice_cube;🥢:chopsticks;🍽️:plate_with_cutlery,dining,dinner",
+            "🍴:fork_and_knife,cutlery;🥄:spoon;🔪:hocho,knife,cut,chop;🫙:jar;🏺:amphora"
+        ].join(';'),
+        activities: [
+            "🎃:jack_o_lantern,halloween;🎄:christmas_tree;🎆:fireworks,festival,celebration;🎇:sparkler;🧨:firecracker",
+            "✨:sparkles,shiny;🎈:balloon,party,birthday;🎉:tada,hooray,party;🎊:confetti_ball;🎋:tanabata_tree;🎍:bamboo",
+            "🎎:dolls;🎏:flags;🎐:wind_chime;🎑:rice_scene;🧧:red_envelope;🎀:ribbon;🎁:gift,present,birthday",
+            "🎗️:reminder_ribbon;🎟️:tickets;🎫:ticket;🎖️:medal_military;🏆:trophy,award,contest;🏅:medal_sports,gold,winner",
+            "🥇:1st_place_medal,gold;🥈:2nd_place_medal,silver;🥉:3rd_place_medal,bronze;⚽:soccer,sports;⚾:baseball,sports",
+            "🥎:softball;🏀:basketball,sports;🏐:volleyball;🏈:football,sports;🏉:rugby_football;🎾:tennis,sports",
+            "🥏:flying_disc;🎳:bowling;🏏:cricket_game;🏑:field_hockey;🏒:ice_hockey;🥍:lacrosse;🏓:ping_pong;🏸:badminton",
+            "🥊:boxing_glove;🥋:martial_arts_uniform;🥅:goal_net;⛳:golf;⛸️:ice_skate,skating;🎣:fishing_pole_and_fish",
+            "🤿:diving_mask;🎽:running_shirt_with_sash,marathon;🎿:ski;🛷:sled;🥌:curling_stone;🎯:dart,target;🪀:yo_yo",
+            "🪁:kite;🔫:gun,shoot,weapon;🎱:8ball,pool,billiards;🔮:crystal_ball,fortune;🪄:magic_wand",
+            "🎮:video_game,play,controller;🕹️:joystick;🎰:slot_machine;🎲:game_die,dice,gambling;🧩:jigsaw;🧸:teddy_bear",
+            "🪅:pinata;🪩:mirror_ball,disco,party;🪆:nesting_dolls;♠️:spades;♥️:hearts;♦️:diamonds;♣️:clubs;♟️:chess_pawn",
+            "🃏:black_joker;🀄:mahjong;🎴:flower_playing_cards;🎭:performing_arts,theater,drama;🖼️:framed_picture",
+            "🎨:art,design,paint;🧵:thread;🪡:sewing_needle;🧶:yarn;🪢:knot"
+        ].join(';'),
+        travel: [
+            "🌍:earth_africa,globe,world;🌎:earth_americas,globe,world;🌏:earth_asia,globe,world",
+            "🌐:globe_with_meridians,world,global;🗺️:world_map,travel;🗾:japan;🧭:compass;🏔️:mountain_snow;⛰️:mountain",
+            "🌋:volcano;🗻:mount_fuji;🏕️:camping;🏖️:beach_umbrella;🏜️:desert;🏝️:desert_island;🏞️:national_park",
+            "🏟️:stadium;🏛️:classical_building;🏗️:building_construction;🧱:bricks;🪨:rock;🪵:wood;🛖:hut;🏘️:houses",
+            "🏚️:derelict_house;🏠:house;🏡:house_with_garden;🏢:office;🏣:post_office;🏤:european_post_office;🏥:hospital",
+            "🏦:bank;🏨:hotel;🏩:love_hotel;🏪:convenience_store;🏫:school;🏬:department_store;🏭:factory;🏯:japanese_castle",
+            "🏰:european_castle;💒:wedding,marriage;🗼:tokyo_tower;🗽:statue_of_liberty;⛪:church;🕌:mosque;🛕:hindu_temple",
+            "🕍:synagogue;⛩️:shinto_shrine;🕋:kaaba;⛲:fountain;⛺:tent,camping;🌁:foggy,karl;🌃:night_with_stars",
+            "🏙️:cityscape,skyline;🌄:sunrise_over_mountains;🌅:sunrise;🌆:city_sunset;🌇:city_sunrise;🌉:bridge_at_night",
+            "♨️:hotsprings;🎠:carousel_horse;🛝:playground_slide;🎡:ferris_wheel;🎢:roller_coaster;💈:barber;🎪:circus_tent",
+            "🚂:steam_locomotive,train;🚃:railway_car;🚄:bullettrain_side,train;🚅:bullettrain_front,train;🚆:train2;🚇:metro",
+            "🚈:light_rail;🚉:station;🚊:tram;🚝:monorail;🚞:mountain_railway;🚋:train;🚌:bus;🚍:oncoming_bus;🚎:trolleybus",
+            "🚐:minibus;🚑:ambulance;🚒:fire_engine;🚓:police_car;🚔:oncoming_police_car;🚕:taxi;🚖:oncoming_taxi",
+            "🚗:car,red_car;🚘:oncoming_automobile;🚙:blue_car;🛻:pickup_truck;🚚:truck;🚛:articulated_lorry;🚜:tractor",
+            "🏎️:racing_car;🏍️:motorcycle;🛵:motor_scooter;🦽:manual_wheelchair;🦼:motorized_wheelchair;🛺:auto_rickshaw",
+            "🚲:bike,bicycle;🛴:kick_scooter;🛹:skateboard;🛼:roller_skate;🚏:busstop;🛣️:motorway;🛤️:railway_track",
+            "🛢️:oil_drum;⛽:fuelpump;🛞:wheel;🚨:rotating_light,911,emergency;🚥:traffic_light",
+            "🚦:vertical_traffic_light,semaphore;🛑:stop_sign;🚧:construction,wip;⚓:anchor,ship;🛟:ring_buoy,life preserver",
+            "⛵:boat,sailboat;🛶:canoe;🚤:speedboat,ship;🛳️:passenger_ship,cruise;⛴️:ferry;🛥️:motor_boat;🚢:ship",
+            "✈️:airplane,flight;🛩️:small_airplane,flight;🛫:flight_departure;🛬:flight_arrival;🪂:parachute;💺:seat",
+            "🚁:helicopter;🚟:suspension_railway;🚠:mountain_cableway;🚡:aerial_tramway;🛰️:artificial_satellite,orbit,space",
+            "🚀:rocket,ship,launch;🛸:flying_saucer,ufo;🛎️:bellhop_bell;🧳:luggage;⌛:hourglass,time",
+            "⏳:hourglass_flowing_sand,time;⌚:watch,time;⏰:alarm_clock,morning;⏱️:stopwatch;⏲️:timer_clock",
+            "🕰️:mantelpiece_clock;🕛:clock12;🕧:clock1230;🕐:clock1;🕜:clock130;🕑:clock2;🕝:clock230;🕒:clock3;🕞:clock330",
+            "🕓:clock4;🕟:clock430;🕔:clock5;🕠:clock530;🕕:clock6;🕡:clock630;🕖:clock7;🕢:clock730;🕗:clock8;🕣:clock830",
+            "🕘:clock9;🕤:clock930;🕙:clock10;🕥:clock1030;🕚:clock11;🕦:clock1130;🌑:new_moon;🌒:waxing_crescent_moon",
+            "🌓:first_quarter_moon;🌔:moon,waxing_gibbous_moon;🌕:full_moon;🌖:waning_gibbous_moon;🌗:last_quarter_moon",
+            "🌘:waning_crescent_moon;🌙:crescent_moon,night;🌚:new_moon_with_face;🌛:first_quarter_moon_with_face",
+            "🌜:last_quarter_moon_with_face;🌡️:thermometer;☀️:sunny,weather;🌝:full_moon_with_face;🌞:sun_with_face,summer",
+            "🪐:ringed_planet;⭐:star;🌟:star2;🌠:stars;🌌:milky_way;☁️:cloud;⛅:partly_sunny,weather,cloud",
+            "⛈️:cloud_with_lightning_and_rain;🌤️:sun_behind_small_cloud;🌥️:sun_behind_large_cloud;🌦️:sun_behind_rain_cloud",
+            "🌧️:cloud_with_rain;🌨️:cloud_with_snow;🌩️:cloud_with_lightning;🌪️:tornado;🌫️:fog;🌬️:wind_face",
+            "🌀:cyclone,swirl;🌈:rainbow;🌂:closed_umbrella,weather,rain;☂️:open_umbrella;☔:umbrella,rain,weather",
+            "⛱️:parasol_on_ground,beach_umbrella;⚡:zap,lightning,thunder;❄️:snowflake,winter,cold",
+            "☃️:snowman_with_snow,winter,christmas;⛄:snowman,winter;☄️:comet;🔥:fire,burn;💧:droplet,water;🌊:ocean,sea"
+        ].join(';'),
+        objects: [
+            "👓:eyeglasses,glasses;🕶️:dark_sunglasses;🥽:goggles;🥼:lab_coat;🦺:safety_vest;👔:necktie,shirt,formal",
+            "👕:shirt,tshirt;👖:jeans,pants;🧣:scarf;🧤:gloves;🧥:coat;🧦:socks;👗:dress;👘:kimono;🥻:sari",
+            "🩱:one_piece_swimsuit;🩲:swim_brief;🩳:shorts;👙:bikini,beach;👚:womans_clothes;🪭:folding_hand_fan,sensu",
+            "👛:purse;👜:handbag,bag;👝:pouch,bag;🛍️:shopping,bags;🎒:school_satchel;🩴:thong_sandal;👞:mans_shoe,shoe",
+            "👟:athletic_shoe,sneaker,sport;🥾:hiking_boot;🥿:flat_shoe;👠:high_heel,shoe;👡:sandal,shoe;🩰:ballet_shoes",
+            "👢:boot;🪮:hair_pick;👑:crown,king,queen;👒:womans_hat;🎩:tophat,hat,classy;🎓:mortar_board,education,college",
+            "🧢:billed_cap;🪖:military_helmet;⛑️:rescue_worker_helmet;📿:prayer_beads;💄:lipstick,makeup",
+            "💍:ring,wedding,marriage;💎:gem,diamond;🔇:mute,sound,volume;🔈:speaker;🔉:sound,volume;🔊:loud_sound,volume",
+            "📢:loudspeaker,announcement;📣:mega;📯:postal_horn;🔔:bell,sound,notification;🔕:no_bell,volume,off",
+            "🎼:musical_score;🎵:musical_note;🎶:notes,music;🎙️:studio_microphone,podcast;🎚️:level_slider;🎛️:control_knobs",
+            "🎤:microphone,sing;🎧:headphones,music,earphones;📻:radio,podcast;🎷:saxophone;🪗:accordion;🎸:guitar,rock",
+            "🎹:musical_keyboard,piano;🎺:trumpet;🎻:violin;🪕:banjo;🥁:drum;🪘:long_drum;🪇:maracas,shaker;🪈:flute,recorder",
+            "📱:iphone,smartphone,mobile;📲:calling,call,incoming;☎️:phone,telephone;📞:telephone_receiver,phone,call",
+            "📟:pager;📠:fax;🔋:battery,power;🪫:low_battery;🔌:electric_plug;💻:computer,desktop,screen;🖥️:desktop_computer",
+            "🖨️:printer;⌨️:keyboard;🖱️:computer_mouse;🖲️:trackball;💽:minidisc;💾:floppy_disk,save;💿:cd;📀:dvd;🧮:abacus",
+            "🎥:movie_camera,film,video;🎞️:film_strip;📽️:film_projector;🎬:clapper,film;📺:tv;📷:camera,photo",
+            "📸:camera_flash,photo;📹:video_camera;📼:vhs;🔍:mag,search,zoom;🔎:mag_right;🕯️:candle;💡:bulb,idea,light",
+            "🔦:flashlight;🏮:izakaya_lantern,lantern;🪔:diya_lamp;📔:notebook_with_decorative_cover;📕:closed_book",
+            "📖:book,open_book;📗:green_book;📘:blue_book;📙:orange_book;📚:books,library;📓:notebook;📒:ledger",
+            "📃:page_with_curl;📜:scroll,document;📄:page_facing_up,document;📰:newspaper,press;🗞️:newspaper_roll,press",
+            "📑:bookmark_tabs;🔖:bookmark;🏷️:label,tag;💰:moneybag,dollar,cream;🪙:coin;💴:yen;💵:dollar,money;💶:euro",
+            "💷:pound;💸:money_with_wings,dollar;💳:credit_card,subscription;🧾:receipt;💹:chart;✉️:envelope,letter,email",
+            "📧:email,e-mail;📨:incoming_envelope;📩:envelope_with_arrow;📤:outbox_tray;📥:inbox_tray;📦:package,shipping",
+            "📫:mailbox;📪:mailbox_closed;📬:mailbox_with_mail;📭:mailbox_with_no_mail;📮:postbox;🗳️:ballot_box;✏️:pencil2",
+            "✒️:black_nib;🖋️:fountain_pen;🖊️:pen;🖌️:paintbrush;🖍️:crayon;📝:memo,pencil,document,note",
+            "💼:briefcase,business;📁:file_folder,directory;📂:open_file_folder;🗂️:card_index_dividers",
+            "📅:date,calendar,schedule;📆:calendar,schedule;🗒️:spiral_notepad;🗓️:spiral_calendar;📇:card_index",
+            "📈:chart_with_upwards_trend,graph,metrics;📉:chart_with_downwards_trend,graph,metrics;📊:bar_chart,stats,metrics",
+            "📋:clipboard;📌:pushpin,location;📍:round_pushpin,location;📎:paperclip;🖇️:paperclips;📏:straight_ruler",
+            "📐:triangular_ruler;✂️:scissors,cut;🗃️:card_file_box;🗄️:file_cabinet;🗑️:wastebasket,trash",
+            "🔒:lock,security,private;🔓:unlock,security;🔏:lock_with_ink_pen;🔐:closed_lock_with_key,security",
+            "🔑:key,lock,password;🗝️:old_key;🔨:hammer,tool;🪓:axe;⛏️:pick;⚒️:hammer_and_pick;🛠️:hammer_and_wrench",
+            "🗡️:dagger;⚔️:crossed_swords;💣:bomb,boom;🪃:boomerang;🏹:bow_and_arrow,archery;🛡️:shield;🪚:carpentry_saw",
+            "🔧:wrench,tool;🪛:screwdriver;🔩:nut_and_bolt;⚙️:gear;🗜️:clamp;⚖️:balance_scale;🦯:probing_cane;🔗:link",
+            "⛓️:chains;🪝:hook;🧰:toolbox;🧲:magnet;🪜:ladder;⚗️:alembic;🧪:test_tube;🧫:petri_dish;🧬:dna",
+            "🔬:microscope,science,laboratory;🔭:telescope;📡:satellite,signal;💉:syringe,health,hospital;🩸:drop_of_blood",
+            "💊:pill,health,medicine;🩹:adhesive_bandage;🩼:crutch;🩺:stethoscope;🩻:x_ray;🚪:door;🛗:elevator;🪞:mirror",
+            "🪟:window;🛏️:bed;🛋️:couch_and_lamp;🪑:chair;🚽:toilet,wc;🪠:plunger;🚿:shower,bath;🛁:bathtub;🪤:mouse_trap",
+            "🪒:razor;🧴:lotion_bottle;🧷:safety_pin;🧹:broom;🧺:basket;🧻:roll_of_paper,toilet;🪣:bucket;🧼:soap;🫧:bubbles",
+            "🪥:toothbrush;🧽:sponge;🧯:fire_extinguisher;🛒:shopping_cart;🚬:smoking,cigarette;⚰️:coffin,funeral",
+            "🪦:headstone;⚱️:funeral_urn;🧿:nazar_amulet;🪬:hamsa;🗿:moyai,stone;🪧:placard;🪪:identification_card"
+        ].join(';'),
+        symbols: [
+            "🏧:atm;🚮:put_litter_in_its_place;🚰:potable_water;♿:wheelchair,accessibility;🚹:mens;🚺:womens",
+            "🚻:restroom,toilet;🚼:baby_symbol;🚾:wc,toilet,restroom;🛂:passport_control;🛃:customs;🛄:baggage_claim,airport",
+            "🛅:left_luggage;⚠️:warning,wip;🚸:children_crossing;⛔:no_entry,limit;🚫:no_entry_sign,block,forbidden",
+            "🚳:no_bicycles;🚭:no_smoking;🚯:do_not_litter;🚱:non-potable_water;🚷:no_pedestrians;📵:no_mobile_phones",
+            "🔞:underage;☢️:radioactive;☣️:biohazard;⬆️:arrow_up;↗️:arrow_upper_right;➡️:arrow_right;↘️:arrow_lower_right",
+            "⬇️:arrow_down;↙️:arrow_lower_left;⬅️:arrow_left;↖️:arrow_upper_left;↕️:arrow_up_down;↔️:left_right_arrow",
+            "↩️:leftwards_arrow_with_hook,return;↪️:arrow_right_hook;⤴️:arrow_heading_up;⤵️:arrow_heading_down",
+            "🔃:arrows_clockwise;🔄:arrows_counterclockwise,sync;🔙:back;🔚:end;🔛:on;🔜:soon;🔝:top;🛐:place_of_worship",
+            "⚛️:atom_symbol;🕉️:om;✡️:star_of_david;☸️:wheel_of_dharma;☯️:yin_yang;✝️:latin_cross;☦️:orthodox_cross",
+            "☪️:star_and_crescent;☮️:peace_symbol;🕎:menorah;🔯:six_pointed_star;🪯:khanda;♈:aries;♉:taurus;♊:gemini;♋:cancer",
+            "♌:leo;♍:virgo;♎:libra;♏:scorpius;♐:sagittarius;♑:capricorn;♒:aquarius;♓:pisces;⛎:ophiuchus",
+            "🔀:twisted_rightwards_arrows,shuffle;🔁:repeat,loop;🔂:repeat_one;▶️:arrow_forward;⏩:fast_forward",
+            "⏭️:next_track_button;⏯️:play_or_pause_button;◀️:arrow_backward;⏪:rewind;⏮️:previous_track_button",
+            "🔼:arrow_up_small;⏫:arrow_double_up;🔽:arrow_down_small;⏬:arrow_double_down;⏸️:pause_button;⏹️:stop_button",
+            "⏺️:record_button;⏏️:eject_button;🎦:cinema,film,movie;🔅:low_brightness;🔆:high_brightness",
+            "📶:signal_strength,wifi;🛜:wireless,wifi;📳:vibration_mode;📴:mobile_phone_off,mute,off;♀️:female_sign",
+            "♂️:male_sign;⚧️:transgender_symbol;✖️:heavy_multiplication_x;➕:heavy_plus_sign;➖:heavy_minus_sign",
+            "➗:heavy_division_sign;🟰:heavy_equals_sign;♾️:infinity;‼️:bangbang;⁉️:interrobang;❓:question,confused",
+            "❔:grey_question;❕:grey_exclamation;❗:exclamation,heavy_exclamation_mark,bang;〰️:wavy_dash;💱:currency_exchange",
+            "💲:heavy_dollar_sign;⚕️:medical_symbol;♻️:recycle,environment,green;⚜️:fleur_de_lis;🔱:trident;📛:name_badge",
+            "🔰:beginner;⭕:o;✅:white_check_mark;☑️:ballot_box_with_check;✔️:heavy_check_mark;❌:x",
+            "❎:negative_squared_cross_mark;➰:curly_loop;➿:loop;〽️:part_alternation_mark;✳️:eight_spoked_asterisk",
+            "✴️:eight_pointed_black_star;❇️:sparkle;©️:copyright;®️:registered;™️:tm,trademark;#️⃣:hash,number;*️⃣:asterisk",
+            "0️⃣:zero;1️⃣:one;2️⃣:two;3️⃣:three;4️⃣:four;5️⃣:five;6️⃣:six;7️⃣:seven;8️⃣:eight;9️⃣:nine;🔟:keycap_ten",
+            "🔠:capital_abcd,letters;🔡:abcd;🔢:1234,numbers;🔣:symbols;🔤:abc,alphabet;🅰️:a;🆎:ab;🅱️:b;🆑:cl;🆒:cool",
+            "🆓:free;ℹ️:information_source;🆔:id;Ⓜ️:m;🆕:new,fresh;🆖:ng;🅾️:o2;🆗:ok,yes;🅿️:parking;🆘:sos,help,emergency",
+            "🆙:up;🆚:vs;🈁:koko;🈂️:sa;🈷️:u6708;🈶:u6709;🈯:u6307;🉐:ideograph_advantage;🈹:u5272;🈚:u7121;🈲:u7981",
+            "🉑:accept;🈸:u7533;🈴:u5408;🈳:u7a7a;㊗️:congratulations;㊙️:secret;🈺:u55b6;🈵:u6e80;🔴:red_circle",
+            "🟠:orange_circle;🟡:yellow_circle;🟢:green_circle;🔵:large_blue_circle;🟣:purple_circle;🟤:brown_circle",
+            "⚫:black_circle;⚪:white_circle;🟥:red_square;🟧:orange_square;🟨:yellow_square;🟩:green_square;🟦:blue_square",
+            "🟪:purple_square;🟫:brown_square;⬛:black_large_square;⬜:white_large_square;◼️:black_medium_square",
+            "◻️:white_medium_square;◾:black_medium_small_square;◽:white_medium_small_square;▪️:black_small_square",
+            "▫️:white_small_square;🔶:large_orange_diamond;🔷:large_blue_diamond;🔸:small_orange_diamond",
+            "🔹:small_blue_diamond;🔺:small_red_triangle;🔻:small_red_triangle_down;💠:diamond_shape_with_a_dot_inside",
+            "🔘:radio_button;🔳:white_square_button;🔲:black_square_button"
+        ].join(';'),
+        flags: [
+            "🏁:checkered_flag,milestone,finish;🚩:triangular_flag_on_post;🎌:crossed_flags;🏴:black_flag;🏳️:white_flag",
+            "🏳️‍🌈:rainbow_flag,pride;🏳️‍⚧️:transgender_flag;🏴‍☠️:pirate_flag;🇦🇨:ascension_island;🇦🇩:andorra",
+            "🇦🇪:united_arab_emirates;🇦🇫:afghanistan;🇦🇬:antigua_barbuda;🇦🇮:anguilla;🇦🇱:albania;🇦🇲:armenia",
+            "🇦🇴:angola;🇦🇶:antarctica;🇦🇷:argentina;🇦🇸:american_samoa;🇦🇹:austria;🇦🇺:australia;🇦🇼:aruba",
+            "🇦🇽:aland_islands;🇦🇿:azerbaijan;🇧🇦:bosnia_herzegovina;🇧🇧:barbados;🇧🇩:bangladesh;🇧🇪:belgium",
+            "🇧🇫:burkina_faso;🇧🇬:bulgaria;🇧🇭:bahrain;🇧🇮:burundi;🇧🇯:benin;🇧🇱:st_barthelemy;🇧🇲:bermuda;🇧🇳:brunei",
+            "🇧🇴:bolivia;🇧🇶:caribbean_netherlands;🇧🇷:brazil;🇧🇸:bahamas;🇧🇹:bhutan;🇧🇻:bouvet_island;🇧🇼:botswana",
+            "🇧🇾:belarus;🇧🇿:belize;🇨🇦:canada;🇨🇨:cocos_islands,keeling;🇨🇩:congo_kinshasa",
+            "🇨🇫:central_african_republic;🇨🇬:congo_brazzaville;🇨🇭:switzerland;🇨🇮:cote_divoire,ivory;🇨🇰:cook_islands",
+            "🇨🇱:chile;🇨🇲:cameroon;🇨🇳:cn,china;🇨🇴:colombia;🇨🇵:clipperton_island;🇨🇷:costa_rica;🇨🇺:cuba",
+            "🇨🇻:cape_verde;🇨🇼:curacao;🇨🇽:christmas_island;🇨🇾:cyprus;🇨🇿:czech_republic;🇩🇪:de,flag,germany",
+            "🇩🇬:diego_garcia;🇩🇯:djibouti;🇩🇰:denmark;🇩🇲:dominica;🇩🇴:dominican_republic;🇩🇿:algeria",
+            "🇪🇦:ceuta_melilla;🇪🇨:ecuador;🇪🇪:estonia;🇪🇬:egypt;🇪🇭:western_sahara;🇪🇷:eritrea;🇪🇸:es,spain",
+            "🇪🇹:ethiopia;🇪🇺:eu,european_union;🇫🇮:finland;🇫🇯:fiji;🇫🇰:falkland_islands;🇫🇲:micronesia",
+            "🇫🇴:faroe_islands;🇫🇷:fr,france,french;🇬🇦:gabon;🇬🇧:gb,uk,flag,british;🇬🇩:grenada;🇬🇪:georgia",
+            "🇬🇫:french_guiana;🇬🇬:guernsey;🇬🇭:ghana;🇬🇮:gibraltar;🇬🇱:greenland;🇬🇲:gambia;🇬🇳:guinea",
+            "🇬🇵:guadeloupe;🇬🇶:equatorial_guinea;🇬🇷:greece;🇬🇸:south_georgia_south_sandwich_islands;🇬🇹:guatemala",
+            "🇬🇺:guam;🇬🇼:guinea_bissau;🇬🇾:guyana;🇭🇰:hong_kong;🇭🇲:heard_mcdonald_islands;🇭🇳:honduras;🇭🇷:croatia",
+            "🇭🇹:haiti;🇭🇺:hungary;🇮🇨:canary_islands;🇮🇩:indonesia;🇮🇪:ireland;🇮🇱:israel;🇮🇲:isle_of_man;🇮🇳:india",
+            "🇮🇴:british_indian_ocean_territory;🇮🇶:iraq;🇮🇷:iran;🇮🇸:iceland;🇮🇹:it,italy;🇯🇪:jersey;🇯🇲:jamaica",
+            "🇯🇴:jordan;🇯🇵:jp,japan;🇰🇪:kenya;🇰🇬:kyrgyzstan;🇰🇭:cambodia;🇰🇮:kiribati;🇰🇲:comoros",
+            "🇰🇳:st_kitts_nevis;🇰🇵:north_korea;🇰🇷:kr,korea;🇰🇼:kuwait;🇰🇾:cayman_islands;🇰🇿:kazakhstan;🇱🇦:laos",
+            "🇱🇧:lebanon;🇱🇨:st_lucia;🇱🇮:liechtenstein;🇱🇰:sri_lanka;🇱🇷:liberia;🇱🇸:lesotho;🇱🇹:lithuania",
+            "🇱🇺:luxembourg;🇱🇻:latvia;🇱🇾:libya;🇲🇦:morocco;🇲🇨:monaco;🇲🇩:moldova;🇲🇪:montenegro;🇲🇫:st_martin",
+            "🇲🇬:madagascar;🇲🇭:marshall_islands;🇲🇰:macedonia;🇲🇱:mali;🇲🇲:myanmar,burma;🇲🇳:mongolia;🇲🇴:macau",
+            "🇲🇵:northern_mariana_islands;🇲🇶:martinique;🇲🇷:mauritania;🇲🇸:montserrat;🇲🇹:malta;🇲🇺:mauritius",
+            "🇲🇻:maldives;🇲🇼:malawi;🇲🇽:mexico;🇲🇾:malaysia;🇲🇿:mozambique;🇳🇦:namibia;🇳🇨:new_caledonia;🇳🇪:niger",
+            "🇳🇫:norfolk_island;🇳🇬:nigeria;🇳🇮:nicaragua;🇳🇱:netherlands;🇳🇴:norway;🇳🇵:nepal;🇳🇷:nauru;🇳🇺:niue",
+            "🇳🇿:new_zealand;🇴🇲:oman;🇵🇦:panama;🇵🇪:peru;🇵🇫:french_polynesia;🇵🇬:papua_new_guinea;🇵🇭:philippines",
+            "🇵🇰:pakistan;🇵🇱:poland;🇵🇲:st_pierre_miquelon;🇵🇳:pitcairn_islands;🇵🇷:puerto_rico",
+            "🇵🇸:palestinian_territories;🇵🇹:portugal;🇵🇼:palau;🇵🇾:paraguay;🇶🇦:qatar;🇷🇪:reunion;🇷🇴:romania",
+            "🇷🇸:serbia;🇷🇺:ru,russia;🇷🇼:rwanda;🇸🇦:saudi_arabia;🇸🇧:solomon_islands;🇸🇨:seychelles;🇸🇩:sudan",
+            "🇸🇪:sweden;🇸🇬:singapore;🇸🇭:st_helena;🇸🇮:slovenia;🇸🇯:svalbard_jan_mayen;🇸🇰:slovakia;🇸🇱:sierra_leone",
+            "🇸🇲:san_marino;🇸🇳:senegal;🇸🇴:somalia;🇸🇷:suriname;🇸🇸:south_sudan;🇸🇹:sao_tome_principe;🇸🇻:el_salvador",
+            "🇸🇽:sint_maarten;🇸🇾:syria;🇸🇿:swaziland;🇹🇦:tristan_da_cunha;🇹🇨:turks_caicos_islands;🇹🇩:chad",
+            "🇹🇫:french_southern_territories;🇹🇬:togo;🇹🇭:thailand;🇹🇯:tajikistan;🇹🇰:tokelau;🇹🇱:timor_leste",
+            "🇹🇲:turkmenistan;🇹🇳:tunisia;🇹🇴:tonga;🇹🇷:tr,turkey;🇹🇹:trinidad_tobago;🇹🇻:tuvalu;🇹🇼:taiwan",
+            "🇹🇿:tanzania;🇺🇦:ukraine;🇺🇬:uganda;🇺🇲:us_outlying_islands;🇺🇳:united_nations;🇺🇸:us,flag,united",
+            "🇺🇾:uruguay;🇺🇿:uzbekistan;🇻🇦:vatican_city;🇻🇨:st_vincent_grenadines;🇻🇪:venezuela",
+            "🇻🇬:british_virgin_islands;🇻🇮:us_virgin_islands;🇻🇳:vietnam;🇻🇺:vanuatu;🇼🇫:wallis_futuna;🇼🇸:samoa",
+            "🇽🇰:kosovo;🇾🇪:yemen;🇾🇹:mayotte;🇿🇦:south_africa;🇿🇲:zambia;🇿🇼:zimbabwe;🏴󠁧󠁢󠁥󠁮󠁧󠁿:england",
+            "🏴󠁧󠁢󠁳󠁣󠁴󠁿:scotland;🏴󠁧󠁢󠁷󠁬󠁳󠁿:wales"
+        ].join(';')
+    };
+
+    var PICKER_ICONS = {
+        freq: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="7.5"/><path stroke-linecap="round" stroke-linejoin="round" d="M10 5.8v4.4l3 1.8"/></svg>',
+        fav: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linejoin="round" d="M10 2.6l2.3 4.7 5.2.75-3.75 3.65.88 5.15L10 14.4l-4.63 2.45.88-5.15L2.5 8.05l5.2-.75L10 2.6z"/></svg>',
+        ch_3p: '<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" fill="#9147ff"/><path d="M10.8 4.5L6.2 10.8h3.3l-.5 4.7 4.8-6.3h-3.3l.3-4.7z" fill="#fff"/></svg>',
+        bttv: '<svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8.5" fill="#d5001c"/><circle cx="10" cy="10" r="5.2" stroke="#fff" stroke-width="1.7"/><path d="M6.3 13.7l7.4-7.4" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>',
+        ffz: '<svg viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="16" height="16" rx="4.5" fill="#5f459b"/><path d="M5.2 13.5c0-2.6 1.5-5.2 2.4-5.2.6 0 1.2 1.2 2.4 1.2s1.8-1.2 2.4-1.2c.9 0 2.4 2.6 2.4 5.2H5.2z" fill="#fff"/></svg>',
+        stv: '<svg viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="16" height="16" rx="4.5" fill="#0d2535"/><path d="M5.2 6.5h6.1l-3.2 7h-2.5l3.1-5H5.2v-2zm6.2 2h3.4l-2.3 5h-2.4l1.3-3h-1.2l1.2-2z" fill="#29b6f6"/></svg>',
+        tw_unlocked: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4.2" y="9" width="11.6" height="8" rx="2"/><path stroke-linecap="round" d="M7 9V6.2a3 3 0 0 1 5.8-1"/></svg>',
+        tw_global: '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M4.2 2.5L2.5 5.4v10.2h3.8v2h2.2l2-2h3.1l3.9-3.9V2.5H4.2zm11.6 8.5l-2.2 2.2H9.9l-2 2v-2H5V4.2h10.8V11zm-3.3-4.3v4.2h-1.7V6.7h1.7zm-4.2 0v4.2H6.6V6.7h1.7z"/></svg>',
+        tw_fallback: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="7.2" r="3.2"/><path stroke-linecap="round" d="M4.2 16.5c.8-2.8 3-4.3 5.8-4.3s5 1.5 5.8 4.3"/></svg>',
+        people: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7.5"/><circle cx="7.5" cy="8.3" r=".9" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8.3" r=".9" fill="currentColor" stroke="none"/><path stroke-linecap="round" d="M6.9 12.1c.7 1.3 1.8 1.9 3.1 1.9s2.4-.6 3.1-1.9"/></svg>',
+        nature: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linejoin="round" d="M15.8 4.2C9.5 4.2 5 8 5 13.5c0 .8.2 1.5.5 2C11 15.5 15.8 11.2 15.8 4.2z"/><path stroke-linecap="round" d="M4.2 16.2c2.5-2.5 5.3-4.8 8.3-6.4"/></svg>',
+        food: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linejoin="round" d="M6.5 9.5L10 17.2l3.5-7.7H6.5z"/><path d="M6.2 9.5a3.8 3.8 0 1 1 7.6 0"/></svg>',
+        activities: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="10" cy="10" r="7.5"/><path d="M10 2.5c2 2.4 2 12.6 0 15M2.8 8.2c4.5 1.6 9.9 1.6 14.4 0"/></svg>',
+        travel: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linejoin="round" d="M4 11l1.6-4.5h8.8L16 11v4.2h-1.8v-1.4H5.8v1.4H4V11z"/><circle cx="6.6" cy="12.1" r="1" fill="currentColor" stroke="none"/><circle cx="13.4" cy="12.1" r="1" fill="currentColor" stroke="none"/></svg>',
+        objects: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M7.6 13.6c-.9-.9-1.6-2.1-1.6-3.6a4 4 0 1 1 8 0c0 1.5-.7 2.7-1.6 3.6-.4.4-.6.9-.6 1.4H8.2c0-.5-.2-1-.6-1.4z"/><path stroke-linecap="round" d="M8.3 17h3.4"/></svg>',
+        symbols: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="5.5" height="5.5" rx="1"/><circle cx="14.2" cy="5.8" r="2.8"/><path stroke-linejoin="round" d="M5.8 11.5l3 5.5H2.8l3-5.5z"/><path stroke-linecap="round" d="M12 12l4.5 4.5M16.5 12L12 16.5"/></svg>',
+        flags: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path stroke-linecap="round" stroke-linejoin="round" d="M5 17V3.5m0 .5h9.8l-1.8 3.2 1.8 3.3H5"/></svg>'
+    };
+
+    function emojiToTwemojiCp(str) {
+        var clean = str.indexOf('\u200D') < 0 ? str.replace(/\uFE0F/g, '') : str;
+        var cps = [];
+        for (var i = 0; i < clean.length; i++) {
+            var c = clean.codePointAt(i);
+            cps.push(c.toString(16));
+            if (c > 0xffff) i++;
+        }
+        return cps.join('-');
+    }
+
+    function ensureEmojiCatalog() {
+        if (emojiCatalogSections) {
+            return { sections: emojiCatalogSections, flat: emojiCatalogFlat, byCode: emojiCatalogByCode };
+        }
+        var defs = [
+            { key: 'people', id: 'em_people', title: 'Personnes & Corps', iconKey: 'people' },
+            { key: 'nature', id: 'em_nature', title: 'Animaux & Nature', iconKey: 'nature' },
+            { key: 'food', id: 'em_food', title: 'Nourriture & Boissons', iconKey: 'food' },
+            { key: 'activities', id: 'em_activities', title: 'Activités', iconKey: 'activities' },
+            { key: 'travel', id: 'em_travel', title: 'Voyages & Lieux', iconKey: 'travel' },
+            { key: 'objects', id: 'em_objects', title: 'Objets', iconKey: 'objects' },
+            { key: 'symbols', id: 'em_symbols', title: 'Symboles', iconKey: 'symbols' },
+            { key: 'flags', id: 'em_flags', title: 'Drapeaux', iconKey: 'flags' }
+        ];
+        var secs = [];
+        var flat = [];
+        var map = new Map();
+        for (var d = 0; d < defs.length; d++) {
+            var def = defs[d];
+            var rawStr = EMOJI_COMPACT_DB[def.key] || '';
+            var entries = rawStr ? rawStr.split(';') : [];
+            var items = [];
+            for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i];
+                var colonPos = entry.indexOf(':');
+                if (colonPos <= 0) continue;
+                var ch = entry.slice(0, colonPos);
+                var aliases = entry.slice(colonPos + 1).split(',');
+                var primary = aliases[0];
+                if (!ch || !primary) continue;
+                var code = ':' + primary + ':';
+                var cp = emojiToTwemojiCp(ch);
+                var url = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/' + cp + '.png';
+                var obj = {
+                    code: code,
+                    insertText: ch,
+                    searchTerms: (':' + aliases.join(': :') + ':').toLowerCase(),
+                    url1x: url,
+                    url3x: url,
+                    source: 'Emoji',
+                    subSource: 'de BetterTTV Emojis · ' + def.title,
+                    isChannel: false,
+                    isEmoji: true,
+                    animated: false,
+                    locked: false,
+                    zeroWidth: false
+                };
+                items.push(obj);
+                flat.push(obj);
+                if (!map.has(code)) map.set(code, obj);
+            }
+            secs.push({
+                id: def.id,
+                title: def.title,
+                iconHtml: PICKER_ICONS[def.iconKey],
+                isEmojiSec: true,
+                items: items
+            });
+        }
+        emojiCatalogSections = secs;
+        emojiCatalogFlat = flat;
+        emojiCatalogByCode = map;
+        return { sections: secs, flat: flat, byCode: map };
+    }
+
+    function describePickerEmoteSource(em) {
+        if (!em) return '';
+        var base = em.subSource || '';
+        if (!base) {
+            if (em.isChannel) {
+                base = 'Émote ' + em.source + ' de la chaîne';
+            } else if (em.source === 'BTTV') {
+                base = 'de BetterTTV Global';
+            } else if (em.source === 'FFZ') {
+                base = 'de FrankerFaceZ Global';
+            } else if (em.source === '7TV') {
+                base = 'de 7TV Global';
+            } else {
+                base = 'Émote ' + em.source;
+            }
+        }
+        if (em.locked) {
+            return base + ' · ' + (em.tierLabel || 'Abonnement') + ' requis';
+        }
+        return base;
+    }
+
     function recordFrequentEmote(code) {
         if (!code) return;
         if (!Array.isArray(pageConfig.frequentEmotes)) pageConfig.frequentEmotes = [];
@@ -43130,36 +44152,112 @@ dashboardButton.style.visibility = 'hidden';
         saveConfig(pageConfig);
     }
 
-    // Sélecteur d'émotes façon BetterTTV (barre verticale gauche + sections continues + barre d'aperçu bas)
+    var bttvPickerNextKey = 1;
+
+    function buildPickerSectionItemsHtml(items, favSet) {
+        var out = new Array(items.length);
+        for (var i = 0; i < items.length; i++) {
+            var em = items[i];
+            var k = bttvPickerNextKey++;
+            bttvPickerItemMap.set(k, em);
+            var isFav = favSet.has(em.code);
+            var cls = 'tp9-ep-item' + (isFav ? ' tp9-ep-fav' : '') + (em.locked ? ' tp9-ep-locked' : '');
+            var u1 = resolveEmoteDisplayUrl(em, false);
+            if (em.isEmoji) {
+                out[i] = '<div class="' + cls + '" data-ep-k="' + k + '" data-code="' + escapeHTML(em.code) + '">' +
+                    '<img class="tp9-ep-emoji-img" src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '" decoding="async">' +
+                    '<span class="tp9-ep-emoji-fb" style="display:none">' + escapeHTML(em.insertText) + '</span>' +
+                '</div>';
+            } else {
+                out[i] = '<div class="' + cls + '" data-ep-k="' + k + '" data-code="' + escapeHTML(em.code) + '">' +
+                    '<img src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '" loading="lazy" decoding="async">' +
+                '</div>';
+            }
+        }
+        return out.join('');
+    }
+
+    function hydratePickerSection(secEl) {
+        if (!secEl || !secEl.__tp9LazyItems) return;
+        var grid = secEl.querySelector('.tp9-ep-sec-grid');
+        if (grid) {
+            grid.removeAttribute('data-ep-lazy');
+            grid.style.minHeight = '';
+            grid.innerHTML = buildPickerSectionItemsHtml(secEl.__tp9LazyItems, secEl.__tp9FavSet || new Set());
+        }
+        secEl.__tp9LazyItems = null;
+        if (bttvPickerObserver) {
+            try { bttvPickerObserver.unobserve(secEl); } catch (e) {}
+        }
+    }
+
+    function updatePickerPreviewFromEmote(em) {
+        if (!bttvPickerEl || !em) return;
+        var prevImg = bttvPickerEl.querySelector('.tp9-ep-prev-img');
+        var prevEmoji = bttvPickerEl.querySelector('.tp9-ep-prev-emoji');
+        var prevName = bttvPickerEl.querySelector('.tp9-ep-prev-name');
+        var prevSrc = bttvPickerEl.querySelector('.tp9-ep-prev-src');
+        var prevLock = bttvPickerEl.querySelector('.tp9-ep-prev-lock');
+        if (prevEmoji) prevEmoji.style.display = 'none';
+        if (prevImg) {
+            prevImg.__tp9FallbackEmoji = em.isEmoji ? em.insertText : '';
+            prevImg.style.display = '';
+            prevImg.style.visibility = 'visible';
+            prevImg.src = resolveEmoteDisplayUrl(em, true);
+            prevImg.alt = em.code;
+        }
+        if (prevName) prevName.textContent = em.code;
+        if (prevSrc) prevSrc.textContent = describePickerEmoteSource(em);
+        if (prevLock) prevLock.style.display = em.locked ? 'inline-block' : 'none';
+    }
+
+    function togglePickerFavoriteEmote(em) {
+        if (!em || !em.code || !bttvPickerEl) return;
+        if (!Array.isArray(pageConfig.favoriteEmotes)) pageConfig.favoriteEmotes = [];
+        var idx = pageConfig.favoriteEmotes.indexOf(em.code);
+        var added = idx < 0;
+        if (added) {
+            pageConfig.favoriteEmotes.push(em.code);
+        } else {
+            pageConfig.favoriteEmotes.splice(idx, 1);
+        }
+        saveConfig(pageConfig);
+        bttvPickerEl.querySelectorAll('.tp9-ep-item').forEach(function (node) {
+            if (node.getAttribute('data-code') === em.code) {
+                node.classList.toggle('tp9-ep-fav', added);
+            }
+        });
+        var prevSrc = bttvPickerEl.querySelector('.tp9-ep-prev-src');
+        if (prevSrc) {
+            prevSrc.textContent = added ? '⭐ Ajouté aux favoris' : 'Retiré des favoris';
+        }
+    }
+
+    // Sélecteur complet d'Émotes & Émojis façon BetterTTV (barre verticale gauche + sections continues + barre d'aperçu bas)
     function ensureEmotePickerPopup() {
         if (bttvPickerEl) return bttvPickerEl;
         bttvPickerEl = document.createElement('div');
         bttvPickerEl.className = 'tp9-emote-picker';
         bttvPickerEl.innerHTML =
             '<div class="tp9-ep-head">' +
-                '<input type="text" class="tp9-ep-search" placeholder="Rechercher une émote (ex: ICANT, catJAM)…">' +
+                '<input type="text" class="tp9-ep-search" placeholder="Rechercher une émote ou :emoji: (ex: 4Head, rofl)…">' +
                 '<button type="button" class="tp9-ep-close" title="Fermer">✕</button>' +
             '</div>' +
             '<div class="tp9-ep-body">' +
-                '<div class="tp9-ep-rail">' +
-                    '<button type="button" class="tp9-ep-cat" data-epsec="freq" title="Fréquemment utilisées">🕒</button>' +
-                    '<button type="button" class="tp9-ep-cat" data-epsec="fav" title="Favoris">⭐</button>' +
-                    '<button type="button" class="tp9-ep-cat tp9-ep-active" data-epsec="channel" title="Émotes de la chaîne">📺</button>' +
-                    '<button type="button" class="tp9-ep-cat" data-epsec="bttv" title="BetterTTV Global">🌍</button>' +
-                    '<button type="button" class="tp9-ep-cat" data-epsec="stv" title="7TV & FFZ Global">⚡</button>' +
-                '</div>' +
+                '<div class="tp9-ep-rail"></div>' +
                 '<div class="tp9-ep-scroll"></div>' +
             '</div>' +
             '<div class="tp9-ep-preview">' +
                 '<img class="tp9-ep-prev-img" src="" alt="" style="visibility:hidden">' +
+                '<span class="tp9-ep-prev-emoji" style="display:none;font-size:24px;line-height:1;width:32px;text-align:center;flex:none;"></span>' +
                 '<div class="tp9-ep-prev-meta">' +
                     '<div class="tp9-ep-prev-name">Survolez une émote</div>' +
-                    '<div class="tp9-ep-prev-src">BetterTTV · 7TV · FrankerFaceZ</div>' +
+                    '<div class="tp9-ep-prev-src">Twitch · BetterTTV · 7TV · FFZ · Emojis</div>' +
                 '</div>' +
+                '<span class="tp9-ep-prev-lock" style="display:none" title="Émote verrouillée">🔒</span>' +
             '</div>' +
             '<div class="tp9-ep-foot">' +
-                '<span>Maintenez <b>Shift</b> pour insérer plusieurs émotes</span>' +
-                '<span>Clic droit : ⭐</span>' +
+                '<span><b>Shift</b> : plusieurs · <b>Alt+Clic</b> / Clic droit : ⭐</span>' +
             '</div>';
         document.body.appendChild(bttvPickerEl);
 
@@ -43182,17 +44280,131 @@ dashboardButton.style.visibility = 'hidden';
             if (btn) btn.classList.remove('tp9-ep-btn-open');
         });
 
-        bttvPickerEl.querySelectorAll('.tp9-ep-cat').forEach(function (catBtn) {
-            catBtn.addEventListener('click', function () {
-                var sec = catBtn.getAttribute('data-epsec');
-                bttvPickerEl.querySelectorAll('.tp9-ep-cat').forEach(function (b) {
-                    b.classList.toggle('tp9-ep-active', b === catBtn);
-                });
-                var targetSec = bttvPickerEl.querySelector('[data-ep-section="' + sec + '"]');
-                if (targetSec) {
-                    targetSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        var railEl = bttvPickerEl.querySelector('.tp9-ep-rail');
+        var scrollEl = bttvPickerEl.querySelector('.tp9-ep-scroll');
+        var prevImg = bttvPickerEl.querySelector('.tp9-ep-prev-img');
+        var prevEmoji = bttvPickerEl.querySelector('.tp9-ep-prev-emoji');
+
+        if (prevImg) {
+            prevImg.addEventListener('error', function () {
+                if (prevImg.__tp9FallbackEmoji && prevEmoji) {
+                    prevImg.style.display = 'none';
+                    prevEmoji.textContent = prevImg.__tp9FallbackEmoji;
+                    prevEmoji.style.display = 'inline-block';
                 }
             });
+        }
+
+        // Repli automatique vers le glyphe Unicode natif si le CDN Twemoji est hors ligne
+        scrollEl.addEventListener('error', function (e) {
+            var img = e.target;
+            if (img && img.tagName === 'IMG' && img.classList.contains('tp9-ep-emoji-img')) {
+                img.style.display = 'none';
+                if (img.nextElementSibling && img.nextElementSibling.classList.contains('tp9-ep-emoji-fb')) {
+                    img.nextElementSibling.style.display = 'inline';
+                }
+            }
+        }, true);
+
+        railEl.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        railEl.addEventListener('click', function (e) {
+            var catBtn = e.target && e.target.closest && e.target.closest('.tp9-ep-cat');
+            if (!catBtn) return;
+            var sec = catBtn.getAttribute('data-epsec');
+            railEl.querySelectorAll('.tp9-ep-cat').forEach(function (b) {
+                b.classList.toggle('tp9-ep-active', b === catBtn);
+            });
+            var allSecs = scrollEl.querySelectorAll('.tp9-ep-section');
+            var targetSec = null;
+            for (var i = 0; i < allSecs.length; i++) {
+                if (allSecs[i].__tp9LazyItems) {
+                    hydratePickerSection(allSecs[i]);
+                }
+                if (allSecs[i].getAttribute('data-ep-section') === sec) {
+                    targetSec = allSecs[i];
+                    break;
+                }
+            }
+            if (targetSec) {
+                scrollEl.scrollTop = Math.max(0, targetSec.offsetTop - 4);
+            }
+        });
+
+        scrollEl.addEventListener('mouseover', function (e) {
+            var itemEl = e.target && e.target.closest && e.target.closest('.tp9-ep-item');
+            if (!itemEl) return;
+            var k = parseInt(itemEl.getAttribute('data-ep-k'), 10);
+            var em = bttvPickerItemMap.get(k);
+            if (em) updatePickerPreviewFromEmote(em);
+        });
+
+        scrollEl.addEventListener('mousedown', function (e) {
+            if (e.target && e.target.closest && e.target.closest('.tp9-ep-item')) {
+                // Conserve le focus et la sélection de Slate dans le champ de tchat
+                e.preventDefault();
+            }
+        });
+
+        scrollEl.addEventListener('click', function (e) {
+            var itemEl = e.target && e.target.closest && e.target.closest('.tp9-ep-item');
+            if (!itemEl) return;
+            e.stopPropagation();
+            var k = parseInt(itemEl.getAttribute('data-ep-k'), 10);
+            var em = bttvPickerItemMap.get(k);
+            if (!em) return;
+            if (e.altKey) {
+                togglePickerFavoriteEmote(em);
+                return;
+            }
+            if (em.locked) {
+                updatePickerPreviewFromEmote(em);
+                var prevSrc = bttvPickerEl.querySelector('.tp9-ep-prev-src');
+                if (prevSrc) {
+                    prevSrc.textContent = '🔒 Émote verrouillée (' + (em.tierLabel || 'Abonnement') + ' requis)';
+                }
+                return;
+            }
+            recordFrequentEmote(em.code);
+            insertTextIntoTwitchChat(em.insertText || em.code, false);
+            if (!e.shiftKey) {
+                bttvPickerEl.style.display = 'none';
+                var btn = document.querySelector('.tp9-emote-picker-btn');
+                if (btn) btn.classList.remove('tp9-ep-btn-open');
+            }
+        });
+
+        scrollEl.addEventListener('contextmenu', function (e) {
+            var itemEl = e.target && e.target.closest && e.target.closest('.tp9-ep-item');
+            if (!itemEl) return;
+            e.preventDefault();
+            e.stopPropagation();
+            var k = parseInt(itemEl.getAttribute('data-ep-k'), 10);
+            var em = bttvPickerItemMap.get(k);
+            if (em) togglePickerFavoriteEmote(em);
+        });
+
+        scrollEl.addEventListener('scroll', function () {
+            var st = scrollEl.scrollTop;
+            var viewBottom = st + (scrollEl.clientHeight || 350) + 320;
+            var secNodes = scrollEl.querySelectorAll('.tp9-ep-section');
+            var activeId = null;
+            for (var i = 0; i < secNodes.length; i++) {
+                var sNode = secNodes[i];
+                if (sNode.__tp9LazyItems && sNode.offsetTop <= viewBottom) {
+                    hydratePickerSection(sNode);
+                }
+                if (sNode.offsetTop <= st + 28) {
+                    activeId = sNode.getAttribute('data-ep-section');
+                }
+            }
+            if (!activeId && secNodes.length) {
+                activeId = secNodes[0].getAttribute('data-ep-section');
+            }
+            if (activeId) {
+                railEl.querySelectorAll('.tp9-ep-cat').forEach(function (b) {
+                    b.classList.toggle('tp9-ep-active', b.getAttribute('data-epsec') === activeId);
+                });
+            }
         });
 
         document.addEventListener('mousedown', function (e) {
@@ -43208,131 +44420,223 @@ dashboardButton.style.visibility = 'hidden';
 
     function renderEmotePickerGrid() {
         if (!bttvPickerEl) return;
+        var railEl = bttvPickerEl.querySelector('.tp9-ep-rail');
         var scrollEl = bttvPickerEl.querySelector('.tp9-ep-scroll');
-        var prevImg = bttvPickerEl.querySelector('.tp9-ep-prev-img');
-        var prevName = bttvPickerEl.querySelector('.tp9-ep-prev-name');
-        var prevSrc = bttvPickerEl.querySelector('.tp9-ep-prev-src');
-        var q = (bttvPickerEl.querySelector('.tp9-ep-search').value || '').trim().toLowerCase();
+        var qRaw = (bttvPickerEl.querySelector('.tp9-ep-search').value || '').trim().toLowerCase();
+        var qClean = qRaw.replace(/^:+|:+$/g, '');
+        if (qRaw && !qClean) qClean = qRaw;
+
         var favs = Array.isArray(pageConfig.favoriteEmotes) ? pageConfig.favoriteEmotes : [];
         var freqs = Array.isArray(pageConfig.frequentEmotes) ? pageConfig.frequentEmotes : [];
+        var favSet = new Set(favs);
+        var emojiCat = ensureEmojiCatalog();
 
-        function filterAllowed(list) {
-            return list.filter(function (em) {
-                if (!em || !em.code) return false;
-                if (em.source === 'BTTV' && pageConfig.bttvEmotes === false) return false;
-                if ((em.source === '7TV' || em.source === 'FFZ') && pageConfig.stvEmotes === false) return false;
-                return !q || em.code.toLowerCase().indexOf(q) !== -1;
-            });
+        function matchesSearch(em) {
+            if (!em || !em.code) return false;
+            if (em.source === 'BTTV' && pageConfig.bttvEmotes === false) return false;
+            if ((em.source === '7TV' || em.source === 'FFZ') && pageConfig.stvEmotes === false) return false;
+            if (!qClean) return true;
+            if (em.isEmoji) {
+                return em.searchTerms.indexOf(qClean) !== -1 || em.insertText === qRaw;
+            }
+            return em.code.toLowerCase().indexOf(qClean) !== -1;
         }
 
-        var allCombined = filterAllowed(bttvChannelEmotes.concat(bttvGlobalEmotes));
+        function filterList(list) {
+            var res = [];
+            for (var i = 0; i < list.length; i++) {
+                if (matchesSearch(list[i])) res.push(list[i]);
+            }
+            return res;
+        }
+
+        // Table globale de résolution par code (Fréquentes & Favoris : Twitch + BTTV + 7TV + FFZ + Emojis)
         var byCode = new Map();
-        allCombined.forEach(function (em) {
-            if (!byCode.has(em.code)) byCode.set(em.code, em);
-        });
+        function indexForLookup(list) {
+            for (var i = 0; i < list.length; i++) {
+                var em = list[i];
+                if (!em || !em.code) continue;
+                if (em.source === 'BTTV' && pageConfig.bttvEmotes === false) continue;
+                if ((em.source === '7TV' || em.source === 'FFZ') && pageConfig.stvEmotes === false) continue;
+                var prev = byCode.get(em.code);
+                if (!prev || (prev.locked && !em.locked)) {
+                    byCode.set(em.code, em);
+                }
+            }
+        }
+        indexForLookup(bttvChannelEmotes);
+        indexForLookup(twitchChannelEmotes);
+        for (var subIdx = 0; subIdx < twitchSubscribedSections.length; subIdx++) {
+            indexForLookup(twitchSubscribedSections[subIdx].items);
+        }
+        indexForLookup(twitchUnlockedEmotes);
+        indexForLookup(bttvGlobalEmotes);
+        indexForLookup(twitchGlobalEmotes);
+        indexForLookup(emojiCat.flat);
 
         var sections = [];
-        if (q) {
-            sections.push({ id: 'search', title: '🔍 Résultats (' + allCombined.length + ')', items: allCombined.slice(0, 200) });
-        } else {
+        if (!qClean) {
             var freqItems = freqs.map(function (c) { return byCode.get(c); }).filter(Boolean);
             if (freqItems.length) {
-                sections.push({ id: 'freq', title: '🕒 Fréquemment utilisées', items: freqItems });
+                sections.push({ id: 'freq', title: 'Fréquemment utilisées', iconHtml: PICKER_ICONS.freq, items: freqItems });
             }
             var favItems = favs.map(function (c) { return byCode.get(c); }).filter(Boolean);
             if (favItems.length) {
-                sections.push({ id: 'fav', title: '⭐ Favoris', items: favItems });
-            }
-            var chItems = filterAllowed(bttvChannelEmotes);
-            if (chItems.length) {
-                sections.push({ id: 'channel', title: '📺 Émotes de la chaîne (' + chItems.length + ')', items: chItems });
-            }
-            var bttvGlob = filterAllowed(bttvGlobalEmotes.filter(function (e) { return e.source === 'BTTV'; }));
-            if (bttvGlob.length) {
-                sections.push({ id: 'bttv', title: '🌍 BetterTTV Global', items: bttvGlob });
-            }
-            var stvGlob = filterAllowed(bttvGlobalEmotes.filter(function (e) { return e.source !== 'BTTV'; }));
-            if (stvGlob.length) {
-                sections.push({ id: 'stv', title: '⚡ 7TV & FFZ Global', items: stvGlob.slice(0, 180) });
+                sections.push({ id: 'fav', title: 'Favoris', iconHtml: PICKER_ICONS.fav, items: favItems });
             }
         }
 
+        var ch3pItems = filterList(bttvChannelEmotes);
+        if (ch3pItems.length) {
+            var chLabel = (twitchChannelMeta.displayName || bttvCurrentChannel || 'Chaîne') + ' (BTTV / 7TV / FFZ)';
+            sections.push({ id: 'ch_3p', title: chLabel, iconHtml: PICKER_ICONS.ch_3p, items: ch3pItems });
+        }
+
+        var bttvGlob = filterList(bttvGlobalEmotes.filter(function (e) { return e.source === 'BTTV'; }));
+        if (bttvGlob.length) {
+            sections.push({ id: 'bttv', title: 'BetterTTV Global', iconHtml: PICKER_ICONS.bttv, items: bttvGlob });
+        }
+
+        var ffzGlob = filterList(bttvGlobalEmotes.filter(function (e) { return e.source === 'FFZ'; }));
+        if (ffzGlob.length) {
+            sections.push({ id: 'ffz', title: 'FrankerFaceZ Global', iconHtml: PICKER_ICONS.ffz, items: ffzGlob });
+        }
+
+        var stvGlob = filterList(bttvGlobalEmotes.filter(function (e) { return e.source === '7TV'; }));
+        if (stvGlob.length) {
+            sections.push({ id: 'stv', title: '7TV Global', iconHtml: PICKER_ICONS.stv, items: stvGlob });
+        }
+
+        var twChItems = filterList(twitchChannelEmotes);
+        if (twChItems.length) {
+            var stTitle = twitchChannelMeta.displayName || bttvCurrentChannel || 'Chaîne Twitch';
+            var stIcon = twitchChannelMeta.avatar
+                ? ('<img src="' + escapeHTML(twitchChannelMeta.avatar) + '" alt="' + escapeHTML(stTitle) + '">')
+                : PICKER_ICONS.tw_fallback;
+            sections.push({ id: 'tw_ch', title: stTitle, iconHtml: stIcon, items: twChItems });
+        }
+
+        for (var s = 0; s < twitchSubscribedSections.length; s++) {
+            var subSec = twitchSubscribedSections[s];
+            var subFiltered = filterList(subSec.items || []);
+            if (subFiltered.length) {
+                var subIcon = subSec.avatar
+                    ? ('<img src="' + escapeHTML(subSec.avatar) + '" alt="' + escapeHTML(subSec.displayName) + '">')
+                    : PICKER_ICONS.tw_fallback;
+                sections.push({ id: subSec.id, title: subSec.displayName, iconHtml: subIcon, items: subFiltered });
+            }
+        }
+
+        var twUnl = filterList(twitchUnlockedEmotes);
+        if (twUnl.length) {
+            sections.push({ id: 'tw_unlocked', title: 'Débloquées', iconHtml: PICKER_ICONS.tw_unlocked, items: twUnl });
+        }
+
+        var twGlob = filterList(twitchGlobalEmotes);
+        if (twGlob.length) {
+            sections.push({ id: 'tw_global', title: 'Twitch Global', iconHtml: PICKER_ICONS.tw_global, items: twGlob });
+        }
+
+        for (var ec = 0; ec < emojiCat.sections.length; ec++) {
+            var emSec = emojiCat.sections[ec];
+            var emFiltered = qClean ? filterList(emSec.items) : emSec.items;
+            if (emFiltered.length) {
+                sections.push({
+                    id: emSec.id,
+                    title: emSec.title,
+                    iconHtml: emSec.iconHtml,
+                    isEmojiSec: true,
+                    items: emFiltered
+                });
+            }
+        }
+
+        if (bttvPickerObserver) {
+            bttvPickerObserver.disconnect();
+            bttvPickerObserver = null;
+        }
+        bttvPickerItemMap.clear();
+        bttvPickerNextKey = 1;
+
         if (!sections.length) {
-            scrollEl.innerHTML = '<div style="text-align:center;padding:32px 10px;color:#8e8e9e;font-size:12px;">Aucune émote trouvée</div>';
+            railEl.innerHTML = '';
+            scrollEl.innerHTML = '<div style="text-align:center;padding:36px 12px;color:#8e8e9e;font-size:12px;">Aucune émote ni émoji trouvé</div>';
             return;
         }
 
-        scrollEl.innerHTML = sections.map(function (sec) {
-            return '<div class="tp9-ep-section" data-ep-section="' + sec.id + '">' +
-                '<div class="tp9-ep-sec-title"><span>' + sec.title + '</span></div>' +
-                '<div class="tp9-ep-sec-grid">' +
-                sec.items.map(function (em) {
-                    var isFav = favs.indexOf(em.code) !== -1;
-                    var srcLabel = em.isChannel ? ('Émote ' + em.source + ' de la chaîne') : ('Émote ' + em.source + ' globale');
-                    var u1 = resolveEmoteDisplayUrl(em, false);
-                    var u3 = resolveEmoteDisplayUrl(em, true);
-                    return '<div class="tp9-ep-item' + (isFav ? ' tp9-ep-fav' : '') + '" ' +
-                        'data-code="' + escapeHTML(em.code) + '" ' +
-                        'data-src="' + escapeHTML(srcLabel) + '" ' +
-                        'data-big="' + escapeHTML(u3) + '">' +
-                        '<img src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '" loading="lazy">' +
-                    '</div>';
-                }).join('') +
+        // Barre latérale gauche dynamique façon BetterTTV (avec séparateur avant les Emojis)
+        var railHtml = [];
+        var insertedEmojiSep = false;
+        for (var r = 0; r < sections.length; r++) {
+            var rSec = sections[r];
+            if (rSec.isEmojiSec && !insertedEmojiSep && r > 0) {
+                insertedEmojiSep = true;
+                railHtml.push('<div class="tp9-ep-rail-sep"></div>');
+            }
+            railHtml.push(
+                '<button type="button" class="tp9-ep-cat' + (r === 0 ? ' tp9-ep-active' : '') + '" ' +
+                'data-epsec="' + escapeHTML(rSec.id) + '" title="' + escapeHTML(rSec.title) + '">' +
+                rSec.iconHtml +
+                '</button>'
+            );
+        }
+        railEl.innerHTML = railHtml.join('');
+
+        // Hydratation immédiate des premières sections visibles + hydratation progressive au scroll pour les milliers suivantes
+        var canLazyObserve = typeof IntersectionObserver === 'function';
+        var immediateBudget = 220;
+        var renderedCount = 0;
+
+        scrollEl.innerHTML = sections.map(function (sec, idx) {
+            var hydrateNow = !canLazyObserve || idx === 0 || renderedCount < immediateBudget;
+            var gridInner = '';
+            var lazyAttrs = '';
+            if (hydrateNow) {
+                renderedCount += sec.items.length;
+                gridInner = buildPickerSectionItemsHtml(sec.items, favSet);
+            } else {
+                var estRows = Math.max(1, Math.ceil(sec.items.length / 9));
+                lazyAttrs = ' data-ep-lazy="1" style="min-height:' + (estRows * 35) + 'px"';
+            }
+            return '<div class="tp9-ep-section" data-ep-section="' + escapeHTML(sec.id) + '">' +
+                '<div class="tp9-ep-sec-title">' +
+                    '<span class="tp9-ep-sec-title-left">' + sec.iconHtml + '<span>' + escapeHTML(sec.title) + '</span></span>' +
+                    '<span class="tp9-ep-sec-count">' + sec.items.length + '</span>' +
                 '</div>' +
+                '<div class="tp9-ep-sec-grid"' + lazyAttrs + '>' + gridInner + '</div>' +
             '</div>';
         }).join('');
 
-        var firstEm = sections[0] && sections[0].items[0];
-        if (firstEm && prevImg && prevImg.style.visibility === 'hidden') {
-            prevImg.src = resolveEmoteDisplayUrl(firstEm, true);
-            prevImg.style.visibility = 'visible';
-            prevName.textContent = firstEm.code;
-            prevSrc.textContent = firstEm.isChannel ? ('Émote ' + firstEm.source + ' de la chaîne') : ('Émote ' + firstEm.source + ' globale');
+        scrollEl.scrollTop = 0;
+
+        if (canLazyObserve) {
+            bttvPickerObserver = new IntersectionObserver(function (entries) {
+                for (var ei = 0; ei < entries.length; ei++) {
+                    if (entries[ei].isIntersecting) {
+                        hydratePickerSection(entries[ei].target);
+                    }
+                }
+            }, { root: scrollEl, rootMargin: '360px 0px' });
         }
 
-        scrollEl.querySelectorAll('.tp9-ep-item').forEach(function (item) {
-            var code = item.getAttribute('data-code');
-            var srcLabel = item.getAttribute('data-src');
-            var big = item.getAttribute('data-big');
-            item.addEventListener('mouseenter', function () {
-                if (prevImg) {
-                    prevImg.src = big;
-                    prevImg.style.visibility = 'visible';
+        var secDomNodes = scrollEl.querySelectorAll('.tp9-ep-section');
+        for (var si = 0; si < secDomNodes.length; si++) {
+            var domSec = secDomNodes[si];
+            var gridEl = domSec.querySelector('.tp9-ep-sec-grid');
+            if (gridEl && gridEl.getAttribute('data-ep-lazy') === '1' && sections[si]) {
+                domSec.__tp9LazyItems = sections[si].items;
+                domSec.__tp9FavSet = favSet;
+                if (bttvPickerObserver) {
+                    bttvPickerObserver.observe(domSec);
                 }
-                if (prevName) prevName.textContent = code;
-                if (prevSrc) prevSrc.textContent = srcLabel;
-            });
-            item.addEventListener('mousedown', function (e) {
-                // Conserve le focus et la sélection de Slate dans le champ de tchat
-                e.preventDefault();
-            });
-            item.addEventListener('click', function (e) {
-                e.stopPropagation();
-                recordFrequentEmote(code);
-                insertTextIntoTwitchChat(code, false);
-                if (!e.shiftKey) {
-                    bttvPickerEl.style.display = 'none';
-                    var btn = document.querySelector('.tp9-emote-picker-btn');
-                    if (btn) btn.classList.remove('tp9-ep-btn-open');
-                }
-            });
-            item.addEventListener('contextmenu', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                if (!Array.isArray(pageConfig.favoriteEmotes)) pageConfig.favoriteEmotes = [];
-                var idx = pageConfig.favoriteEmotes.indexOf(code);
-                if (idx >= 0) {
-                    pageConfig.favoriteEmotes.splice(idx, 1);
-                    item.classList.remove('tp9-ep-fav');
-                    if (prevSrc) prevSrc.textContent = 'Retiré des favoris';
-                } else {
-                    pageConfig.favoriteEmotes.push(code);
-                    item.classList.add('tp9-ep-fav');
-                    if (prevSrc) prevSrc.textContent = '⭐ Ajouté aux favoris';
-                }
-                saveConfig(pageConfig);
-            });
-        });
+            }
+        }
+
+        var firstEm = sections[0] && sections[0].items[0];
+        var prevImg = bttvPickerEl.querySelector('.tp9-ep-prev-img');
+        if (firstEm && prevImg && prevImg.style.visibility === 'hidden') {
+            updatePickerPreviewFromEmote(firstEm);
+        }
     }
 
     function ensureChatEmoteButton() {
@@ -43361,8 +44665,8 @@ dashboardButton.style.visibility = 'hidden';
         btn.querySelectorAll('[title]').forEach(function (el) { el.removeAttribute('title'); });
         btn.style.display = '';
         btn.classList.add('tp9-emote-picker-btn');
-        btn.setAttribute('aria-label', 'Émotes BetterTTV / 7TV / FFZ');
-        btn.setAttribute('data-tp9-tip', 'Émotes BetterTTV / 7TV / FFZ');
+        btn.setAttribute('aria-label', 'Émotes & Émojis (Twitch / BTTV / 7TV / FFZ)');
+        btn.setAttribute('data-tp9-tip', 'Émotes & Émojis (Twitch / BTTV / 7TV / FFZ)');
         if (typeof attachTooltips === 'function') {
             attachTooltips(btn);
         }
@@ -43380,11 +44684,18 @@ dashboardButton.style.visibility = 'hidden';
                 btn.classList.remove('tp9-ep-btn-open');
                 return;
             }
+            if (!twitchGlobalsLoaded || !twitchUserEmotesAuthUsed) {
+                loadTwitchGlobalAndUserEmotes(true);
+            }
+            var curChan = (typeof getTestChannel === 'function' ? getTestChannel() : '') || '';
+            if (curChan && curChan.toLowerCase() !== bttvCurrentChannel) {
+                loadBttvChannelEmotes(curChan);
+            }
             btn.classList.add('tp9-ep-btn-open');
             var rect = btn.getBoundingClientRect();
             popup.style.display = 'flex';
-            popup.style.left = Math.max(8, Math.min(rect.right - 356, window.innerWidth - 364)) + 'px';
-            popup.style.top = Math.max(8, rect.top - 418) + 'px';
+            popup.style.left = Math.max(8, Math.min(rect.right - 392, window.innerWidth - 400)) + 'px';
+            popup.style.top = Math.max(8, rect.top - 456) + 'px';
             renderEmotePickerGrid();
         });
         nativePickerBtn.parentElement.insertBefore(btn, nativePickerBtn);
@@ -43767,7 +45078,8 @@ dashboardButton.style.visibility = 'hidden';
     function applyColonAutocompleteChoice(em, input) {
         if (!em || !input) return;
         var currentText = (input.value !== undefined ? input.value : input.textContent) || '';
-        var replaced = currentText.replace(/:([a-zA-Z0-9_]{1,32})\s*$/, em.code);
+        var insertVal = em.insertText || em.code;
+        var replaced = currentText.replace(/:([a-zA-Z0-9_+-]{1,32})\s*$/, insertVal);
         recordFrequentEmote(em.code);
         hideColonAutocompletePopup();
         insertTextIntoTwitchChat(replaced, true);
@@ -43786,12 +45098,21 @@ dashboardButton.style.visibility = 'hidden';
             ['mousedown', 'mouseup', 'click', 'wheel'].forEach(function (evName) {
                 bttvAcEl.addEventListener(evName, function (e) { e.stopPropagation(); });
             });
+            bttvAcEl.addEventListener('error', function (e) {
+                var img = e.target;
+                if (img && img.tagName === 'IMG' && img.nextElementSibling && img.nextElementSibling.classList.contains('tp9-ep-emoji-fb')) {
+                    img.style.display = 'none';
+                    img.nextElementSibling.style.display = 'inline';
+                }
+            }, true);
         }
         bttvAcEl.innerHTML = bttvAcMatches.map(function (em, idx) {
             var u1 = resolveEmoteDisplayUrl(em, false);
+            var dispCode = em.code.charAt(0) === ':' ? em.code : (':' + em.code + ':');
+            var fbSpan = em.isEmoji ? ('<span class="tp9-ep-emoji-fb" style="display:none;font-size:18px;width:22px;text-align:center;">' + escapeHTML(em.insertText) + '</span>') : '';
             return '<div class="tp9-ac-item' + (idx === bttvAcIdx ? ' tp9-ac-active' : '') + '" data-ac-idx="' + idx + '">' +
-                '<img src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '">' +
-                '<span class="tp9-ac-code">:' + escapeHTML(em.code) + ':</span>' +
+                '<img src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '">' + fbSpan +
+                '<span class="tp9-ac-code">' + escapeHTML(dispCode) + '</span>' +
                 '<span class="tp9-ac-src">' + escapeHTML(em.source) + '</span>' +
             '</div>';
         }).join('');
@@ -43820,31 +45141,62 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function updateColonAutocompleteFromInput(input) {
-        if (scriptIsOff() || pageConfig.colonAutocomplete === false || !bttvEmoteMap.size || !input) {
+        if (scriptIsOff() || pageConfig.colonAutocomplete === false || !input) {
             hideColonAutocompletePopup();
             return;
         }
         var currentText = (input.value !== undefined ? input.value : input.textContent) || '';
-        var m = currentText.match(/(?:^|\s):([a-zA-Z0-9_]{2,24})$/);
+        var m = currentText.match(/(?:^|\s):(\+1|-1|[a-zA-Z0-9_+-]{2,28})$/);
         if (!m) {
             hideColonAutocompletePopup();
             return;
         }
         var q = m[1].toLowerCase();
         var matches = [];
-        bttvEmoteMap.forEach(function (em) {
-            if (matches.length >= 12) return;
-            if (em.code.toLowerCase().indexOf(q) !== -1) {
-                matches.push(em);
+        var seenCodes = new Set();
+
+        function pushCandidate(em, rank) {
+            if (!em || !em.code || seenCodes.has(em.code)) return;
+            seenCodes.add(em.code);
+            matches.push({ em: em, rank: rank, len: em.code.length });
+        }
+
+        if (pageConfig.bttvEmotes !== false || pageConfig.stvEmotes !== false) {
+            bttvEmoteMap.forEach(function (em) {
+                var lc = em.code.toLowerCase();
+                var idx = lc.indexOf(q);
+                if (idx !== -1) {
+                    pushCandidate(em, idx === 0 ? 0 : 2);
+                }
+            });
+        }
+
+        twitchUnlockedEmoteMap.forEach(function (em) {
+            var lc = em.code.toLowerCase();
+            var idx = lc.indexOf(q);
+            if (idx !== -1) {
+                pushCandidate(em, idx === 0 ? 0 : 2);
             }
         });
+
+        if (typeof ensureEmojiCatalog === 'function') {
+            var emojiCat = ensureEmojiCatalog();
+            var qPref = ':' + q;
+            for (var i = 0; i < emojiCat.flat.length; i++) {
+                var eItem = emojiCat.flat[i];
+                var terms = eItem.searchTerms;
+                if (terms.indexOf(q) === -1) continue;
+                var primaryClean = eItem.code.slice(1, -1);
+                var rank = primaryClean.indexOf(q) === 0 ? 0 : (terms.indexOf(qPref) !== -1 ? 1 : 3);
+                pushCandidate(eItem, rank);
+            }
+        }
+
         matches.sort(function (a, b) {
-            var aStarts = a.code.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-            var bStarts = b.code.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-            if (aStarts !== bStarts) return aStarts - bStarts;
-            return a.code.length - b.code.length;
+            if (a.rank !== b.rank) return a.rank - b.rank;
+            return a.len - b.len;
         });
-        bttvAcMatches = matches.slice(0, 10);
+        bttvAcMatches = matches.slice(0, 10).map(function (x) { return x.em; });
         bttvAcIdx = 0;
         renderColonAutocompletePopup(input);
     }
@@ -44051,22 +45403,46 @@ dashboardButton.style.visibility = 'hidden';
                 return;
             }
 
-            if (e.key === 'Tab' && pageConfig.tabComplete !== false && bttvEmoteMap.size > 0) {
+            if (e.key === 'Tab' && pageConfig.tabComplete !== false) {
                 var words = currentText.trimEnd().split(/\s+/);
                 var lastWord = words[words.length - 1] || '';
                 if (lastWord.charAt(0) === '@' || lastWord.charAt(0) === '/') {
                     bttvTabMatches = [];
                     return;
                 }
+                var hadColon = lastWord.charAt(0) === ':';
                 var cleanPrefix = lastWord.replace(/^:/, '').toLowerCase();
                 if (cleanPrefix.length >= 2) {
                     if (!bttvTabMatches.length || bttvTabPrefix !== cleanPrefix) {
                         var freshMatches = [];
-                        bttvEmoteMap.forEach(function (em) {
+                        var seenTab = new Set();
+                        var addTab = function (val) {
+                            if (val && !seenTab.has(val)) {
+                                seenTab.add(val);
+                                freshMatches.push(val);
+                            }
+                        };
+                        if (pageConfig.bttvEmotes !== false || pageConfig.stvEmotes !== false) {
+                            bttvEmoteMap.forEach(function (em) {
+                                if (em.code.toLowerCase().indexOf(cleanPrefix) === 0) {
+                                    addTab(em.code);
+                                }
+                            });
+                        }
+                        twitchUnlockedEmoteMap.forEach(function (em) {
                             if (em.code.toLowerCase().indexOf(cleanPrefix) === 0) {
-                                freshMatches.push(em.code);
+                                addTab(em.code);
                             }
                         });
+                        if (hadColon && typeof ensureEmojiCatalog === 'function') {
+                            var tabEmojiCat = ensureEmojiCatalog();
+                            for (var ei = 0; ei < tabEmojiCat.flat.length; ei++) {
+                                var eObj = tabEmojiCat.flat[ei];
+                                if (eObj.code.slice(1, -1).indexOf(cleanPrefix) === 0) {
+                                    addTab(eObj.insertText);
+                                }
+                            }
+                        }
                         if (!freshMatches.length) {
                             bttvTabMatches = [];
                             return;
@@ -44083,7 +45459,7 @@ dashboardButton.style.visibility = 'hidden';
                         e.stopPropagation();
                         var chosen = bttvTabMatches[bttvTabIdx];
                         words[words.length - 1] = chosen;
-                        bttvTabPrefix = chosen.toLowerCase();
+                        bttvTabPrefix = String(chosen).replace(/^:/, '').toLowerCase();
                         insertTextIntoTwitchChat(words.join(' '), true);
                         return;
                     }
