@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.8
+// @version      1.11.9
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,8 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.9
+// - Correctif des micro-coupures en cours de stream et du bouton « DIRECT » : suppression du rattrapage forcé de latence hors pub (accélération 1.06x et sauts de currentTime) qui vidait le tampon du lecteur natif de Twitch (Amazon IVS) et faisait prendre du retard sur le direct || Fixed mid-stream micro-stutters and "LIVE" button unlocking: removed forced live-edge catch-up outside ads (1.06x speed-up and currentTime jumps) that starved Twitch's native IVS player buffer and caused live drift
 // 1.11.8
 // - Nouveau moteur Adblock par lecteur Autoplay sans pub en double lecteur (zéro blocage, zéro relance) : le vrai direct Twitch reste intact en arrière-plan (qualité native 1080p60/2K/4K HEVC conservée sans aucune modification de segments ni appel à setSrc), préchargement automatique du flux autoplay sans pub à l'ouverture de la chaîne, bascule instantanée sur un second lecteur superposé pendant les pubs et recalage exact par horodatage (#EXT-X-PROGRAM-DATE-TIME) à l'entrée comme au retour sur le vrai direct || New dual-player ad-free Autoplay Adblock engine (zero freeze, zero reload): keeps Twitch's native live player untouched underneath (preserving native 1080p60/2K/4K HEVC without segment splicing or setSrc reloads), pre-warms the ad-free autoplay stream on channel load, seamlessly overlays a secondary player during ads, and synchronizes exact #EXT-X-PROGRAM-DATE-TIME timestamps on both entry and return to live
 // - Nouvelle option « Afficher les mots censurés (***) » (Tchat & Filtres) : révèle automatiquement en clair les mots remplacés par des astérisques violets par le filtre du tchat Twitch || New "Show censored words (***)" option (Chat & Filters): automatically reveals words masked with purple asterisks by Twitch's client-side chat filter
@@ -72,7 +74,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.8';
+    var CURRENT_VERSION = '1.11.9';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -38979,7 +38981,7 @@ dashboardButton.style.visibility = 'hidden';
         }
         if (spRateCatchUpVideo) {
             try {
-                if (Math.abs(spRateCatchUpVideo.playbackRate - 1.06) < 0.03) {
+                if (Math.abs(spRateCatchUpVideo.playbackRate - 1.04) < 0.04) {
                     spRateCatchUpVideo.playbackRate = 1;
                 }
             } catch (e) {}
@@ -38987,20 +38989,22 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
-    function spStartSmoothRateCatchUp(video, targetLatency) {
+    function spStartSmoothRateCatchUp(video) {
         spStopSmoothRateCatchUp();
         if (!video) return;
         // Ne touche pas à la vitesse si l'utilisateur a choisi une vitesse manuelle (ex: 0.5x, 1.5x, 2x)
-        if (video.playbackRate !== 1 && Math.abs(video.playbackRate - 1.06) > 0.03) {
+        if (video.playbackRate !== 1 && Math.abs(video.playbackRate - 1.04) > 0.04) {
             return;
         }
-        var goalLat = (typeof targetLatency === 'number' && targetLatency >= 1.2 && targetLatency <= 3.0)
-            ? targetLatency
-            : SP_CATCHUP_TARGET_AHEAD;
+        // Sécurité : aucun saut forcé de currentTime ni famine sous 3,0 s de tampon,
+        // afin de ne jamais provoquer de coupure ni dégriser le bouton DIRECT d'IVS.
+        if (spAheadOf(video) <= 3.2) {
+            return;
+        }
         spRateCatchUpVideo = video;
         var startedAt = Date.now();
         try {
-            video.playbackRate = 1.06;
+            video.playbackRate = 1.04;
         } catch (e) {
             spRateCatchUpVideo = null;
             return;
@@ -39011,61 +39015,42 @@ dashboardButton.style.visibility = 'hidden';
                 !spRateCatchUpVideo.isConnected ||
                 spRateCatchUpVideo.paused ||
                 (dvrOverlay && !dvrIsLive()) ||
-                (Date.now() - startedAt) > 35000
+                (Date.now() - startedAt) > 25000
             ) {
                 spStopSmoothRateCatchUp();
                 return;
             }
             var ahead = spAheadOf(spRateCatchUpVideo);
-            var parts = spPlayerParts(false);
-            var curLat = spLiveLatency(parts && parts.player);
-            // Si le lecteur a fini de mettre en tampon les segments suivants
-            // alors que la latence réelle (getLiveLatency) dépasse encore la
-            // cible de > 0,7 s, on saute immédiatement la différence disponible
-            if (curLat !== null && curLat > goalLat + 0.7 && ahead > 2.4) {
-                var extraJump = Math.min(curLat - goalLat, ahead - 1.85);
-                if (extraJump >= 0.4) {
-                    try {
-                        spRateCatchUpVideo.currentTime = spRateCatchUpVideo.currentTime + extraJump;
-                        ahead = spAheadOf(spRateCatchUpVideo);
-                    } catch (e) {}
-                }
-            }
-            var latOk = (curLat === null) || (curLat <= goalLat + 0.3) || (ahead < 0.85);
-            if (ahead <= SP_CATCHUP_TARGET_AHEAD && latOk) {
+            if (ahead <= 3.0) {
                 spStopSmoothRateCatchUp();
             }
-        }, 200);
+        }, 250);
     }
 
-    // Maintient aussi le lecteur au plus près du direct PENDANT les
-    // coupures pub (lecteur autoplay superposé ou flux Proxy) et en mode
-    // direct/Proxy continu si le tampon dérive au-delà de 4,2 s.
+    // Hors coupure pub en mode Proxy temporaire, on ne touche JAMAIS au tampon,
+    // à currentTime ni à playbackRate du lecteur natif de Twitch (Amazon IVS) :
+    // IVS gère lui-même son bord du direct sans jamais tomber à sec de tampon
+    // ni dégriser le bouton « DIRECT ».
     function spLiveEdgeKeepUpTick() {
         if (isDashboardOnlyTab || scriptIsOff()) return;
         if (dvrOverlay && !dvrIsLive()) return;
-        if (spAutoplayActive) {
-            if (spAutoplayVisible && spAutoplayVideo && !spAutoplayVideo.paused && spAutoplayVideo.readyState >= 3) {
-                var apAhead = spAheadOf(spAutoplayVideo);
-                if (apAhead > 5.2) {
-                    try {
-                        spAutoplayVideo.currentTime = spAutoplayVideo.currentTime + (apAhead - 2.2);
-                    } catch (e) {}
-                }
+        if (spAutoplayActive || !spAd.active || !proxyAdsOnlyOn()) {
+            if (spRateCatchUpTimer && !spCatchUp) {
+                spStopSmoothRateCatchUp();
             }
             return;
         }
         var video = adCleanPlaybackVideo();
         if (!video || video.paused || video.readyState < 3) return;
         var ahead = spAheadOf(video);
-        // Pendant une coupure pub via proxy, si le flux a chargé toute une
-        // fenêtre glissante (> 5 s d'avance en tampon), on recale à 2,3 s.
-        if (spAd.active && ahead > 5.0) {
+        // Uniquement pendant une coupure pub via proxy temporaire ayant chargé
+        // toute une fenêtre glissante (> 6,5 s), on recale en gardant >= 3,2 s de marge.
+        if (ahead > 6.5) {
             try {
-                video.currentTime = video.currentTime + (ahead - 2.3);
+                video.currentTime = video.currentTime + (ahead - 3.2);
             } catch (e) {}
             spStartSmoothRateCatchUp(video);
-        } else if ((spAd.active && ahead > 3.0) || (!spAd.active && ahead > 4.2)) {
+        } else if (ahead > 4.5) {
             if (!spRateCatchUpTimer) {
                 spStartSmoothRateCatchUp(video);
             }
@@ -40035,14 +40020,12 @@ dashboardButton.style.visibility = 'hidden';
 
     function spFinishReturnToMainVideo(mainVideo, channel, seekDeltaSec) {
         spCancelReturnToMain();
+        spStopSmoothRateCatchUp();
         spSetMainMutedForAd(false);
         spStopAutoplayOverlay(true);
         spHideBadge();
         updateActiveProxyDisplay();
         renderAdblockStats();
-        if (mainVideo && spAheadOf(mainVideo) > 2.2) {
-            spStartSmoothRateCatchUp(mainVideo, 1.9);
-        }
         logEvent(
             'success',
             '🛡️ Retour sur le vrai direct sans aucune relance sur ' + (channel || getTestChannel() || '') +
@@ -40131,7 +40114,7 @@ dashboardButton.style.visibility = 'hidden';
             var addedBufSec = Math.max(0, curBufEnd - bufEndAtEndMsg);
             var effectiveCleanDur = Math.max(cleanDurSec, 2.0 + addedBufSec);
             var minCleanTime = Math.max(bufStart + 0.05, curBufEnd - effectiveCleanDur + 0.25);
-            var maxSafeTime = Math.max(minCleanTime, curBufEnd - 1.45);
+            var maxSafeTime = Math.max(minCleanTime, curBufEnd - 2.2);
             var seekTarget = maxSafeTime;
 
             if (apPdt > 0 && initialMainEndPdt > 0) {
