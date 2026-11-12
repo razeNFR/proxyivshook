@@ -14,10 +14,11 @@
 
 // ==Changelog==
 // 1.11.8
-// - Moteur Adblock mis à niveau vers VAFT v58 (façon Pie Adblock / TwitchAdSolutions v58) : nouvel ordre prioritaire des flux Source (site, popout, mobile_web, embed, avec autoplay 360p uniquement en dernier secours) et mémorisation du lecteur propre, segment vidéo vide BLANK_MP4 servi instantanément en mémoire, filtrage anticipé des balises Low-Latency (#EXT-X-PART, #EXT-X-PRELOAD-HINT, #EXT-X-TWITCH-PREFETCH), cache anti-écran noir de la dernière playlist propre, détection rapide des pubs CSAI sans rechargement inutile, soft reload en fin de pub (préservant le Picture-in-Picture) et récupération automatique en cas de crash du Worker IVS || Upgraded Adblock engine to VAFT v58 (Pie Adblock / TwitchAdSolutions v58): new Source-first backup priority (site, popout, mobile_web, embed, with 360p autoplay as last resort only) with clean backup pinning, instant in-memory BLANK_MP4 segment response, early Low-Latency ad hint stripping (#EXT-X-PART, #EXT-X-PRELOAD-HINT, #EXT-X-TWITCH-PREFETCH), anti-black-screen clean playlist cache, fast CSAI zero-reload handling, smooth post-ad soft reload (preserving Picture-in-Picture), and automatic IVS Worker crash recovery
+// - Nouveau moteur Adblock par lecteur Autoplay sans pub en double lecteur (zéro blocage, zéro relance) : le vrai direct Twitch reste intact en arrière-plan (qualité native 1080p60/2K/4K HEVC conservée sans aucune modification de segments ni appel à setSrc), préchargement automatique du flux autoplay sans pub à l'ouverture de la chaîne, bascule instantanée sur un second lecteur superposé pendant les pubs et recalage exact par horodatage (#EXT-X-PROGRAM-DATE-TIME) à l'entrée comme au retour sur le vrai direct || New dual-player ad-free Autoplay Adblock engine (zero freeze, zero reload): keeps Twitch's native live player untouched underneath (preserving native 1080p60/2K/4K HEVC without segment splicing or setSrc reloads), pre-warms the ad-free autoplay stream on channel load, seamlessly overlays a secondary player during ads, and synchronizes exact #EXT-X-PROGRAM-DATE-TIME timestamps on both entry and return to live
 // - Nouvelle option « Afficher les mots censurés (***) » (Tchat & Filtres) : révèle automatiquement en clair les mots remplacés par des astérisques violets par le filtre du tchat Twitch || New "Show censored words (***)" option (Chat & Filters): automatically reveals words masked with purple asterisks by Twitch's client-side chat filter
 // - Suivi de discussion & @mentions façon BetterTTV : surlignage rouge des réponses reçues et @mentions, aperçu flottant du fil de discussion au survol et clic pour remonter au message parent avec bouton de retour en bas || BetterTTV-style Reply & @mention tracking: red highlight on incoming replies and @mentions, floating thread preview on hover, and click-to-jump to parent message with return-to-bottom pill
 // - Correctif des Émotes géantes (100 %) dans le tchat : recalage automatique du défilement en bas lors de l'agrandissement et du chargement des émotes HD 3x pour qu'elles ne soient plus jamais coupées sous la zone de saisie, et prise en compte des @mentions/liens dans la détection 100 % émotes || Fixed Giant Emotes (100%) in chat: automatic bottom scroll adjustment on emote expansion and 3x HD image load so emotes are never clipped under the chat input box, plus proper @mention/link detection
+// - Couleurs de pseudos lisibles & Saisie du tchat alignées sur BetterTTV : adoption de l'algorithme exact YIQ/HSL de BetterTTV pour éclaircir uniquement les pseudos réellement sombres sans décolorer les couleurs vives, et conservation du texte brut dans la zone de saisie pendant la frappe || Readable username colors & Chat input aligned with BetterTTV: adopted BetterTTV's exact YIQ/HSL algorithm to lighten only genuinely dark usernames without washing out vivid colors, and kept typed text as plain text in the chat input box
 // 1.11.7
 // - Blocage en amont des pubs sur le côté (SDA) façon uBlock Origin sans jamais relancer le lecteur : blocage réseau/script/iframe dès document-start des SDK publicitaires (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, vidéos m.media-amazon.com), neutralisation de la requête GraphQL FetchAdsService_FetchAds et retrait silencieux des balises HLS #EXT-X-DATERANGE twitch-maf-ad, combinés aux règles cosmétiques exactes d'uBlock Origin (EasyList + uAssets) gardant le lecteur à 100 % sans aucun appel à .play() ni rechargement || uBlock Origin-style upstream blocking of side-by-side ads (SDA) without ever restarting the player: document-start network/script/iframe blocking of ad SDKs (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, m.media-amazon.com videos), GraphQL FetchAdsService_FetchAds neutralization, and silent stripping of HLS #EXT-X-DATERANGE twitch-maf-ad tags, paired with exact uBlock Origin cosmetic rules keeping the player at 100% with zero .play() calls or reloads
 // - Menu d'Émotes & Émojis complet façon BetterTTV : ajout des émotes Twitch natives du streamer (followers, abonnés et verrouillées 🔒 avec avatar), des chaînes abonnées, des émotes Twitch débloquées (🔓), des 310+ émotes Twitch Global, de toutes les émotes 7TV/FFZ/BTTV sans limite, et du catalogue complet de 1 870 émojis standard en 8 catégories avec recherche et auto-complétion :shortcode: || Complete BetterTTV-style Emote & Emoji Picker: added streamer's native Twitch emotes (follower, sub, and locked 🔒 with avatar), subscribed channels, unlocked Twitch emotes (🔓), 310+ Twitch Global emotes, uncapped 7TV/FFZ/BTTV emotes, and the full 1,870 standard emoji catalog across 8 categories with :shortcode: search and autocomplete
@@ -262,6 +263,8 @@
         'sur la chaîne': 'on this channel',
         'Le compte démarre avec la lecture': 'Counting starts with playback',
         'Qualité réduite pendant une pub': 'Lower quality during an ad',
+        'Lecteur autoplay sans pub pendant les coupures': 'Ad-free autoplay player during ad breaks',
+        'Zéro blocage ni relance · recalage direct auto': 'Zero freeze or reload · auto live resync',
         'Pubs de début (preroll) non comptées': 'Pre-roll ads not counted',
         'Tester': 'Test',
         'Réglages': 'Settings',
@@ -4151,7 +4154,11 @@
     // et la pause du direct ne pilotaient plus rien.
     function isOwnPlayerVideo(video) {
         try {
-            return !!(video.closest && video.closest('.tp9dvr, #tp9-sidebar-preview-card'));
+            return !!(
+                video === spAutoplayVideo ||
+                (video && video.classList && video.classList.contains('tp9-sp-autoplay-video')) ||
+                (video && video.closest && video.closest('.tp9dvr, #tp9-sidebar-preview-card, #tp9-sp-autoplay-overlay'))
+            );
         } catch (e) {
             return false;
         }
@@ -6342,6 +6349,9 @@
                             spChannelProxy403[String(activeProxyInfo.channel).toLowerCase()] = Date.now();
                         }
                         if (activeProxyInfo.sansProxy) {
+                            if (activeProxyInfo.channel && typeof spWarmAutoplayForChannel === 'function') {
+                                spWarmAutoplayForChannel(activeProxyInfo.channel);
+                            }
                             logEvent(
                                 'info',
                                 'Lecture Twitch sans proxy (' + activeProxyInfo.channel + ')' +
@@ -6904,8 +6914,8 @@
                                         <div class="tp9-ab-ratio-note"></div>
                                     </div>
                                     <div class="tp9-sans-proxy-notes">
-                                        <div class="tp9-sans-proxy-note">Qualité réduite pendant une pub</div>
-                                        <div class="tp9-sans-proxy-note">Son du streamer verrouillé pendant/après pub</div>
+                                        <div class="tp9-sans-proxy-note">Lecteur autoplay sans pub pendant les coupures</div>
+                                        <div class="tp9-sans-proxy-note">Zéro blocage ni relance · recalage direct auto</div>
                                     </div>
                                 </div>
                             </div>
@@ -13130,7 +13140,11 @@ function showAddProxyForm() {
 
     function dvrRestoreLiveSound() {
         dvrPauseReplay();
-        dvrReleaseAudioBridge();
+        if (spAutoplayMutingMain) {
+            dvrSyncVolumeFromPlayer();
+        } else {
+            dvrReleaseAudioBridge();
+        }
 
         if (!dvrLiveVideo || dvrStreamEnded()) {
             return;
@@ -13492,9 +13506,33 @@ function showAddProxyForm() {
         return dvrIsLive() ? dvrLiveVideo : dvrVideo;
     }
 
-    // Native controls keep their normal handlers and state. During replay,
-    // the native element reports Twitch's requested settings while its real
-    // output stays muted. Only the replay receives the requested audio.
+    var spAutoplayOverlay = null;
+    var spAutoplayVideo = null;
+    var spAutoplayMutingMain = false;
+    var spAutoplayVisible = false;
+
+    function spAutoplayShouldHaveAudio() {
+        return Boolean(
+            spAutoplayVisible &&
+            spAutoplayVideo &&
+            (!dvrOverlay || dvrIsLive())
+        );
+    }
+
+    function getForegroundStreamVideo() {
+        if (dvrOverlay && dvrVideo && !dvrIsLive()) {
+            return dvrVideo;
+        }
+        if (spAutoplayVisible && spAutoplayVideo && spAutoplayVideo.isConnected) {
+            return spAutoplayVideo;
+        }
+        return findPlaybackVideo();
+    }
+
+    // Native controls keep their normal handlers and state. During replay or
+    // during an ad covered by the ad-free autoplay player, the native element
+    // reports Twitch's requested settings while its real output stays muted.
+    // Only the active foreground player (replay or autoplay) receives audio.
     function dvrReleaseAudioBridge() {
         var bridge = dvrAudioBridge;
         if (!bridge) return;
@@ -13516,21 +13554,26 @@ function showAddProxyForm() {
     }
 
     function dvrSyncVolumeFromPlayer() {
-        if (!dvrLiveVideo || !dvrLiveVideo.isConnected) dvrFindLivePlayer();
-        if (dvrIsLive() || !dvrOverlay || !dvrVideo) {
+        var needDvrBridge = Boolean(dvrOverlay && dvrVideo && !dvrIsLive());
+        var needSpBridge = Boolean(spAutoplayMutingMain);
+        if (!needDvrBridge && !needSpBridge) {
             dvrReleaseAudioBridge();
             return;
         }
-        if (dvrAudioBridge && dvrAudioBridge.video === dvrLiveVideo) {
+        if (!dvrLiveVideo || !dvrLiveVideo.isConnected) dvrFindLivePlayer();
+        var video = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+        if (dvrAudioBridge && dvrAudioBridge.video === video) {
             if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
-                try { nativeMediaMutedDesc.set.call(dvrLiveVideo, true); } catch (e) {}
+                try { nativeMediaMutedDesc.set.call(video, true); } catch (e) {}
+            }
+            if (dvrAudioBridge.syncTargets) {
+                dvrAudioBridge.syncTargets();
             }
             return;
         }
         dvrReleaseAudioBridge();
-        var video = dvrLiveVideo;
         if (!video) return;
-        var bridge = { video: video, volume: video.volume, muted: video.muted, own: {}, descriptors: {} };
+        var bridge = { video: video, volume: video.volume, muted: video.muted, own: {}, descriptors: {}, syncTargets: null };
         var keys = ['volume', 'muted'];
         keys.forEach(function (key) {
             bridge.own[key] = Object.getOwnPropertyDescriptor(video, key);
@@ -13543,9 +13586,18 @@ function showAddProxyForm() {
         // Leave non-configurable properties installed by other extensions alone.
         if (keys.some(function (key) { return bridge.own[key] && !bridge.own[key].configurable; })) return;
         function syncReplay() {
-            if (!dvrVideo) return;
-            setVideoVolumeRaw(dvrVideo, bridge.volume, bridge.muted);
+            if (dvrOverlay && dvrVideo && !dvrIsLive()) {
+                setVideoVolumeRaw(dvrVideo, bridge.volume, bridge.muted);
+            }
+            if (spAutoplayVideo) {
+                var spMuted = spAutoplayShouldHaveAudio() ? bridge.muted : true;
+                setVideoVolumeRaw(spAutoplayVideo, bridge.volume, spMuted);
+                if (spAutoplayShouldHaveAudio() && typeof audioNormSyncVolumeGain === 'function') {
+                    audioNormSyncVolumeGain(spAutoplayVideo);
+                }
+            }
         }
+        bridge.syncTargets = syncReplay;
         keys.forEach(function (key) {
             Object.defineProperty(video, key, {
                 configurable: true,
@@ -13720,13 +13772,16 @@ function showAddProxyForm() {
     }
 
     function isDvrBackgroundLiveVideo(video) {
-        return Boolean(
-            video &&
-            dvrOverlay &&
-            dvrVideo &&
-            !dvrIsLive() &&
-            video !== dvrVideo
-        );
+        if (!video || video === dvrVideo || video === spAutoplayVideo) {
+            return false;
+        }
+        if (dvrOverlay && dvrVideo && !dvrIsLive()) {
+            return true;
+        }
+        if (spAutoplayMutingMain) {
+            return true;
+        }
+        return false;
     }
 
     function setVideoVolumeRaw(video, vol, muted) {
@@ -13744,11 +13799,18 @@ function showAddProxyForm() {
                 if (isBgLive && dvrAudioBridge && dvrAudioBridge.video === video) {
                     dvrAudioBridge.volume = clampedVol;
                 }
-                if (isBgLive && dvrVideo) {
+                if (isBgLive && dvrOverlay && dvrVideo && !dvrIsLive()) {
                     if (nativeMediaVolumeDesc && nativeMediaVolumeDesc.set) {
                         nativeMediaVolumeDesc.set.call(dvrVideo, clampedVol);
                     } else {
                         dvrVideo.volume = clampedVol;
+                    }
+                }
+                if (isBgLive && spAutoplayVideo) {
+                    if (nativeMediaVolumeDesc && nativeMediaVolumeDesc.set) {
+                        nativeMediaVolumeDesc.set.call(spAutoplayVideo, clampedVol);
+                    } else {
+                        spAutoplayVideo.volume = clampedVol;
                     }
                 }
             }
@@ -13762,11 +13824,19 @@ function showAddProxyForm() {
                 if (isBgLive && dvrAudioBridge && dvrAudioBridge.video === video) {
                     dvrAudioBridge.muted = muted;
                 }
-                if (isBgLive && dvrVideo) {
+                if (isBgLive && dvrOverlay && dvrVideo && !dvrIsLive()) {
                     if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
                         nativeMediaMutedDesc.set.call(dvrVideo, muted);
                     } else {
                         dvrVideo.muted = muted;
+                    }
+                }
+                if (isBgLive && spAutoplayVideo) {
+                    var spMuteTarget = spAutoplayShouldHaveAudio() ? muted : true;
+                    if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                        nativeMediaMutedDesc.set.call(spAutoplayVideo, spMuteTarget);
+                    } else {
+                        spAutoplayVideo.muted = spMuteTarget;
                     }
                 }
             } else if (isBgLive && nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
@@ -13866,11 +13936,14 @@ function showAddProxyForm() {
         if (video) {
             setVideoVolumeRaw(video, baseLevel, shouldMute);
         }
+        if (spAutoplayVideo) {
+            setVideoVolumeRaw(spAutoplayVideo, baseLevel, spAutoplayShouldHaveAudio() ? shouldMute : true);
+        }
         if (typeof audioNormRefresh === 'function') {
             audioNormRefresh();
         }
         if (typeof audioNormSyncVolumeGain === 'function') {
-            audioNormSyncVolumeGain(video);
+            audioNormSyncVolumeGain(getForegroundStreamVideo());
         }
         if (dvrOverlay) {
             dvrSetVolume(baseLevel, shouldMute, true);
@@ -13939,6 +14012,7 @@ function showAddProxyForm() {
                             !isPreviewOrAuxiliaryVideo(this)
                         ) {
                             var bgLiveVol = isDvrBackgroundLiveVideo(this);
+                            var fgAudioTarget = bgLiveVol ? getForegroundStreamVideo() : this;
                             if (isNativeVolumeUserActive()) {
                                 var curChVol = (getTestChannel() || '').toLowerCase();
                                 var isMuteBtnZero = (clamped === 0 && (Date.now() - dvrLastNativeMuteClickAt) < 450);
@@ -13948,6 +14022,12 @@ function showAddProxyForm() {
                                 if (bgLiveVol && nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
                                     nativeMediaMutedDesc.set.call(this, true);
                                 }
+                                if (bgLiveVol && spAutoplayVideo && nativeMediaVolumeDesc.set) {
+                                    nativeMediaVolumeDesc.set.call(spAutoplayVideo, clamped);
+                                    if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
+                                        nativeMediaMutedDesc.set.call(spAutoplayVideo, spAutoplayShouldHaveAudio() ? dvrUserExplicitMuted : true);
+                                    }
+                                }
                                 if (isMuteBtnZero) {
                                     try { localStorage.setItem('muted', 'true'); } catch (e) {}
                                     if (typeof updateMenuVolumeUI === 'function') updateMenuVolumeUI(0, curChVol);
@@ -13955,7 +14035,7 @@ function showAddProxyForm() {
                                     saveChannelVolume(curChVol, clamped);
                                 }
                                 if (typeof audioNormSyncVolumeGain === 'function') {
-                                    audioNormSyncVolumeGain(bgLiveVol ? dvrVideo : this);
+                                    audioNormSyncVolumeGain(fgAudioTarget);
                                 }
                                 return;
                             }
@@ -13967,7 +14047,7 @@ function showAddProxyForm() {
                                     nativeMediaMutedDesc.set.call(this, bgLiveVol ? true : (dvrUserExplicitMuted || expectedBase === 0));
                                 }
                                 if (typeof audioNormSyncVolumeGain === 'function') {
-                                    audioNormSyncVolumeGain(bgLiveVol ? dvrVideo : this);
+                                    audioNormSyncVolumeGain(fgAudioTarget);
                                 }
                                 return;
                             }
@@ -13986,7 +14066,7 @@ function showAddProxyForm() {
                             (this instanceof HTMLVideoElement) &&
                             !isPreviewOrAuxiliaryVideo(this) &&
                             !isMiniPlayerVideo(this) &&
-                            (!isOwnPlayerVideo(this) || this === dvrVideo)
+                            (!isOwnPlayerVideo(this) || this === dvrVideo || this === spAutoplayVideo)
                         ) {
                             audioNormSyncVolumeGain(this);
                         }
@@ -14014,8 +14094,14 @@ function showAddProxyForm() {
                                 dvrUserExplicitMuted = boolVal;
                                 dvrExplicitMutedChannel = boolVal ? (getTestChannel() || '').toLowerCase() : '';
                                 try { localStorage.setItem('muted', String(boolVal)); } catch (e) {}
-                                if (dvrVideo) {
+                                if (dvrOverlay && dvrVideo && !dvrIsLive()) {
                                     nativeMediaMutedDesc.set.call(dvrVideo, boolVal);
+                                }
+                                if (spAutoplayVideo) {
+                                    nativeMediaMutedDesc.set.call(spAutoplayVideo, spAutoplayShouldHaveAudio() ? boolVal : true);
+                                }
+                                if (typeof audioNormSyncVolumeGain === 'function') {
+                                    audioNormSyncVolumeGain(getForegroundStreamVideo());
                                 }
                             }
                             nativeMediaMutedDesc.set.call(this, true);
@@ -15048,6 +15134,9 @@ function showAddProxyForm() {
             });
             if (typeof syncUncensoredChatDomState === 'function') {
                 syncUncensoredChatDomState();
+            }
+            if (typeof restoreAllReadableUsernameColors === 'function') {
+                restoreAllReadableUsernameColors();
             }
             if (typeof clearReplyThreadHover === 'function') {
                 clearReplyThreadHover(true);
@@ -19460,8 +19549,10 @@ function showAddProxyForm() {
         return !!(
             (dvrOverlay && dvrOverlay.contains(el)) ||
             el.contains(dvrVideo) ||
+            (spAutoplayOverlay && spAutoplayOverlay.contains(el)) ||
             el.closest(
                 '.tp9dvr-native-bar, .tp9dvr-native-info, .tp9dvr-menu, .tp9dvr-vol-hint,' +
+                '#tp9-sp-autoplay-overlay, .tp9-sp-badge,' +
                 '#tp9-dashboard, #tp9-toast, #tp9-tip, [data-a-target="player-controls"]'
             ) ||
             el.querySelector('[data-a-target="player-controls"], .tp9dvr-native-bar')
@@ -20129,8 +20220,13 @@ function showAddProxyForm() {
             dvrDiagControls('none');
             return;
         }
-        // Same stacking context as the video, below Twitch's own overlay.
-        if (dvrOverlay.parentNode !== host) host.insertBefore(dvrOverlay, video.nextSibling);
+        // Same stacking context as the video, after spAutoplayOverlay so DVR rewind sits on top of ads too.
+        var afterVideoNode = (spAutoplayOverlay && spAutoplayOverlay.parentNode === host)
+            ? spAutoplayOverlay.nextSibling
+            : video.nextSibling;
+        if (dvrOverlay.parentNode !== host || (spAutoplayOverlay && spAutoplayOverlay.parentNode === host && dvrOverlay.nextSibling === spAutoplayOverlay)) {
+            host.insertBefore(dvrOverlay, afterVideoNode);
+        }
         if (dvrNativeBar.parentNode !== controls) controls.prepend(dvrNativeBar);
         var leftControls = controls.querySelector('.player-controls__left-control-group');
         if (leftControls) {
@@ -20291,9 +20387,9 @@ function showAddProxyForm() {
             targetVideo &&
             !isPreviewOrAuxiliaryVideo(targetVideo) &&
             !isMiniPlayerVideo(targetVideo) &&
-            (!isOwnPlayerVideo(targetVideo) || targetVideo === dvrVideo)
+            (!isOwnPlayerVideo(targetVideo) || targetVideo === dvrVideo || targetVideo === spAutoplayVideo)
         ) ? targetVideo : null;
-        var video = validTarget || ((!dvrIsLive() && dvrVideo) ? dvrVideo : findPlaybackVideo());
+        var video = validTarget || getForegroundStreamVideo();
         var saved = getSavedChannelVolume(getTestChannel());
         var savedBase = (saved !== null && Number.isFinite(saved)) ? Math.max(0, Math.min(1, saved)) : null;
         var vol = (video && typeof video.volume === 'number')
@@ -20393,16 +20489,17 @@ function showAddProxyForm() {
         if (isPreviewOrAuxiliaryVideo(video) || isMiniPlayerVideo(video)) {
             return false;
         }
-        if (isOwnPlayerVideo(video) && video !== dvrVideo) {
+        if (isOwnPlayerVideo(video) && video !== dvrVideo && video !== spAutoplayVideo) {
             return false;
         }
         if (
             video === dvrVideo ||
+            video === spAutoplayVideo ||
             video === findPlaybackVideo()
         ) {
             return true;
         }
-        // Pendant ou en sortie de coupure pub (VAFT ou Proxy), Twitch peut
+        // Pendant ou en sortie de coupure pub (Proxy), Twitch peut
         // instancier un nouveau <video> avant d'avoir retiré l'ancien du DOM :
         // on accepte tout <video> situé dans le conteneur du lecteur principal.
         return !!(video.closest && video.closest('.video-player, .persistent-player, [data-a-target="video-player"]'));
@@ -20446,7 +20543,7 @@ function showAddProxyForm() {
             }
             sourceNode.connect(audioNormInput);
             logEvent('info', '🔊 Normalisation du son branchée sur le lecteur (' +
-                (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch') +
+                (video === spAutoplayVideo ? 'autoplay sans pub' : (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch')) +
                 ') : son traité jusqu\'au prochain F5, même si l\'option est décochée');
         } catch (e) {
             // Si createMediaElementSource a réussi mais que la connexion à
@@ -20459,7 +20556,7 @@ function showAddProxyForm() {
             }
             // Déjà prise par une autre extension : on n'insiste pas.
             logEvent('warn', '🔊 Normalisation du son impossible sur le lecteur (' +
-                (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch') +
+                (video === spAutoplayVideo ? 'autoplay sans pub' : (video === dvrVideo || isOwnPlayerVideo(video) ? 'retour arrière' : 'Twitch')) +
                 ') : ' + ((e && e.message) || e) + ' (une autre extension traite peut-être déjà le son)');
         }
     }
@@ -20492,6 +20589,9 @@ function showAddProxyForm() {
 
         if (dvrVideo && !dvrVideo.paused) {
             audioNormAttach(dvrVideo);
+        }
+        if (spAutoplayVideo && !spAutoplayVideo.paused) {
+            audioNormAttach(spAutoplayVideo);
         }
     }
 
@@ -21228,6 +21328,9 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function positionPlayerUI() {
+        if (spAutoplayOverlay && typeof spPositionAutoplayOverlay === 'function') {
+            spPositionAutoplayOverlay();
+        }
         ensureChatEmoteButton();
         ensurePlayerToolButtons();
         if (typeof syncChatOnLeftLayout === 'function') {
@@ -26515,55 +26618,6 @@ dashboardButton.style.visibility = 'hidden';
                 visibility: hidden !important;
                 opacity: 0 !important;
                 pointer-events: none !important;
-            }
-            /* Miroir d'aperçu d'émotes en direct dans la zone de saisie du tchat */
-            [data-a-target="chat-input"].tp9-has-input-emotes,
-            [data-a-target="chat-input"].tp9-has-input-emotes * {
-                color: transparent !important;
-                -webkit-text-fill-color: transparent !important;
-                text-decoration: none !important;
-                caret-color: #efeff1 !important;
-            }
-            #tp9-chat-input-mirror {
-                position: absolute;
-                pointer-events: none !important;
-                user-select: none !important;
-                z-index: 3;
-                overflow: hidden;
-                white-space: pre-wrap;
-                word-wrap: break-word;
-                box-sizing: border-box;
-                color: transparent !important;
-            }
-            #tp9-chat-input-mirror .tp9-cim-txt {
-                color: var(--tp9-cim-fg, #efeff1) !important;
-                -webkit-text-fill-color: var(--tp9-cim-fg, #efeff1) !important;
-                background: transparent !important;
-            }
-            #tp9-chat-input-mirror .tp9-cim-emote {
-                position: relative;
-                display: inline-block;
-                background: var(--tp9-cim-bg, #18181b);
-                padding: 3px 1px;
-                margin: -3px -1px;
-                border-radius: 3px;
-                color: transparent !important;
-                vertical-align: baseline;
-            }
-            #tp9-chat-input-mirror .tp9-cim-ghost {
-                color: transparent !important;
-                white-space: pre;
-            }
-            #tp9-chat-input-mirror .tp9-cim-emote img {
-                position: absolute;
-                left: 50%;
-                top: 50%;
-                transform: translate(-50%, -50%);
-                height: 22px;
-                width: auto;
-                max-width: calc(100% + 8px);
-                object-fit: contain;
-                pointer-events: none;
             }
             /* Alignement propre du compte à rebours Mode lent natif Twitch (« Vous pourrez envoyer un autre message dans Xs ») */
             [data-tp9-slow-bar="1"] {
@@ -36031,10 +36085,14 @@ dashboardButton.style.visibility = 'hidden';
                         // précédent (2 s chez Twitch). La vraie durée
                         // la remplacera quand il entrera dans la liste.
                         if (row.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0) {
-                            var prefetch = row.substring(23).trim();
+                            var rawPrefetch = row.substring(23).trim();
+                            var prefetch = rawPrefetch;
                             try {
                                 prefetch = new URL(prefetch, url).href;
                             } catch(e) {}
+                            if (typeof __sp_adSegs === "object" && (__sp_adSegs[prefetch] || __sp_adSegs[rawPrefetch])) {
+                                continue;
+                            }
                             if (!__tp_dvrDurations[prefetch]) {
                                 __tp_dvrDurations[prefetch] = prefetchDuration || 2;
                             }
@@ -36051,6 +36109,11 @@ dashboardButton.style.visibility = 'hidden';
                             try {
                                 abs = new URL(row, url).href;
                             } catch(e) {}
+
+                            if (typeof __sp_adSegs === "object" && (__sp_adSegs[abs] || __sp_adSegs[row])) {
+                                pending = 0;
+                                continue;
+                            }
 
                             __tp_dvrDurations[abs] = pending;
                             seen.push(abs);
@@ -36248,45 +36311,25 @@ dashboardButton.style.visibility = 'hidden';
 
         lines.push(`
             // ----------------------------------------------------------
-            // BLOQUEUR DE PUB SANS PROXY (VAFT v58)
+            // BLOQUEUR DE PUB SANS PROXY — DOUBLE LECTEUR AUTOPLAY ZÉRO RELANCE
             // ----------------------------------------------------------
-            // Proxys coupés : on reste sur la session Twitch de
-            // l'utilisateur (donc sa qualité, 2K/4K compris). Quand une
-            // pub est collée dans la liste de segments, on redemande la
-            // chaîne à Twitch comme un autre lecteur Source (site, popout,
-            // mobile_web, embed ; autoplay 360p en dernier recours) qui
-            // n'en a souvent pas, en mémorisant le lecteur propre trouvé
-            // (pinnedBackupType). À défaut, les segments de pub (et indices
-            // LL-HLS #EXT-X-PART / PRELOAD-HINT / PREFETCH) sont neutralisés
-            // et remplacés par un segment MP4 vide en mémoire ou par la
-            // réserve des derniers segments live. Basé sur TwitchAdSolutions
-            // vaft v58 (Pie Adblock / pixeltris).
+            // En mode Adblock (sans proxy), le lecteur natif de Twitch (le vrai direct)
+            // garde en permanence sa propre liste de segments et sa qualité native
+            // (1080p60 / 2K / 4K HEVC) sans aucune injection de segments étrangers,
+            // sans segment MP4 vide et sans aucune relance (setSrc). Seules les
+            // métadonnées publicitaires (#EXT-X-DATERANGE / CUE / SCTE35) sont retirées
+            // pour empêcher l'interface pub de Twitch, tandis que la page superpose
+            // sans coupure un second lecteur hls.js préchargé sur le flux autoplay
+            // sans pub, recalé au millième via #EXT-X-PROGRAM-DATE-TIME.
             var __sp_NL = String.fromCharCode(10);
             var __sp_CR = String.fromCharCode(13);
             // Note : twitch-maf-ad (pub latérale SDA) est volontairement exclu
             // de __sp_SIGNIFIERS et retiré silencieusement à part afin de ne
-            // jamais déclencher de relance ni de bascule du lecteur principal.
+            // jamais déclencher de bascule du lecteur principal.
             var __sp_SIGNIFIERS = ["stitched-ad", "EXT-X-CUE-OUT", "twitch-stitched"];
             var __sp_AD_URL_PATTERNS = ["/adsquared/", "/_404/", "/processing"];
-            var __sp_AD_URL_REWRITE_RE = /(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g;
             var __sp_URI_ATTR_RE = /URI="([^"]+)"/;
-            var __sp_TYPES = ["site", "popout", "mobile_web", "embed"];
-            var __sp_FALLBACK = "site";
-            var __sp_LOW_QUALITY_BACKUP = true;
-            var __sp_PIN_BACKUP = true;
-            var __sp_EARLY_RELOAD_POLLS = 5;
             var __sp_TOKEN_HASH = "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9";
-            var __sp_BLANK_B64 = "AAAAKGZ0eXBtcDQyAAAAAWlzb21tcDQyZGFzaGF2YzFpc282aGxzZgAABEltb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAYagAAAAAAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAABqHRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAURtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAALuAAAAAAFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAADvbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAACzc3RibAAAAGdzdHNkAAAAAAAAAAEAAABXbXA0YQAAAAAAAAABAAAAAAAAAAAAAgAQAAAAALuAAAAAAAAzZXNkcwAAAAADgICAIgABAASAgIAUQBUAAAAAAAAAAAAAAAWAgIACEZAGgICAAQIAAAAQc3R0cwAAAAAAAAAAAAAAEHN0c2MAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAeV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAoAAAAFoAAAAAAGBbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAA9CQAAAAABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABLG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAOxzdGJsAAAAoHN0c2QAAAAAAAAAAQAAAJBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAoABaABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAOmF2Y0MBTUAe/+EAI2dNQB6WUoFAX/LgLUBAQFAAAD6AAA6mDgAAHoQAA9CW7y4KAQAEaOuPIAAAABBzdHRzAAAAAAAAAAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAASG12ZXgAAAAgdHJleAAAAAAAAAABAAAAAQAAAC4AAAAAAoAAAAAAACB0cmV4AAAAAAAAAAIAAAABAACCNQAAAAACQAAA";
-            var __sp_BLANK = "data:video/mp4;base64," + __sp_BLANK_B64;
-            var __sp_BLANK_BLOB = null;
-            try {
-                var __sp_rawBin = self.atob(__sp_BLANK_B64);
-                var __sp_rawArr = new Uint8Array(__sp_rawBin.length);
-                for (var __sp_bi = 0; __sp_bi < __sp_rawBin.length; __sp_bi++) {
-                    __sp_rawArr[__sp_bi] = __sp_rawBin.charCodeAt(__sp_bi);
-                }
-                __sp_BLANK_BLOB = new Blob([__sp_rawArr], { type: "video/mp4" });
-            } catch(e) {}
             function __sp_hasAdTags(text){
                 if (!text) return false;
                 for (var s = 0; s < __sp_SIGNIFIERS.length; s++) {
@@ -36311,10 +36354,7 @@ dashboardButton.style.visibility = 'hidden';
             var __sp_gqlWait = {};
             var __sp_gqlSeq = 0;
             var __sp_reloaded = false;
-            // 🔎 Relance de fin de pub : pour signaler une image vide
-            // envoyée au lecteur juste après.
             var __sp_lastEndAt = 0;
-            var __sp_blankAfterEnd = 0;
             // Lecture directe sur Twitch avec ce bloqueur : mode
             // Adblock, ou mode Proxy réglé sur « proxys pendant les pubs ».
             function __sp_on(){
@@ -36324,12 +36364,10 @@ dashboardButton.style.visibility = 'hidden';
                 ));
             }
             // En mode Proxy avec « Proxy uniquement pour les pubs » (jamais en mode Adblock),
-            // les proxys servent de flux de secours prioritaire avant les lecteurs VAFT.
+            // les proxys servent de flux de secours prioritaire avant le lecteur autoplay.
             function __sp_proxyAds(){
                 return !!(__tp_config && __tp_config.proxiesEnabled !== false && __tp_config.proxyAdsOnly === true);
             }
-            // Dans l'ordre du tri de l'auto-test ; trois au plus, pour
-            // ne pas faire attendre la coupure sur toute la liste.
             function __sp_adProxies(){
                 if (!__tp_config || !Array.isArray(__tp_config.proxies)) {
                     return [];
@@ -36338,12 +36376,6 @@ dashboardButton.style.visibility = 'hidden';
                     return proxy.enabled && !proxy.quarantine;
                 }).slice(0, 3);
             }
-            // Manifeste du proxy (celui que Twitch donne depuis son
-            // pays), gardé jusqu'à ce que ses listes ne répondent plus.
-            // Si ce proxy a répondu HTTP 403 sur CETTE chaîne précise,
-            // on le mémorise sur l'objet de cette chaîne uniquement pour
-            // passer sans délai au relais VAFT, tout en réutilisant les
-            // proxys normalement dès qu'on change de chaîne.
             function __sp_proxyMaster(info, proxy){
                 if (info.proxyCache[proxy.id]) {
                     return Promise.resolve(info.proxyCache[proxy.id]);
@@ -36351,8 +36383,6 @@ dashboardButton.style.visibility = 'hidden';
                 if (info.proxy403 && info.proxy403[proxy.id] > Date.now() - 600000) {
                     return Promise.resolve(null);
                 }
-                // Une seule demande à la fois par proxy : la préparation
-                // en cours sert aussi à la pub qui arrive pendant ce temps.
                 if (info.proxyPending[proxy.id]) {
                     return info.proxyPending[proxy.id];
                 }
@@ -36386,41 +36416,10 @@ dashboardButton.style.visibility = 'hidden';
                 });
                 return pending;
             }
-            // Préparé dès l'ouverture du stream : à la pub, il ne reste
-            // que la liste de segments à demander (0 ms de négociation GQL/usher).
             function __sp_warmProxies(info){
                 __sp_adProxies().slice(0, 1).forEach(function(proxy){
                     __sp_proxyMaster(info, proxy);
                 });
-            }
-            function __sp_warmBackups(info){
-                if (!info || info.backupWarming) return;
-                info.backupWarming = true;
-                var warmType = info.activePlayerType === "site" ? "popout" : "site";
-                setTimeout(function(){
-                    if (!__sp_streams[info.channel] || info.backupCache[warmType]) return;
-                    __sp_token(info.channel, warmType).then(function(tokenResponse){
-                        if (!tokenResponse || tokenResponse.status !== 200) return;
-                        var data = JSON.parse(tokenResponse.body);
-                        var token = (data && data.data && data.data.streamPlaybackAccessToken) || (data && data.streamPlaybackAccessToken);
-                        if (!token) return;
-                        var usher = new URL(
-                            "https://usher.ttvnw.net/api/" + (info.v2 ? "v2/" : "") +
-                            "channel/hls/" + info.channel + ".m3u8" + info.params
-                        );
-                        usher.searchParams.set("sig", token.signature);
-                        usher.searchParams.set("token", token.value);
-                        return __tp_originalFetch(usher.href).then(function(usherResponse){
-                            if (usherResponse && usherResponse.status === 200) {
-                                return usherResponse.text().then(function(masterText){
-                                    if (masterText && masterText.indexOf("#EXT-X-STREAM-INF") >= 0) {
-                                        info.backupCache[warmType] = masterText;
-                                    }
-                                });
-                            }
-                        });
-                    }).catch(function(){});
-                }, 400);
             }
             function __sp_isDiscTag(line){
                 var t = line.trim();
@@ -36682,39 +36681,28 @@ dashboardButton.style.visibility = 'hidden';
                     channel: channel,
                     v2: usherURL.indexOf("/api/v2/") >= 0,
                     master: text,
-                    modified: null,
-                    usingModified: false,
                     params: params,
                     urls: {},
                     list: [],
-                    backupCache: {},
                     backupType: null,
-                    pinnedBackupType: null,
-                    lastCommittedBackupType: null,
-                    failedBackupTypes: {},
+                    backupName: null,
+                    backupLabel: "",
+                    usedProxyInBreak: false,
+                    autoplayLogged: false,
                     activePlayerType: null,
                     inAd: false,
                     adStart: 0,
                     midroll: false,
-                    stripping: false,
-                    stripped: 0,
-                    everStrippedInBreak: false,
-                    blankLogged: false,
                     lastSeenAt: Date.now(),
                     lastReload: 0,
-                    lastCleanM3u8: null,
-                    lastCleanAt: 0,
-                    recoverySegments: [],
-                    recoveryStartSeq: undefined,
-                    consecutiveAllStripped: 0,
-                    totalAllStripped: 0,
+                    lastEndAt: 0,
                     podLength: 1,
-                    earlyReloadCount: 0,
-                    earlyReloadTriggered: false,
-                    earlyReloadAwaiting: false,
-                    cycleRescued: false,
                     lastCachePruneAt: 0,
-                    requestedAds: {},
+                    adBackupMinPdt: 0,
+                    postAdMinPdt: 0,
+                    postAdReloadSeen: false,
+                    postAdReloadLocked: false,
+                    edgeGaps: [],
                     proxyCache: {},
                     proxyPending: {}
                 };
@@ -36740,56 +36728,17 @@ dashboardButton.style.visibility = 'hidden';
                         __sp_byUrl[nextVariant] = info;
                     }
                 }
-                // Les lecteurs de secours n'ont pas de HEVC (2K/4K) :
-                // pendant la pub on relance le lecteur sur un manifeste
-                // où chaque rendu HEVC pointe vers le H.264 le plus proche.
-                var avc = info.list.filter(function(item){
-                    return __sp_isAvc(item.codecs);
-                });
-                var hasHevc = info.list.some(function(item){
-                    return __sp_isHevc(item.codecs);
-                });
-                if (avc.length && hasHevc) {
-                    var mod = lines.slice();
-                    for (var j = 0; j < mod.length - 1; j++) {
-                        if (mod[j].indexOf("#EXT-X-STREAM-INF") !== 0) {
-                            continue;
-                        }
-                        var attrs = __sp_attrs(mod[j]);
-                        if (!__sp_isHevc(attrs.CODECS)) {
-                            continue;
-                        }
-                        var target = __sp_area(attrs.RESOLUTION);
-                        var best = avc.slice().sort(function(x, y){
-                            return Math.abs(__sp_area(x.resolution) - target) -
-                                Math.abs(__sp_area(y.resolution) - target);
-                        })[0];
-                        var at = mod[j].indexOf('CODECS="');
-                        if (at >= 0) {
-                            var endAt = mod[j].indexOf('"', at + 8);
-                            mod[j] = mod[j].substring(0, at + 8) + best.codecs + mod[j].substring(endAt);
-                        }
-                        // Chaque ligne d'adresse doit rester unique,
-                        // sinon le lecteur ne charge pas le flux.
-                        mod[j + 1] = best.url + " ".repeat(j + 1);
-                    }
-                    info.modified = mod.join(__sp_NL);
-                }
                 return info;
             }
             // Manifeste principal (usher), proxys coupés.
             function __sp_usher(ctx, input, init, originalURL, channel, usherN, playerType){
                 var lower = originalURL.toLowerCase();
-                // La petite fenêtre au-dessus du tchat et les VOD ne
-                // sont pas touchées.
                 if (
                     lower.indexOf("picture-by-picture") >= 0 ||
                     lower.indexOf("/channel/hls/") < 0
                 ) {
                     return __tp_originalFetch.call(ctx, input, init);
                 }
-                // parent_domains fait croire à un lecteur intégré sur un
-                // autre site, ce qui attire de fausses pubs.
                 var url = originalURL;
                 try {
                     var parsed = new URL(originalURL);
@@ -36818,9 +36767,6 @@ dashboardButton.style.visibility = 'hidden';
                     var text = await response.text();
                     var info = __sp_streams[channel];
                     if (info) {
-                        // Si le flux vient d'être lu ou relancé après pub (< 45 s),
-                        // on évite un aller-retour réseau supplémentaire de 250–400 ms
-                        // pendant setSrc.
                         var recentlyActive = (
                             (info.lastSeenAt && (Date.now() - info.lastSeenAt) < 45000) ||
                             (info.lastReload && (Date.now() - info.lastReload) < 45000) ||
@@ -36854,20 +36800,15 @@ dashboardButton.style.visibility = 'hidden';
                     if (__sp_proxyAds()) {
                         __sp_warmProxies(info);
                     }
-                    __sp_warmBackups(info);
-                    var out = __sp_withServerTime(
-                        info.usingModified && info.modified ? info.modified : info.master,
-                        text,
-                        info.v2
-                    );
+                    var out = __sp_withServerTime(info.master, text, info.v2);
                     var is403Fallback = !__sp_on() && !!(__tp_channelAll403[channel] && __tp_channelAll403[channel] > Date.now() - 600000);
                     __tp_noteOrigin(
                         __tp_parseMediaInfo(out),
                         is403Fallback
-                            ? "Twitch direct + relais anti-pub sans proxy (VAFT) suite au refus des proxys"
+                            ? "Twitch direct + lecteur autoplay sans pub suite au refus des proxys"
                             : (__sp_proxyAds()
                                 ? "Twitch direct, proxys pendant les pubs"
-                                : "Twitch direct, bloqueur de pub sans proxy"),
+                                : "Twitch direct, lecteur autoplay sans pub pendant les coupures"),
                         playerType,
                         usherN
                     );
@@ -36990,305 +36931,152 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 return "";
             }
-            async function __sp_findBackup(info, current){
-                var found = null;
-                var foundType = null;
-                var foundLabel = "";
-                var fallback = null;
-                var fallbackLabel = "";
-                var start = 0;
-                var minimal = false;
-                // Juste après une vraie relance du lecteur, on limite le nombre
-                // d'allers-retours réseau pour répondre immédiatement.
-                if (info.lastReload > 0 && info.lastReload > Date.now() - 1500) {
-                    minimal = true;
+            // Analyse la chronologie exacte (#EXT-X-PROGRAM-DATE-TIME et #EXTINF)
+            // de la playlist principale sans jamais casser sa continuité :
+            // - mémorise les URLs de segments publicitaires dans __sp_adSegs
+            //   (afin que le DVR et les stats de bande passante les ignorent)
+            // - calcule la frontière pré-pub (lastPreAdLiveEndPdt) et post-pub
+            //   (postAdLiveStartPdt, postAdLiveDurSec, mainEndPdt) pour recaler
+            //   le vrai direct et le lecteur autoplay au millième de seconde.
+            function __sp_markAdSegUrl(rawSeg, basePlaylistUrl, now){
+                if (!rawSeg) return;
+                __sp_adSegs[rawSeg] = now;
+                if (basePlaylistUrl) {
+                    try {
+                        var absSeg = new URL(rawSeg, basePlaylistUrl).href;
+                        __sp_adSegs[absSeg] = now;
+                    } catch(e) {}
                 }
-                if (__sp_proxyAds()) {
-                    var viaProxy = await __sp_findProxyBackup(info, current, minimal);
-                    if (viaProxy) {
-                        return viaProxy;
-                    }
-                }
-                var typesToTry = __sp_LOW_QUALITY_BACKUP
-                    ? __sp_TYPES.concat(["autoplay"])
-                    : __sp_TYPES.slice();
-                if (__sp_PIN_BACKUP && info.pinnedBackupType && info.pinnedBackupType !== "autoplay") {
-                    var pinIdx = typesToTry.indexOf(info.pinnedBackupType);
-                    if (pinIdx > 0) {
-                        typesToTry.splice(pinIdx, 1);
-                        typesToTry.unshift(info.pinnedBackupType);
-                    }
-                }
-                if (minimal && !info.backupCache[typesToTry[0]]) {
-                    start = Math.min(2, typesToTry.length - 1);
-                }
-                for (var t = start; !found && t < typesToTry.length; t++) {
-                    var type = typesToTry[t];
-                    var failedAt = info.failedBackupTypes && info.failedBackupTypes[type];
-                    if (failedAt && (Date.now() - failedAt) < 15000) {
-                        continue;
-                    }
-                    for (var pass = 0; pass < 2; pass++) {
-                        var fresh = false;
-                        var master = info.backupCache[type];
-                        if (!master) {
-                            fresh = true;
-                            try {
-                                var tokenResponse = await __sp_token(info.channel, type);
-                                if (tokenResponse && tokenResponse.status === 200) {
-                                    var data = JSON.parse(tokenResponse.body);
-                                    var token = (data && data.data && data.data.streamPlaybackAccessToken) ||
-                                        (data && data.streamPlaybackAccessToken);
-                                    if (token) {
-                                        var usher = new URL(
-                                            "https://usher.ttvnw.net/api/" + (info.v2 ? "v2/" : "") +
-                                            "channel/hls/" + info.channel + ".m3u8" + info.params
-                                        );
-                                        usher.searchParams.set("sig", token.signature);
-                                        usher.searchParams.set("token", token.value);
-                                        var usherResponse = await __tp_originalFetch(usher.href);
-                                        if (usherResponse && usherResponse.status === 200) {
-                                            master = info.backupCache[type] = await usherResponse.text();
-                                        }
-                                    } else {
-                                        if (!info.failedBackupTypes) info.failedBackupTypes = {};
-                                        info.failedBackupTypes[type] = Date.now();
-                                        break;
-                                    }
-                                } else {
-                                    if (!info.failedBackupTypes) info.failedBackupTypes = {};
-                                    info.failedBackupTypes[type] = Date.now();
-                                    break;
-                                }
-                            } catch(e) {
-                                if (!info.failedBackupTypes) info.failedBackupTypes = {};
-                                info.failedBackupTypes[type] = Date.now();
-                                console.warn("[TwitchProxy] Bloqueur sans proxy : jeton " + type + " refusé", e);
-                                break;
-                            }
-                        }
-                        if (master) {
-                            try {
-                                var mediaURL = __sp_pickRendition(master, current);
-                                var mediaResponse = mediaURL ? await __tp_originalFetch(mediaURL) : null;
-                                if (mediaResponse && mediaResponse.status === 200) {
-                                    var list = await mediaResponse.text();
-                                    if (list) {
-                                        var listLabel = __sp_renditionLabel(master, mediaURL);
-                                        var listHasAds = __sp_hasAdTags(list);
-                                        if (type === __sp_FALLBACK) {
-                                            fallback = list;
-                                            fallbackLabel = listLabel;
-                                        }
-                                        if (!listHasAds) {
-                                            if (
-                                                (info.consecutiveAllStripped || 0) >= 1 &&
-                                                info.lastCommittedBackupType &&
-                                                info.lastCommittedBackupType !== type
-                                            ) {
-                                                info.cycleRescued = true;
-                                            }
-                                            found = list;
-                                            foundType = type;
-                                            foundLabel = listLabel;
-                                            break;
-                                        }
-                                        if (
-                                            minimal ||
-                                            (!fallback && t >= typesToTry.length - 1) ||
-                                            (listHasAds && t >= typesToTry.length - 1)
-                                        ) {
-                                            found = list;
-                                            foundType = type;
-                                            foundLabel = listLabel;
-                                            break;
-                                        }
-                                    }
-                                }
-                            } catch(e) {}
-                        }
-                        // Secours périmé ou lui-même avec pub : on le
-                        // redemande une fois.
-                        info.backupCache[type] = null;
-                        if (fresh) {
-                            break;
-                        }
-                    }
-                }
-                if (!found && fallback) {
-                    found = fallback;
-                    foundType = __sp_FALLBACK;
-                    foundLabel = fallbackLabel;
-                }
-                return { text: found, type: foundType, label: foundLabel };
             }
-            // Retire les segments de pub restants (remplacés par un segment MP4
-            // vide en mémoire au moment où le lecteur les demande), neutralise
-            // les indices LL-HLS (#EXT-X-PART, #EXT-X-PRELOAD-HINT, PREFETCH),
-            // gère les bornes SCTE-35 (CUE-OUT/CUE-IN) et réinjecte la dernière
-            // playlist propre (< 1,5 s) ou la réserve de segments live si 100 %
-            // de la fenêtre est publicitaire (vaft v58).
-            function __sp_strip(text, all, info){
+            function __sp_inspectTimeline(baseUrl, text, info){
                 var lines = __sp_lines(text);
-                var found = false;
-                var inCueOut = false;
-                var liveSegments = [];
                 var now = Date.now();
+                var inCue = false;
+                var pendingPdt = 0;
+                var runningPdt = 0;
+                var seenAnyAdSeg = false;
+                var hasAdSegments = false;
+                var preAdLiveCount = 0;
+                var preAdLiveDurSec = 0;
+                var lastPreAdLiveEndPdt = 0;
+                var postAdLiveCount = 0;
+                var postAdLiveDurSec = 0;
+                var postAdLiveStartPdt = 0;
+                var mainEndPdt = 0;
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
+                    if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
+                        pendingPdt = Date.parse(line.substring(25).trim()) || 0;
+                        continue;
+                    }
                     if (line.indexOf("EXT-X-CUE-OUT") >= 0) {
-                        inCueOut = true;
-                    } else if (line.indexOf("EXT-X-CUE-IN") >= 0) {
-                        inCueOut = false;
+                        inCue = true;
+                        continue;
                     }
-                    if (line.indexOf("X-TV-TWITCH-AD") >= 0) {
-                        line = lines[i] = line.replace(__sp_AD_URL_REWRITE_RE, '$1https://twitch.tv$2');
+                    if (line.indexOf("EXT-X-CUE-IN") >= 0) {
+                        inCue = false;
+                        continue;
                     }
-                    var isLiveSeg = line.indexOf(",live") >= 0;
-                    if (
-                        i < lines.length - 1 &&
-                        line.indexOf("#EXTINF") === 0 &&
-                        (!isLiveSeg || all || inCueOut)
-                    ) {
-                        var segment = lines[i + 1].trim();
-                        if (segment) {
-                            if (!__sp_adSegs[segment]) {
-                                info.stripped++;
-                                info.everStrippedInBreak = true;
+                    if (line.indexOf("#EXT-X-PART:") === 0 || line.indexOf("#EXT-X-PRELOAD-HINT:") === 0) {
+                        var uriMatch = line.match(__sp_URI_ATTR_RE);
+                        var partUri = uriMatch ? uriMatch[1].trim() : "";
+                        if (partUri && (inCue || __sp_hasAdUrlPattern(partUri) || (seenAnyAdSeg && postAdLiveCount === 0))) {
+                            __sp_markAdSegUrl(partUri, baseUrl, now);
+                            hasAdSegments = true;
+                        }
+                        continue;
+                    }
+                    if (line.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0) {
+                        var prefUri = line.substring(23).trim();
+                        if (prefUri && (inCue || __sp_hasAdUrlPattern(prefUri) || (seenAnyAdSeg && postAdLiveCount === 0))) {
+                            __sp_markAdSegUrl(prefUri, baseUrl, now);
+                            hasAdSegments = true;
+                        }
+                        continue;
+                    }
+                    if (line.indexOf("#EXTINF") === 0 && i + 1 < lines.length) {
+                        var dur = parseFloat(line.substring(8)) || 2;
+                        var segRaw = lines[i + 1].trim();
+                        var segStart = pendingPdt > 0 ? pendingPdt : runningPdt;
+                        var segEnd = segStart > 0 ? (segStart + dur * 1000) : 0;
+                        if (segEnd > 0) {
+                            runningPdt = segEnd;
+                            mainEndPdt = segEnd;
+                        }
+                        pendingPdt = 0;
+                        var isLive = (line.indexOf(",live") >= 0) && !inCue && !__sp_hasAdUrlPattern(segRaw);
+                        if (!isLive) {
+                            hasAdSegments = true;
+                            seenAnyAdSeg = true;
+                            postAdLiveCount = 0;
+                            postAdLiveDurSec = 0;
+                            postAdLiveStartPdt = 0;
+                            __sp_markAdSegUrl(segRaw, baseUrl, now);
+                        } else if (!seenAnyAdSeg) {
+                            preAdLiveCount++;
+                            preAdLiveDurSec += dur;
+                            if (segEnd > 0) {
+                                lastPreAdLiveEndPdt = segEnd;
                             }
-                            __sp_adSegs[segment] = now;
-                        }
-                        found = true;
-                    } else if (
-                        i < lines.length - 1 &&
-                        line.indexOf("#EXTINF") === 0 &&
-                        __sp_hasAdUrlPattern(lines[i + 1])
-                    ) {
-                        var patSeg = lines[i + 1].trim();
-                        if (patSeg) {
-                            if (!__sp_adSegs[patSeg]) {
-                                info.stripped++;
-                                info.everStrippedInBreak = true;
-                            }
-                            __sp_adSegs[patSeg] = now;
-                        }
-                        found = true;
-                    } else if (i < lines.length - 1 && line.indexOf("#EXTINF") === 0 && isLiveSeg) {
-                        liveSegments.push({ extinf: line, url: lines[i + 1] });
-                    } else if (line.indexOf("#EXT-X-PART:") === 0) {
-                        var partMatch = line.match(__sp_URI_ATTR_RE);
-                        var partUri = partMatch ? partMatch[1].trim() : "";
-                        if (partUri && (inCueOut || __sp_adSegs[partUri] || __sp_hasAdUrlPattern(partUri))) {
-                            __sp_adSegs[partUri] = now;
-                            info.everStrippedInBreak = true;
-                            lines[i] = "";
-                            found = true;
-                        }
-                    } else if (
-                        line.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0 ||
-                        line.indexOf("#EXT-X-PRELOAD-HINT:") === 0
-                    ) {
-                        var hintUrl = "";
-                        if (line.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0) {
-                            hintUrl = line.substring(23).trim();
                         } else {
-                            var hintMatch = line.match(__sp_URI_ATTR_RE);
-                            hintUrl = hintMatch ? hintMatch[1].trim() : "";
-                        }
-                        if (hintUrl && (inCueOut || __sp_adSegs[hintUrl] || __sp_hasAdUrlPattern(hintUrl))) {
-                            __sp_adSegs[hintUrl] = now;
-                            info.everStrippedInBreak = true;
-                            found = true;
-                        }
-                    }
-                }
-                if (!found && __sp_hasAdTags(text)) {
-                    found = true;
-                }
-                if (found) {
-                    for (var j = 0; j < lines.length; j++) {
-                        if (
-                            lines[j].indexOf("#EXT-X-TWITCH-PREFETCH:") === 0 ||
-                            lines[j].indexOf("#EXT-X-PRELOAD-HINT:") === 0 ||
-                            __sp_hasAdTags(lines[j])
-                        ) {
-                            lines[j] = "";
-                        }
-                    }
-                } else {
-                    info.stripped = 0;
-                }
-                if (liveSegments.length > 0) {
-                    info.recoverySegments = liveSegments.slice(-6);
-                    var seqMatch = text.match(/#EXT-X-MEDIA-SEQUENCE:([0-9]+)/);
-                    var seqNum = seqMatch ? parseInt(seqMatch[1], 10) : NaN;
-                    if (!isNaN(seqNum)) {
-                        info.recoveryStartSeq = seqNum + Math.max(0, liveSegments.length - info.recoverySegments.length);
-                    }
-                    info.consecutiveAllStripped = 0;
-                } else if (found && liveSegments.length === 0) {
-                    info.consecutiveAllStripped = (info.consecutiveAllStripped || 0) + 1;
-                    info.totalAllStripped = (info.totalAllStripped || 0) + 1;
-                    var snapAge = info.lastCleanAt ? (now - info.lastCleanAt) : Infinity;
-                    if (info.lastCleanM3u8 && snapAge <= 1500 && !__sp_hasAdTags(info.lastCleanM3u8)) {
-                        info.stripping = true;
-                        return info.lastCleanM3u8;
-                    }
-                    if (info.recoverySegments && info.recoverySegments.length > 0) {
-                        var recOut = [];
-                        for (var r = 0; r < lines.length; r++) {
-                            var rl = lines[r];
-                            if (!rl) continue;
-                            if (rl.indexOf("#EXT-X-MEDIA-SEQUENCE:") === 0 && info.recoveryStartSeq !== undefined) {
-                                recOut.push("#EXT-X-MEDIA-SEQUENCE:" + info.recoveryStartSeq);
-                                continue;
+                            if (postAdLiveCount === 0 && segStart > 0) {
+                                postAdLiveStartPdt = segStart;
                             }
-                            if (rl.indexOf("#EXTINF") === 0 && r + 1 < lines.length) {
-                                r++;
-                                continue;
-                            }
-                            if (
-                                rl.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
-                                rl.indexOf("#EXT-X-DISCONTINUITY") === 0 ||
-                                rl.indexOf("#EXT-X-CUE-") === 0
-                            ) {
-                                continue;
-                            }
-                            recOut.push(rl);
+                            postAdLiveCount++;
+                            postAdLiveDurSec += dur;
                         }
-                        for (var rs = 0; rs < info.recoverySegments.length; rs++) {
-                            recOut.push(info.recoverySegments[rs].extinf);
-                            recOut.push(info.recoverySegments[rs].url);
-                        }
-                        lines = recOut;
                     }
                 }
-                info.stripping = found;
-                if (!info.lastCachePruneAt || (now - info.lastCachePruneAt) > 60000) {
+                if (info && (!info.lastCachePruneAt || (now - info.lastCachePruneAt) > 60000)) {
                     info.lastCachePruneAt = now;
                     Object.keys(__sp_adSegs).forEach(function(key){
-                        if (__sp_adSegs[key] < now - 120000) {
+                        if (__sp_adSegs[key] < now - 180000) {
                             delete __sp_adSegs[key];
                         }
                     });
                 }
-                return lines.join(__sp_NL);
+                return {
+                    hasAdSegments: hasAdSegments,
+                    preAdLiveCount: preAdLiveCount,
+                    preAdLiveDurSec: preAdLiveDurSec,
+                    lastPreAdLiveEndPdt: lastPreAdLiveEndPdt,
+                    postAdLiveCount: postAdLiveCount,
+                    postAdLiveDurSec: postAdLiveDurSec,
+                    postAdLiveStartPdt: postAdLiveStartPdt,
+                    mainEndPdt: mainEndPdt
+                };
+            }
+            // Retire uniquement les balises de signalisation publicitaire
+            // (#EXT-X-DATERANGE stitched-ad/maf, #EXT-X-CUE-*, #EXT-X-SCTE35*)
+            // et normalise le titre #EXTINF en ",live" tout en gardant 100 % des
+            // segments, séquences, #EXT-X-DISCONTINUITY et #EXT-X-MAP intacts :
+            // le lecteur IVS de Twitch ne se bloque jamais et n'a besoin d'aucun setSrc.
+            function __sp_stripAdMetaKeepStream(text){
+                var lines = __sp_lines(text);
+                var out = [];
+                for (var i = 0; i < lines.length; i++) {
+                    var ln = lines[i];
+                    if (
+                        (ln.indexOf("#EXT-X-DATERANGE") === 0 && (__sp_hasAdTags(ln) || /twitch-ad|X-TV-TWITCH-AD|twitch-maf-ad|X-TTV-MAF-AD/i.test(ln))) ||
+                        /^#EXT-X-(?:SCTE35|CUE-OUT|CUE-OUT-CONT|CUE-IN)/i.test(ln) ||
+                        (ln.charAt(0) === "#" && /X-TV-TWITCH-AD|X-TTV-MAF-AD/i.test(ln))
+                    ) {
+                        continue;
+                    }
+                    if (ln.indexOf("#EXTINF:") === 0 && ln.indexOf(",live") < 0) {
+                        var commaIdx = ln.indexOf(",");
+                        ln = commaIdx >= 0 ? (ln.substring(0, commaIdx) + ",live") : (ln + ",live");
+                    }
+                    out.push(ln);
+                }
+                return out.join(__sp_NL);
             }
             function __sp_typeLabel(type){
-                if (type === "site") {
-                    return "lecteur site";
-                }
-                if (type === "popout") {
-                    return "lecteur popout";
-                }
-                if (type === "mobile_web") {
-                    return "lecteur mobile";
-                }
-                if (type === "embed") {
-                    return "lecteur intégré";
-                }
                 if (type === "autoplay") {
-                    return "lecteur autoplay, 360p";
+                    return "lecteur autoplay sans pub";
+                }
+                if (type === "proxy") {
+                    return "proxy";
                 }
                 return type;
             }
@@ -37460,7 +37248,7 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 // Garde-fou absolu : ne jamais renvoyer une playlist média à 0 segment
                 if (!segIndices.length || lastNonLiveIdx >= segIndices.length - 1) {
-                    return __sp_strip(text, false, info);
+                    return __sp_stripAdMetaKeepStream(text);
                 }
                 var lastLivePdt = livePdts.length ? livePdts[livePdts.length - 1] : 0;
                 if (info && !info.postAdReloadLocked && livePdts.length > 0) {
@@ -37683,50 +37471,43 @@ dashboardButton.style.visibility = 'hidden';
                 });
                 return sorted[Math.floor(sorted.length / 2)];
             }
-            function __sp_endAd(info, liveBack){
-                var wasModified = info.usingModified;
-                var hadMixedStream = !!(info.everStrippedInBreak || info.lastCommittedBackupType || wasModified);
+            function __sp_endAd(info, liveBack, tl){
+                var usedProxy = !!info.usedProxyInBreak;
                 var now = Date.now();
                 __sp_lastEndAt = now;
-                __sp_blankAfterEnd = 0;
                 info.lastEndAt = now;
                 info.postAdMinPdt = 0;
                 info.postAdReloadSeen = false;
                 info.postAdReloadLocked = false;
                 info.adBackupMinPdt = 0;
-                if (info.lastBackupEnd > 0 && info.lastBackupAt > 0) {
-                    info.resumeTargetPdt = info.lastBackupEnd - 2200 + Math.min(4000, Math.max(0, now - info.lastBackupAt));
-                } else {
-                    info.resumeTargetPdt = 0;
-                }
                 info.inAd = false;
-                info.stripping = false;
-                info.stripped = 0;
-                info.everStrippedInBreak = false;
+                info.usedProxyInBreak = false;
+                info.autoplayLogged = false;
                 info.backupType = null;
                 info.backupName = null;
-                info.lastCommittedBackupType = null;
-                info.failedBackupTypes = {};
-                info.consecutiveAllStripped = 0;
-                info.totalAllStripped = 0;
-                info.earlyReloadCount = 0;
-                info.earlyReloadTriggered = false;
-                info.earlyReloadAwaiting = false;
-                info.cycleRescued = false;
-                info.usingModified = false;
-                __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
-                if (!hadMixedStream) {
+                info.backupLabel = "";
+                __sp_post({
+                    type: "spAd",
+                    channel: info.channel,
+                    active: false,
+                    stripping: false,
+                    usedProxyInBreak: usedProxy,
+                    postAdLiveCount: tl ? tl.postAdLiveCount : 0,
+                    postAdLiveDurSec: tl ? tl.postAdLiveDurSec : 0,
+                    postAdLiveStartPdt: tl ? tl.postAdLiveStartPdt : 0,
+                    mainEndPdt: tl ? tl.mainEndPdt : 0
+                });
+                if (!usedProxy) {
                     __tp_postLog("info",
-                        "🛡️ Fin de la pub CSAI sur " + info.channel + " (" +
-                        Math.round((now - info.adStart) / 1000) + " s) : flux déjà propre, aucune relance nécessaire");
+                        "🛡️ Fin de la pub sur " + info.channel + " (" +
+                        Math.round((now - info.adStart) / 1000) + " s) : retour sans relance sur le vrai direct" +
+                        (liveBack ? " dès le retour des segments live" : ""));
                     return;
                 }
                 info.lastReload = now;
                 __tp_postLog("info",
-                    "🛡️ Fin de la pub sur " + info.channel + " (" +
-                    Math.round((now - info.adStart) / 1000) + " s) : " +
-                    "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : "") +
-                    (liveBack ? " · direct revenu, sans attendre que Twitch efface ses repères" : ""));
+                    "🛡️ Fin de la pub (proxy temporaire) sur " + info.channel + " (" +
+                    Math.round((now - info.adStart) / 1000) + " s) : relance sur Twitch direct");
                 __sp_post({ type: "spPlayer", action: "reload", afterAd: true, hard: true, channel: info.channel, edgeGap: __sp_median(info.edgeGaps) });
             }
             function __sp_stripMafOnly(text){
@@ -37754,17 +37535,22 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 }
                 var marked = __sp_hasAdTags(text);
-                // Direct revenu alors que Twitch garde encore ses repères :
-                // coupure finie. Le lecteur relancé reçoit la même liste,
-                // nettoyée, et n'y voit pas une nouvelle pub.
                 if (marked && __sp_adOver(text)) {
+                    var overTl = __sp_inspectTimeline(url, text, info);
+                    var wasUsingProxy = !!info.usedProxyInBreak;
                     if (info.inAd) {
-                        __sp_endAd(info, true);
+                        __sp_endAd(info, true, overTl);
                     }
-                    return __sp_cleanAfter(text, info);
+                    if (wasUsingProxy || (info.lastReload && info.lastEndAt && Math.abs(info.lastReload - info.lastEndAt) < 2000 && (Date.now() - info.lastEndAt) < 45000)) {
+                        return __sp_cleanAfter(text, info);
+                    }
+                    return __sp_stripAdMetaKeepStream(text);
                 }
                 if (marked) {
-                    info.midroll = text.indexOf('"MIDROLL"') >= 0 || text.indexOf('"midroll"') >= 0;
+                    var tl = __sp_inspectTimeline(url, text, info);
+                    var explicitPreroll = /X-TV-TWITCH-AD-ROLL-TYPE="PREROLL"/i.test(text);
+                    info.midroll = (text.indexOf('"MIDROLL"') >= 0 || text.indexOf('"midroll"') >= 0) ||
+                        (!explicitPreroll && tl.preAdLiveCount > 0);
                     if (!info.inAd) {
                         info.inAd = true;
                         info.adStart = Date.now();
@@ -37772,213 +37558,121 @@ dashboardButton.style.visibility = 'hidden';
                         info.podLength = podLenMatch ? Math.max(1, parseInt(podLenMatch[1], 10)) : 1;
                         info.backupType = null;
                         info.backupName = null;
-                        info.lastCommittedBackupType = null;
-                        info.everStrippedInBreak = false;
-                        info.consecutiveAllStripped = 0;
-                        info.totalAllStripped = 0;
-                        info.earlyReloadCount = 0;
-                        info.earlyReloadTriggered = false;
-                        info.earlyReloadAwaiting = false;
-                        info.cycleRescued = false;
-                        info.blankLogged = false;
+                        info.backupLabel = "";
+                        info.usedProxyInBreak = false;
+                        info.autoplayLogged = false;
                         info.adIdsSeen = {};
                         info.adTimes = {};
                         info.edgeGaps = [];
-                        info.lastBackupEnd = 0;
-                        info.lastBackupAt = 0;
-                        info.resumeTargetPdt = 0;
                         info.adBackupMinPdt = 0;
                         __tp_postLog("warn",
                             "🛡️ Pub " + (info.midroll ? "en cours de stream" : "de début de stream") +
-                            " sur " + info.channel + " : recherche d'un flux sans pub");
-                        __sp_post({ type: "spAd", channel: info.channel, active: true, midroll: info.midroll, stripping: false, backupType: null, quality: "", searching: true });
+                            " sur " + info.channel + " : bascule sans relance sur le lecteur autoplay sans pub");
                     }
                     __sp_logAdInfo(info, text);
                     var pod = __sp_podInfo(info, text);
-                    // Pub de début : Twitch veut voir qu'on la charge,
-                    // on en télécharge un segment par liste.
-                    if (!info.midroll) {
-                        var adLines = __sp_lines(text);
-                        for (var i = 0; i < adLines.length - 1; i++) {
-                            if (
-                                adLines[i].indexOf("#EXTINF") === 0 &&
-                                adLines[i].indexOf(",live") < 0 &&
-                                !info.requestedAds[adLines[i + 1]]
-                            ) {
-                                info.requestedAds[adLines[i + 1]] = true;
-                                __tp_originalFetch(adLines[i + 1]).then(function(r){
-                                    return r.blob();
-                                }).catch(function(){});
-                                break;
-                            }
-                        }
-                    }
-                    var current = info.urls[url];
-                    if (!current) {
-                        return __sp_strip(text, false, info);
-                    }
-                    var isHevc = __sp_isHevc(current.codecs);
-                    if (isHevc && info.modified && !info.usingModified) {
-                        info.usingModified = true;
-                        info.lastReload = Date.now();
-                        __tp_postLog("info",
-                            "🛡️ Stream en 2K/4K : le lecteur repasse en H.264 le temps de la pub");
-                        __sp_post({ type: "spPlayer", action: "reload", hard: true });
-                    }
-                    // Si tous les segments de la liste principale sont ,live (pub CSAI pure
-                    // hors m3u8) et qu'on n'est pas en 2K/4K modifié ni en mode proxyAdsOnly,
-                    // inutile de basculer vers un flux de secours : on garde les segments live
-                    // natifs en retirant simplement les repères publicitaires (vaft v58).
-                    var checkMainLines = __sp_lines(text);
-                    var hasNonLiveSeg = false;
-                    for (var mlIdx = 0; mlIdx < checkMainLines.length; mlIdx++) {
-                        var mLn = checkMainLines[mlIdx];
-                        if (
-                            (mLn.indexOf("#EXTINF") === 0 && (mLn.indexOf(",live") < 0 || (mlIdx + 1 < checkMainLines.length && __sp_hasAdUrlPattern(checkMainLines[mlIdx + 1])))) ||
-                            mLn.indexOf("EXT-X-CUE-OUT") >= 0
-                        ) {
-                            hasNonLiveSeg = true;
-                            break;
-                        }
-                    }
-                    if (!hasNonLiveSeg && !info.usingModified && !__sp_proxyAds()) {
-                        text = __sp_strip(text, false, info);
+                    // Pub CSAI pure (aucun segment publicitaire dans le .m3u8) :
+                    // on retire uniquement les repères sans toucher au lecteur.
+                    if (!tl.hasAdSegments && !__sp_proxyAds()) {
                         __sp_post({
                             type: "spAd",
                             channel: info.channel,
                             active: true,
                             midroll: info.midroll,
-                            stripping: info.stripping,
+                            csaiOnly: true,
+                            useAutoplayOverlay: false,
+                            stripping: false,
+                            searching: false,
                             backupType: "site",
                             quality: "",
-                            pod: pod
+                            pod: pod,
+                            mainEndPdt: tl.mainEndPdt
                         });
-                        return text;
+                        return __sp_stripAdMetaKeepStream(text);
                     }
-                    var backup = await __sp_findBackup(info, current);
-                    // La coupure s'est terminée pendant la recherche (autre
-                    // liste plus rapide) : annoncer une pub
-                    // maintenant laisserait la page croire à une pub sans fin.
-                    if (!info.inAd) {
-                        return __sp_cleanAfter(text, info);
-                    }
-                    if (backup.text) {
-                        var mainEnd = __sp_listEnd(text);
-                        var backupEnd = __sp_listEnd(backup.text);
-                        if (backupEnd > 0) {
-                            info.lastBackupEnd = backupEnd;
-                            info.lastBackupAt = Date.now();
+                    // Mode Proxy avec « Proxys uniquement pour les pubs » : essai des proxys d'abord
+                    var current = info.urls[url];
+                    if (__sp_proxyAds() && current && !__sp_isHevc(current.codecs)) {
+                        var viaProxy = await __sp_findProxyBackup(info, current, false);
+                        if (!info.inAd) {
+                            return __sp_stripAdMetaKeepStream(text);
                         }
-                        // 🔎 Un secours en retard sur le flux normal n'a
-                        // rien de neuf à donner au lecteur, qui se vide.
-                        var gapNote = "";
-                        if (mainEnd && backupEnd) {
-                            var gapSec = (backupEnd - mainEnd) / 1000;
-                            gapNote = " · 🔎 " + (gapSec >= 0 ? "en avance" : "en retard") +
-                                " de " + Math.abs(gapSec).toFixed(1) + " s sur le flux normal";
-                        }
-                        if (mainEnd && backupEnd) {
-                            info.edgeGaps.push(backupEnd - mainEnd);
-                            if (info.edgeGaps.length > 20) {
-                                info.edgeGaps.shift();
+                        if (viaProxy && viaProxy.text) {
+                            info.usedProxyInBreak = true;
+                            var mainEnd = __sp_listEnd(text);
+                            var backupEnd = __sp_listEnd(viaProxy.text);
+                            if (mainEnd && backupEnd) {
+                                info.edgeGaps.push(backupEnd - mainEnd);
+                                if (info.edgeGaps.length > 20) {
+                                    info.edgeGaps.shift();
+                                }
                             }
-                        }
-                        text = __sp_trimToLiveEdge(backup.text, 3, info);
-                        info.backupLabel = backup.label || "";
-                        info.lastCommittedBackupType = backup.type;
-                        if (
-                            __sp_PIN_BACKUP &&
-                            backup.type &&
-                            backup.type !== "proxy" &&
-                            backup.type !== "autoplay" &&
-                            !__sp_hasAdTags(backup.text)
-                        ) {
-                            info.pinnedBackupType = backup.type;
-                        }
-                        if (
-                            info.backupType !== backup.type ||
-                            info.backupName !== backup.proxyName
-                        ) {
-                            info.backupType = backup.type;
-                            info.backupName = backup.proxyName;
-                            __tp_postLog("success",
-                                "🛡️ Pub bloquée sur " + info.channel + " : flux du " +
-                                (backup.proxyName ? "proxy " + backup.proxyName : __sp_typeLabel(backup.type)) +
-                                (backup.label ? " (" + backup.label + ")" : "") +
-                                " le temps de la coupure" + gapNote);
+                            if (info.backupType !== "proxy" || info.backupName !== viaProxy.proxyName) {
+                                info.backupType = "proxy";
+                                info.backupName = viaProxy.proxyName;
+                                info.backupLabel = viaProxy.label || "";
+                                __tp_postLog("success",
+                                    "🛡️ Pub bloquée sur " + info.channel + " : flux du proxy " +
+                                    viaProxy.proxyName + (viaProxy.label ? " (" + viaProxy.label + ")" : "") +
+                                    " le temps de la coupure");
+                            }
+                            __sp_post({
+                                type: "spAd",
+                                channel: info.channel,
+                                active: true,
+                                midroll: info.midroll,
+                                useAutoplayOverlay: false,
+                                stripping: false,
+                                searching: false,
+                                backupType: "proxy",
+                                quality: viaProxy.label || "",
+                                pod: pod
+                            });
+                            return __sp_stripAdMetaKeepStream(__sp_trimToLiveEdge(viaProxy.text, 3, info));
                         }
                     }
-                    text = __sp_strip(text, isHevc && !!info.modified, info);
-                    if (info.earlyReloadAwaiting) {
-                        info.earlyReloadAwaiting = false;
-                        info.earlyReloadTriggered = false;
-                    }
-                    var recThin = !info.recoverySegments || info.recoverySegments.length < 3;
-                    var maxEarly = recThin ? Math.max(2, info.podLength || 1) : Math.max(1, info.podLength || 1);
-                    var effThresh = recThin ? 2 : __sp_EARLY_RELOAD_POLLS;
-                    if (
-                        __sp_EARLY_RELOAD_POLLS > 0 &&
-                        (info.consecutiveAllStripped || 0) >= effThresh &&
-                        !info.earlyReloadTriggered &&
-                        (info.earlyReloadCount || 0) < maxEarly
-                    ) {
-                        info.earlyReloadTriggered = true;
-                        info.earlyReloadAwaiting = true;
-                        info.earlyReloadCount = (info.earlyReloadCount || 0) + 1;
-                        info.lastReload = Date.now();
-                        __tp_postLog("info",
-                            "🛡️ Tous les flux ont une pub sur " + info.channel +
-                            " (" + info.consecutiveAllStripped + " cycles) : relance anticipée [" +
-                            info.earlyReloadCount + "/" + maxEarly + "]");
-                        __sp_post({ type: "spPlayer", action: "reload", force: true, hard: true, kind: "early", channel: info.channel });
-                    }
-                    if (!backup.text && !info.blankLogged) {
-                        info.blankLogged = true;
-                        __tp_postLog("warn",
-                            "🛡️ Aucun flux sans pub trouvé sur " + info.channel +
-                            " : la pub est remplacée par une image vide");
+                    // Mode Adblock (ou repli 403 des proxys) : le vrai direct reste intact
+                    // en arrière-plan pendant que la page affiche le lecteur autoplay sans pub.
+                    if (!info.autoplayLogged) {
+                        info.autoplayLogged = true;
+                        info.backupType = "autoplay";
+                        __tp_postLog("success",
+                            "🛡️ Pub bloquée sur " + info.channel +
+                            " : lecteur autoplay sans pub actif (vrai direct conservé intact sans relance)");
                     }
                     __sp_post({
                         type: "spAd",
                         channel: info.channel,
                         active: true,
                         midroll: info.midroll,
-                        stripping: info.stripping,
-                        backupType: backup.text ? info.backupType : null,
-                        quality: backup.text ? info.backupLabel : "",
-                        pod: pod
+                        useAutoplayOverlay: true,
+                        stripping: false,
+                        searching: false,
+                        backupType: "autoplay",
+                        quality: "",
+                        pod: pod,
+                        preAdLiveCount: tl.preAdLiveCount,
+                        preAdLiveDurSec: tl.preAdLiveDurSec,
+                        lastPreAdLiveEndPdt: tl.lastPreAdLiveEndPdt,
+                        postAdLiveCount: tl.postAdLiveCount,
+                        postAdLiveDurSec: tl.postAdLiveDurSec,
+                        postAdLiveStartPdt: tl.postAdLiveStartPdt,
+                        mainEndPdt: tl.mainEndPdt
                     });
+                    return __sp_stripAdMetaKeepStream(text);
                 } else {
                     if (info.inAd) {
-                        __sp_endAd(info);
+                        var endTl = __sp_inspectTimeline(url, text, info);
+                        var hadProxy = !!info.usedProxyInBreak;
+                        __sp_endAd(info, false, endTl);
+                        if (hadProxy) {
+                            return __sp_cleanAfter(text, info);
+                        }
+                    } else if (info.lastReload && info.lastEndAt && Math.abs(info.lastReload - info.lastEndAt) < 2000 && (Date.now() - info.lastEndAt) < 45000) {
                         return __sp_cleanAfter(text, info);
                     }
-                    if (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000) {
-                        return __sp_cleanAfter(text, info);
-                    }
-                    var cleanMafText = __sp_stripMafOnly(text);
-                    if (cleanMafText.indexOf("#EXTINF") >= 0) {
-                        info.lastCleanM3u8 = cleanMafText;
-                        info.lastCleanAt = Date.now();
-                        var cleanLines = __sp_lines(cleanMafText);
-                        var cleanLiveSegs = [];
-                        for (var cl = 0; cl < cleanLines.length - 1; cl++) {
-                            if (cleanLines[cl].indexOf("#EXTINF") === 0 && cleanLines[cl].indexOf(",live") >= 0) {
-                                cleanLiveSegs.push({ extinf: cleanLines[cl], url: cleanLines[cl + 1] });
-                            }
-                        }
-                        if (cleanLiveSegs.length > 0) {
-                            info.recoverySegments = cleanLiveSegs.slice(-6);
-                            var cSeqMatch = cleanMafText.match(/#EXT-X-MEDIA-SEQUENCE:([0-9]+)/);
-                            var cSeqNum = cSeqMatch ? parseInt(cSeqMatch[1], 10) : NaN;
-                            if (!isNaN(cSeqNum)) {
-                                info.recoveryStartSeq = cSeqNum + Math.max(0, cleanLiveSegs.length - info.recoverySegments.length);
-                            }
-                        }
-                    }
-                    return cleanMafText;
+                    return __sp_stripMafOnly(text);
                 }
-                return text;
             }
             // Liste de segments, proxys coupés.
             function __sp_media(originalURL, response){
@@ -38035,25 +37729,7 @@ dashboardButton.style.visibility = 'hidden';
 
                 if (!isUsher) {
                     var trimmedOriginalURL = originalURL.trim();
-                    if (__sp_adSegs[trimmedOriginalURL]) {
-                        if (__sp_lastEndAt && (Date.now() - __sp_lastEndAt) < 90000) {
-                            __sp_blankAfterEnd++;
-                            if (__sp_blankAfterEnd === 1) {
-                                __tp_postLog("warn",
-                                    "🔎 Image vide envoyée au lecteur " +
-                                    Math.round((Date.now() - __sp_lastEndAt) / 1000) +
-                                    " s après la relance de fin de pub (" + (__tp_lastChannel || "?") + ")");
-                            }
-                        }
-                        if (__sp_BLANK_BLOB) {
-                            return Promise.resolve(new Response(__sp_BLANK_BLOB, {
-                                status: 200,
-                                statusText: "OK",
-                                headers: { "Content-Type": "video/mp4" }
-                            }));
-                        }
-                        return __tp_originalFetch.call(this, __sp_BLANK);
-                    }
+                    var isAdSegRequest = !!__sp_adSegs[trimmedOriginalURL];
                     var __tp_passthrough =
                         __tp_originalFetch.call(
                             this,
@@ -38069,12 +37745,6 @@ dashboardButton.style.visibility = 'hidden';
                             "Liste de segments vue (mémoire " + (__tp_dvrActive() ? "active" : "inactive") + ")");
                     }
 
-                    // Les pubs de Twitch sont collées DANS les listes de
-                    // segments, que le lecteur relit sans passer par le
-                    // proxy : c'est le seul endroit où on peut les voir.
-                    // Si le bloqueur sans proxy (VAFT) est actif ou a pris
-                    // le relais après un refus 403 des proxys sur cette
-                    // chaîne (__sp_byUrl), on passe par __sp_media.
                     if (lowerURL.indexOf(".m3u8") >= 0 || isKnownVariantUrl) {
                         __tp_passthrough = __tp_passthrough.then(
                             function(response){
@@ -38086,6 +37756,9 @@ dashboardButton.style.visibility = 'hidden';
                         );
                     }
                     if (__tp_isSegmentURL(lowerURL)) {
+                        if (isAdSegRequest) {
+                            return __tp_passthrough;
+                        }
                         return __tp_measureResponse(
                             __tp_passthrough
                         ).then(function(response){
@@ -38812,11 +38485,11 @@ dashboardButton.style.visibility = 'hidden';
         });
     }
 
-    // Proxys coupés : les jetons de lecture sont demandés comme pour
-    // le lecteur popout (moins de pubs), et ceux de la petite fenêtre
-    // au-dessus du tchat sont annulés.
+    // Proxys coupés : le lecteur principal garde son jeton natif "site"
+    // intact (1080p60/2K/4K HEVC + Low-Latency), et seuls les jetons de la
+    // petite fenêtre picture-by-picture au-dessus du tchat sont annulés.
     function spRewriteTokenBody(body) {
-        if (body.indexOf('PlaybackAccessToken') < 0) {
+        if (body.indexOf('PlaybackAccessToken') < 0 || body.indexOf('picture-by-picture') < 0) {
             return body;
         }
         try {
@@ -38847,17 +38520,6 @@ dashboardButton.style.visibility = 'hidden';
                         continue;
                     }
                     nonPbpCount++;
-                    if (
-                        pType &&
-                        pType !== 'popout' &&
-                        pType !== 'frontpage' &&
-                        pType !== 'autoplay' &&
-                        pType !== 'embed' &&
-                        pType !== 'mobile_web'
-                    ) {
-                        entry.variables.playerType = 'popout';
-                        changedArr = true;
-                    }
                     outArr.push(entry);
                 }
                 if (!nonPbpCount) return '';
@@ -38865,19 +38527,6 @@ dashboardButton.style.visibility = 'hidden';
             }
             if (parsed && parsed.variables && parsed.variables.playerType === 'picture-by-picture') {
                 return '';
-            }
-            if (
-                parsed &&
-                parsed.variables &&
-                parsed.variables.playerType &&
-                parsed.variables.playerType !== 'popout' &&
-                parsed.variables.playerType !== 'frontpage' &&
-                parsed.variables.playerType !== 'autoplay' &&
-                parsed.variables.playerType !== 'embed' &&
-                parsed.variables.playerType !== 'mobile_web'
-            ) {
-                parsed.variables.playerType = 'popout';
-                return JSON.stringify(parsed);
             }
             return body;
         } catch (e) {
@@ -39390,17 +39039,27 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     // Maintient aussi le lecteur au plus près du direct PENDANT les
-    // coupures pub (flux de secours VAFT ou Proxy) et en mode Proxy
-    // continu si le tampon dérive au-delà de 4,2 s.
+    // coupures pub (lecteur autoplay superposé ou flux Proxy) et en mode
+    // direct/Proxy continu si le tampon dérive au-delà de 4,2 s.
     function spLiveEdgeKeepUpTick() {
         if (isDashboardOnlyTab || scriptIsOff()) return;
         if (dvrOverlay && !dvrIsLive()) return;
+        if (spAutoplayActive) {
+            if (spAutoplayVisible && spAutoplayVideo && !spAutoplayVideo.paused && spAutoplayVideo.readyState >= 3) {
+                var apAhead = spAheadOf(spAutoplayVideo);
+                if (apAhead > 5.2) {
+                    try {
+                        spAutoplayVideo.currentTime = spAutoplayVideo.currentTime + (apAhead - 2.2);
+                    } catch (e) {}
+                }
+            }
+            return;
+        }
         var video = adCleanPlaybackVideo();
         if (!video || video.paused || video.readyState < 3) return;
         var ahead = spAheadOf(video);
-        // Pendant une coupure pub active, si le flux de secours/proxy a
-        // chargé toute une fenêtre glissante (> 5 s d'avance en tampon),
-        // on recale directement à 2,3 s du bord puis on lisse à 1.06x.
+        // Pendant une coupure pub via proxy, si le flux a chargé toute une
+        // fenêtre glissante (> 5 s d'avance en tampon), on recale à 2,3 s.
         if (spAd.active && ahead > 5.0) {
             try {
                 video.currentTime = video.currentTime + (ahead - 2.3);
@@ -39662,10 +39321,845 @@ dashboardButton.style.visibility = 'hidden';
         }, SP_RESUME_POLL_MS);
     }
 
+    // ============================================================
+    // LECTEUR AUTOPLAY SANS PUB EN DOUBLE LECTEUR (ZÉRO RELANCE)
+    // ============================================================
+    // Le vrai direct Twitch continue en arrière-plan sans jamais être
+    // coupé ni relancé (setSrc = 0), muet pendant la pub via dvrAudioBridge.
+    // Pendant la coupure, un second élément <video> alimenté par le flux
+    // sans pub "autoplay" (Android/mediaplayer, préchargé à l'avance) est
+    // superposé au lecteur et recalé image par image via
+    // #EXT-X-PROGRAM-DATE-TIME à l'entrée comme à la sortie de la pub.
+    var SP_AUTOPLAY_CACHE_TTL_MS = 10 * 60 * 1000;
+    var SP_AUTOPLAY_TOKEN_HASH = 'ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9';
+    var SP_AUTOPLAY_GQL_QUERY =
+        'query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!, $platform: String!) {' +
+        '  streamPlaybackAccessToken(channelName: $login, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isLive) {' +
+        '    value signature __typename' +
+        '  }' +
+        '  videoPlaybackAccessToken(id: $vodID, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isVod) {' +
+        '    value signature __typename' +
+        '  }' +
+        '}';
+
+    var spAutoplayCache = {};
+    var spAutoplayPending = {};
+    var spAutoplayHls = null;
+    var spAutoplayActive = false;
+    var spAutoplayChannel = null;
+    var spAutoplayQuality = '';
+    var spAutoplaySessionSeq = 0;
+    var spAutoplayPdtZeroMs = 0;
+    var spAutoplayLastEndPdt = 0;
+    var spMainAdBoundaryTime = null;
+    var spMainBoundaryEndPdt = 0;
+    var spSwapTimer = null;
+    var spReturnTimer = null;
+    var spReturnInProgress = false;
+    var spAutoplayAlignedOnce = false;
+    var spAutoplayRetriedFresh = false;
+
+    function spBuildAutoplayGqlHeaders() {
+        if (!spDeviceId) {
+            spDeviceId = '';
+            var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            for (var i = 0; i < 32; i++) {
+                spDeviceId += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+        }
+        var headers = {
+            'Client-ID': (spHeaders && spHeaders['Client-ID']) || SP_CLIENT_ID,
+            'X-Device-Id': spDeviceId,
+            'Content-Type': 'application/json'
+        };
+        SP_HEADER_NAMES.forEach(function (name) {
+            if (name !== 'Client-ID' && spHeaders && spHeaders[name]) {
+                headers[name] = spHeaders[name];
+            }
+        });
+        return headers;
+    }
+
+    function spParseAutoplayMaster(masterText, masterUrl) {
+        if (!masterText || masterText.indexOf('#EXTM3U') < 0) {
+            return null;
+        }
+        var lines = masterText.replace(/\r/g, '').split('\n');
+        var mediaNames = {};
+        var best = null;
+        var i;
+        for (i = 0; i < lines.length; i++) {
+            var mLine = lines[i];
+            if (mLine.indexOf('#EXT-X-MEDIA:') === 0) {
+                var gidMatch = mLine.match(/GROUP-ID="([^"]+)"/);
+                var nameMatch = mLine.match(/NAME="([^"]+)"/);
+                if (gidMatch && nameMatch) {
+                    mediaNames[gidMatch[1]] = nameMatch[1];
+                }
+            }
+        }
+        for (i = 0; i < lines.length - 1; i++) {
+            var line = lines[i];
+            if (line.indexOf('#EXT-X-STREAM-INF:') !== 0) {
+                continue;
+            }
+            var rawTarget = '';
+            for (var j = i + 1; j < lines.length; j++) {
+                var cand = lines[j].trim();
+                if (!cand) continue;
+                if (cand.charAt(0) !== '#') {
+                    rawTarget = cand;
+                }
+                break;
+            }
+            if (!rawTarget) continue;
+            var videoGroupMatch = line.match(/VIDEO="([^"]+)"/);
+            var videoGroup = videoGroupMatch ? videoGroupMatch[1] : '';
+            if (videoGroup === 'audio_only') continue;
+            var codecsMatch = line.match(/CODECS="([^"]+)"/);
+            var codecs = codecsMatch ? codecsMatch[1] : '';
+            if (/hvc1|hev1/i.test(codecs)) continue;
+            var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+            var height = resMatch ? (parseInt(resMatch[2], 10) || 0) : 0;
+            var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+            var bw = bwMatch ? (parseInt(bwMatch[1], 10) || 0) : 0;
+            var fpsMatch = line.match(/FRAME-RATE=([\d.]+)/);
+            var fps = fpsMatch ? Math.round(parseFloat(fpsMatch[1]) || 0) : 0;
+            var resolvedUrl = rawTarget;
+            try {
+                resolvedUrl = new URL(rawTarget, masterUrl).href;
+            } catch (eUrl) {}
+            var label = mediaNames[videoGroup] || '';
+            if (label) {
+                label = label.replace(/\s*\(source\)\s*/i, '');
+            } else if (height > 0) {
+                label = height + 'p' + (fps >= 50 ? fps : '');
+            }
+            var score = (height * 10000000) + bw;
+            if (!best || score > best.score) {
+                best = {
+                    url: resolvedUrl,
+                    qualityLabel: label,
+                    height: height,
+                    bandwidth: bw,
+                    score: score
+                };
+            }
+        }
+        return best;
+    }
+
+    function spRequestAutoplayAccessToken(ch, useFullQuery) {
+        var vars = {
+            isLive: true,
+            login: ch,
+            isVod: false,
+            vodID: '',
+            playerType: 'autoplay',
+            platform: 'android'
+        };
+        var payload = useFullQuery
+            ? {
+                operationName: 'PlaybackAccessToken_Template',
+                query: SP_AUTOPLAY_GQL_QUERY,
+                variables: vars
+            }
+            : {
+                operationName: 'PlaybackAccessToken',
+                variables: vars,
+                extensions: {
+                    persistedQuery: {
+                        version: 1,
+                        sha256Hash: SP_AUTOPLAY_TOKEN_HASH
+                    }
+                }
+            };
+        return spNativeFetch('https://gql.twitch.tv/gql', {
+            method: 'POST',
+            headers: spBuildAutoplayGqlHeaders(),
+            body: JSON.stringify(payload)
+        })
+            .then(function (r) { return r && r.ok ? r.json() : null; })
+            .then(function (json) {
+                var tok = json && json.data && json.data.streamPlaybackAccessToken;
+                if (tok && tok.value && tok.signature) {
+                    return tok;
+                }
+                if (!useFullQuery) {
+                    return spRequestAutoplayAccessToken(ch, true);
+                }
+                return null;
+            })
+            .catch(function () {
+                if (!useFullQuery) {
+                    return spRequestAutoplayAccessToken(ch, true);
+                }
+                return null;
+            });
+    }
+
+    function spFetchAutoplayStreamInfo(channel, forceFresh) {
+        var ch = String(channel || '').trim().toLowerCase();
+        if (!ch) {
+            return Promise.resolve(null);
+        }
+        var now = Date.now();
+        var cached = spAutoplayCache[ch];
+        if (!forceFresh && cached && (now - cached.fetchedAt) < SP_AUTOPLAY_CACHE_TTL_MS) {
+            return Promise.resolve(cached);
+        }
+        if (!forceFresh && spAutoplayPending[ch]) {
+            return spAutoplayPending[ch];
+        }
+        var p = spRequestAutoplayAccessToken(ch, false)
+            .then(function (token) {
+                if (!token || !token.value || !token.signature) {
+                    return null;
+                }
+                var masterUrl =
+                    'https://usher.ttvnw.net/api/channel/hls/' + encodeURIComponent(ch) + '.m3u8' +
+                    '?allow_source=true&allow_audio_only=true&fast_bread=true' +
+                    '&p=' + Math.floor(Math.random() * 999999) +
+                    '&player_backend=mediaplayer&playlist_include_framerate=true&reassignments_supported=true' +
+                    '&sig=' + encodeURIComponent(token.signature) +
+                    '&supported_codecs=avc1&token=' + encodeURIComponent(token.value) +
+                    '&cdm=wv&player_version=1.28.0';
+                return spNativeFetch(masterUrl)
+                    .then(function (r) { return r && r.ok ? r.text() : ''; })
+                    .catch(function () { return ''; })
+                    .then(function (masterText) {
+                        var best = spParseAutoplayMaster(masterText, masterUrl);
+                        var entry = {
+                            channel: ch,
+                            masterUrl: masterUrl,
+                            bestMediaUrl: best && best.url ? best.url : masterUrl,
+                            qualityLabel: best && best.qualityLabel ? best.qualityLabel : '',
+                            fetchedAt: Date.now()
+                        };
+                        spAutoplayCache[ch] = entry;
+                        return entry;
+                    });
+            })
+            .catch(function () { return null; })
+            .then(function (res) {
+                delete spAutoplayPending[ch];
+                return res;
+            });
+        spAutoplayPending[ch] = p;
+        return p;
+    }
+
+    function spWarmAutoplayForChannel(channel) {
+        if (scriptIsOff() || isDashboardOnlyTab || !channel || !vaftPlaybackOn()) {
+            return;
+        }
+        var ch = String(channel).trim().toLowerCase();
+        if (!ch) return;
+        var cached = spAutoplayCache[ch];
+        if (cached && (Date.now() - cached.fetchedAt) < (SP_AUTOPLAY_CACHE_TTL_MS - 90000)) {
+            return;
+        }
+        spFetchAutoplayStreamInfo(ch, false);
+    }
+
+    function spInjectAutoplayCSS() {
+        if (document.getElementById('tp9-sp-autoplay-style')) {
+            return;
+        }
+        var style = document.createElement('style');
+        style.id = 'tp9-sp-autoplay-style';
+        style.textContent =
+            '#tp9-sp-autoplay-overlay{position:absolute;inset:0;z-index:auto;background:#000;' +
+            'pointer-events:none!important;opacity:0;transition:opacity .1s linear;overflow:hidden}' +
+            '#tp9-sp-autoplay-overlay.tp9-sp-autoplay-visible{opacity:1}' +
+            '.tp9-sp-autoplay-video{width:100%;height:100%;object-fit:contain;display:block;' +
+            'pointer-events:none!important;background:#000}';
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    function spPositionAutoplayOverlay(targetMainVideo) {
+        if (!spAutoplayOverlay) return;
+        var mainVideo = targetMainVideo || adCleanPlaybackVideo();
+        var host = mainVideo && mainVideo.parentElement;
+        if (!host) return;
+        if (spAutoplayOverlay.parentNode !== host || spAutoplayOverlay.previousSibling !== mainVideo) {
+            host.insertBefore(spAutoplayOverlay, mainVideo.nextSibling);
+        }
+        if (dvrOverlay && typeof positionDvrOverlay === 'function') {
+            positionDvrOverlay();
+        }
+    }
+
+    function spBufferedEndAt(video) {
+        if (!video || !video.buffered || !video.buffered.length) {
+            return video ? (video.currentTime || 0) : 0;
+        }
+        try {
+            for (var i = 0; i < video.buffered.length; i++) {
+                if (
+                    video.buffered.start(i) <= video.currentTime + 0.6 &&
+                    video.buffered.end(i) >= video.currentTime
+                ) {
+                    return video.buffered.end(i);
+                }
+            }
+            return video.buffered.end(video.buffered.length - 1);
+        } catch (e) {
+            return video.currentTime || 0;
+        }
+    }
+
+    function spBufferedStartAt(video, refTime) {
+        if (!video || !video.buffered || !video.buffered.length) {
+            return 0;
+        }
+        var ref = typeof refTime === 'number' ? refTime : (video.currentTime || 0);
+        try {
+            for (var i = 0; i < video.buffered.length; i++) {
+                if (
+                    video.buffered.start(i) <= ref + 0.6 &&
+                    video.buffered.end(i) >= ref - 0.6
+                ) {
+                    return video.buffered.start(i);
+                }
+            }
+            return video.buffered.start(video.buffered.length - 1);
+        } catch (e) {
+            return 0;
+        }
+    }
+
+    function spUpdateAutoplayPdtMapping(fragments) {
+        if (!Array.isArray(fragments) || !fragments.length) return;
+        var curT = spAutoplayVideo ? (spAutoplayVideo.currentTime || 0) : 0;
+        var matchedFrag = null;
+        var lastPdtFrag = null;
+        for (var i = 0; i < fragments.length; i++) {
+            var f = fragments[i];
+            if (!f || !(f.programDateTime > 0) || !Number.isFinite(f.start)) {
+                continue;
+            }
+            lastPdtFrag = f;
+            var fDur = f.duration || 2;
+            if (curT > 0 && curT >= (f.start - 0.5) && curT <= (f.start + fDur + 0.5)) {
+                matchedFrag = f;
+            }
+        }
+        var refFrag = matchedFrag || lastPdtFrag;
+        if (refFrag) {
+            spAutoplayPdtZeroMs = refFrag.programDateTime - (refFrag.start * 1000);
+        }
+        if (lastPdtFrag) {
+            spAutoplayLastEndPdt = lastPdtFrag.programDateTime + ((lastPdtFrag.duration || 2) * 1000);
+        }
+    }
+
+    function spGetAutoplayCurrentPdt() {
+        if (!spAutoplayVideo || !(spAutoplayPdtZeroMs > 0)) {
+            return 0;
+        }
+        return spAutoplayPdtZeroMs + ((spAutoplayVideo.currentTime || 0) * 1000);
+    }
+
+    function spEstimateMainCurrentPdt(mainVideo) {
+        if (mainVideo && spMainAdBoundaryTime !== null && spMainBoundaryEndPdt > 0) {
+            var remSec = Math.max(0, spMainAdBoundaryTime - (mainVideo.currentTime || 0));
+            return spMainBoundaryEndPdt - (remSec * 1000);
+        }
+        var parts = spPlayerParts(false);
+        var lat = spLiveLatency(parts && parts.player);
+        if (lat !== null && lat > 0 && lat < 30) {
+            return Date.now() - (lat * 1000);
+        }
+        return 0;
+    }
+
+    function spSetMainMutedForAd(mute) {
+        var next = !!mute;
+        if (spAutoplayMutingMain === next) {
+            dvrSyncVolumeFromPlayer();
+            return;
+        }
+        spAutoplayMutingMain = next;
+        dvrSyncVolumeFromPlayer();
+        if (!next) {
+            var mainVideo = adCleanPlaybackVideo();
+            if (mainVideo) {
+                enforceSavedVolumeOnVideoSync(mainVideo);
+            }
+        }
+    }
+
+    function spShowAutoplayVisual(visible) {
+        var next = !!visible;
+        spAutoplayVisible = next;
+        if (spAutoplayOverlay) {
+            spAutoplayOverlay.classList.toggle('tp9-sp-autoplay-visible', next);
+        }
+        dvrSyncVolumeFromPlayer();
+        if (spAutoplayVideo && !dvrAudioBridge) {
+            var saved = getSavedChannelVolume(spAutoplayChannel || getTestChannel());
+            var baseVol = saved !== null ? Math.max(0, Math.min(1, saved)) : 1;
+            var userMuted = Boolean(dvrUserExplicitMuted || baseVol === 0);
+            setVideoVolumeRaw(spAutoplayVideo, baseVol, next && (!dvrOverlay || dvrIsLive()) ? userMuted : true);
+        }
+        if (typeof audioNormScan === 'function') {
+            audioNormScan();
+        }
+    }
+
+    function spAlignAutoplayToPdt(targetPdt) {
+        if (!spAutoplayVideo || !(targetPdt > 0) || !(spAutoplayPdtZeroMs > 0)) {
+            return false;
+        }
+        if (!spAutoplayVideo.buffered || !spAutoplayVideo.buffered.length) {
+            return false;
+        }
+        var wantedTime = (targetPdt - spAutoplayPdtZeroMs) / 1000;
+        var bufStart = spAutoplayVideo.buffered.start(0);
+        var bufEnd = spAutoplayVideo.buffered.end(spAutoplayVideo.buffered.length - 1);
+        if (!(bufEnd > bufStart + 0.6)) {
+            return false;
+        }
+        var clamped = Math.max(bufStart + 0.08, Math.min(bufEnd - 0.45, wantedTime));
+        if (Math.abs((spAutoplayVideo.currentTime || 0) - clamped) > 0.22) {
+            try {
+                spAutoplayVideo.currentTime = clamped;
+            } catch (e) {}
+        }
+        return true;
+    }
+
+    function spClearSwapTimer() {
+        if (spSwapTimer) {
+            clearInterval(spSwapTimer);
+            spSwapTimer = null;
+        }
+    }
+
+    function spCancelReturnToMain() {
+        if (spReturnTimer) {
+            clearInterval(spReturnTimer);
+            spReturnTimer = null;
+        }
+        spReturnInProgress = false;
+    }
+
+    function spStopAutoplayOverlay(restoreMainAudio) {
+        spAutoplaySessionSeq++;
+        spClearSwapTimer();
+        spCancelReturnToMain();
+        spAutoplayActive = false;
+        spAutoplayChannel = null;
+        spAutoplayQuality = '';
+        spAutoplayPdtZeroMs = 0;
+        spAutoplayLastEndPdt = 0;
+        spMainAdBoundaryTime = null;
+        spMainBoundaryEndPdt = 0;
+        spAutoplayAlignedOnce = false;
+        spAutoplayRetriedFresh = false;
+        spAutoplayVisible = false;
+        if (spAutoplayHls) {
+            try {
+                spAutoplayHls.stopLoad();
+                spAutoplayHls.destroy();
+            } catch (eHls) {}
+            spAutoplayHls = null;
+        }
+        if (spAutoplayVideo) {
+            try {
+                spAutoplayVideo.pause();
+                spAutoplayVideo.removeAttribute('src');
+                spAutoplayVideo.load();
+            } catch (eVid) {}
+            spAutoplayVideo = null;
+        }
+        if (spAutoplayOverlay) {
+            try {
+                spAutoplayOverlay.remove();
+            } catch (eDom) {}
+            spAutoplayOverlay = null;
+        }
+        if (restoreMainAudio !== false) {
+            spSetMainMutedForAd(false);
+        }
+        if (typeof audioNormScan === 'function') {
+            audioNormScan();
+        }
+    }
+
+    function spSyncAutoplayQualityMeta(qLabel) {
+        if (!qLabel || qLabel === spAutoplayQuality) {
+            return;
+        }
+        spAutoplayQuality = qLabel;
+        if (spBadgeData && spBadgeData.backupType === 'autoplay') {
+            spBadgeData.quality = qLabel;
+            spRenderBadge();
+        }
+        if (spAutoplayChannel) {
+            var entry = spCurrentAdEntry(spAutoplayChannel);
+            if (entry && entry.backup === 'autoplay' && entry.quality !== qLabel) {
+                entry.quality = qLabel;
+                scheduleStatsSave();
+            }
+        }
+    }
+
+    function spBootAutoplayHls(ch, seq, forceFresh) {
+        spFetchAutoplayStreamInfo(ch, !!forceFresh).then(function (info) {
+            if (!spAutoplayActive || spAutoplaySessionSeq !== seq || !spAutoplayVideo) {
+                return;
+            }
+            if (!info || (!info.bestMediaUrl && !info.masterUrl)) {
+                logEvent('warn', '🛡️ Flux autoplay indisponible sur ' + ch + ' : nouvelle tentative en cours');
+                return;
+            }
+            if (info.qualityLabel) {
+                spSyncAutoplayQualityMeta(info.qualityLabel);
+            }
+            var sourceUrl = info.bestMediaUrl || info.masterUrl;
+            if (spAutoplayHls) {
+                try {
+                    spAutoplayHls.stopLoad();
+                    spAutoplayHls.destroy();
+                } catch (eOld) {}
+                spAutoplayHls = null;
+            }
+            var HlsLib = typeof dvrHlsLib === 'function' ? dvrHlsLib() : window.Hls;
+            if (HlsLib && HlsLib.isSupported && HlsLib.isSupported()) {
+                var hls = new HlsLib({
+                    enableWorker: false,
+                    lowLatencyMode: true,
+                    backBufferLength: 14,
+                    maxBufferLength: 10,
+                    maxMaxBufferLength: 18,
+                    liveSyncDurationCount: 2,
+                    liveMaxLatencyDurationCount: 4,
+                    maxLiveSyncPlaybackRate: 1.05
+                });
+                spAutoplayHls = hls;
+                hls.loadSource(sourceUrl);
+                hls.attachMedia(spAutoplayVideo);
+
+                hls.on(HlsLib.Events.MANIFEST_PARSED, function () {
+                    if (spAutoplaySessionSeq !== seq || spAutoplayHls !== hls) return;
+                    if (hls.levels && hls.levels.length > 1) {
+                        var bestIdx = 0;
+                        var bestScore = -1;
+                        for (var l = 0; l < hls.levels.length; l++) {
+                            var lv = hls.levels[l];
+                            var sc = ((lv.height || 0) * 10000000) + (lv.bitrate || 0);
+                            if (sc > bestScore) {
+                                bestScore = sc;
+                                bestIdx = l;
+                            }
+                        }
+                        hls.currentLevel = bestIdx;
+                    }
+                    if (!spAutoplayQuality && hls.levels && hls.levels.length) {
+                        var chosen = hls.levels[Math.max(0, hls.currentLevel)];
+                        if (chosen && chosen.height) {
+                            var fps = chosen.frameRate ? Math.round(chosen.frameRate) : 0;
+                            spSyncAutoplayQualityMeta(chosen.height + 'p' + (fps >= 50 ? fps : ''));
+                        }
+                    }
+                });
+
+                hls.on(HlsLib.Events.LEVEL_UPDATED, function (ev, lvData) {
+                    if (spAutoplaySessionSeq !== seq || spAutoplayHls !== hls) return;
+                    var details = lvData && lvData.details;
+                    if (details && Array.isArray(details.fragments)) {
+                        spUpdateAutoplayPdtMapping(details.fragments);
+                    }
+                    if (!isUserExplicitlyPausedLive() && spAutoplayVideo && spAutoplayVideo.paused) {
+                        var pPlay = spAutoplayVideo.play();
+                        if (pPlay && typeof pPlay.catch === 'function') pPlay.catch(function () {});
+                    }
+                });
+
+                hls.on(HlsLib.Events.FRAG_BUFFERED, function (ev, fragData) {
+                    if (spAutoplaySessionSeq !== seq || spAutoplayHls !== hls) return;
+                    var frag = fragData && fragData.frag;
+                    if (frag && frag.programDateTime > 0 && Number.isFinite(frag.start)) {
+                        spAutoplayPdtZeroMs = frag.programDateTime - (frag.start * 1000);
+                    }
+                    var stats = (fragData && fragData.stats) || (frag && frag.stats);
+                    var bytes = stats && (stats.total || stats.loaded);
+                    if (spAutoplayVisible && bytes > 0) {
+                        recordBandwidthBytes(ch, bytes, null, { viaProxy: false });
+                    }
+                    if (!spAutoplayAlignedOnce && !spAutoplayVisible && spMainAdBoundaryTime !== null) {
+                        var mainV = adCleanPlaybackVideo();
+                        var targetPdt = spEstimateMainCurrentPdt(mainV);
+                        if (spAlignAutoplayToPdt(targetPdt)) {
+                            spAutoplayAlignedOnce = true;
+                        }
+                    }
+                });
+
+                hls.on(HlsLib.Events.ERROR, function (ev, errData) {
+                    if (spAutoplaySessionSeq !== seq || spAutoplayHls !== hls || !errData || !errData.fatal) {
+                        return;
+                    }
+                    if (errData.type === HlsLib.ErrorTypes.MEDIA_ERROR) {
+                        try { hls.recoverMediaError(); } catch (eRec) {}
+                        return;
+                    }
+                    if (!spAutoplayRetriedFresh) {
+                        spAutoplayRetriedFresh = true;
+                        delete spAutoplayCache[ch];
+                        spBootAutoplayHls(ch, seq, true);
+                    }
+                });
+            } else if (spAutoplayVideo.canPlayType('application/vnd.apple.mpegurl')) {
+                spAutoplayVideo.src = sourceUrl;
+                if (!isUserExplicitlyPausedLive()) {
+                    var pNat = spAutoplayVideo.play();
+                    if (pNat && typeof pNat.catch === 'function') pNat.catch(function () {});
+                }
+            }
+        });
+    }
+
+    function spStartOrUpdateAutoplayOverlay(data) {
+        if (scriptIsOff() || isDashboardOnlyTab || !data || !data.channel) {
+            return;
+        }
+        var ch = String(data.channel).trim().toLowerCase();
+        var watched = getTestChannel();
+        if (!ch || (watched && watched.toLowerCase() !== ch)) {
+            return;
+        }
+        spCancelReturnToMain();
+        spStopSmoothRateCatchUp();
+        if (spAutoplayActive && spAutoplayChannel === ch && spAutoplayOverlay && spAutoplayVideo) {
+            spPositionAutoplayOverlay();
+            if (spAutoplayQuality && !data.quality) {
+                data.quality = spAutoplayQuality;
+            }
+            return;
+        }
+        spStopAutoplayOverlay(false);
+        spInjectAutoplayCSS();
+
+        var seq = ++spAutoplaySessionSeq;
+        spAutoplayActive = true;
+        spAutoplayChannel = ch;
+        var cachedInfo = spAutoplayCache[ch];
+        if (cachedInfo && cachedInfo.qualityLabel) {
+            spAutoplayQuality = cachedInfo.qualityLabel;
+            if (!data.quality) {
+                data.quality = spAutoplayQuality;
+            }
+        }
+
+        var overlay = document.createElement('div');
+        overlay.id = 'tp9-sp-autoplay-overlay';
+        var vid = document.createElement('video');
+        vid.className = 'tp9-sp-autoplay-video';
+        vid.playsInline = true;
+        vid.autoplay = false;
+        vid.controls = false;
+        vid.muted = true;
+        overlay.appendChild(vid);
+        spAutoplayOverlay = overlay;
+        spAutoplayVideo = vid;
+
+        var mainVideo = adCleanPlaybackVideo();
+        spPositionAutoplayOverlay(mainVideo);
+
+        var ahead = mainVideo ? spAheadOf(mainVideo) : 0;
+        var canSeamlessMidrollHandoff = Boolean(
+            mainVideo &&
+            !mainVideo.paused &&
+            data.midroll &&
+            data.preAdLiveCount > 0 &&
+            ahead >= 0.30
+        );
+
+        if (!canSeamlessMidrollHandoff) {
+            spMainAdBoundaryTime = mainVideo ? (mainVideo.currentTime || 0) : 0;
+            spMainBoundaryEndPdt = data.lastPreAdLiveEndPdt || 0;
+            spSetMainMutedForAd(true);
+            spShowAutoplayVisual(true);
+        } else {
+            spMainAdBoundaryTime = spBufferedEndAt(mainVideo);
+            spMainBoundaryEndPdt = data.lastPreAdLiveEndPdt || 0;
+            spSwapTimer = setInterval(function () {
+                if (!spAutoplayActive || spAutoplaySessionSeq !== seq) {
+                    spClearSwapTimer();
+                    return;
+                }
+                var mv = adCleanPlaybackVideo();
+                if (!mv) {
+                    spSetMainMutedForAd(true);
+                    spShowAutoplayVisual(true);
+                    spClearSwapTimer();
+                    return;
+                }
+                var distToAd = spMainAdBoundaryTime - (mv.currentTime || 0);
+                var apReady = Boolean(
+                    spAutoplayVideo &&
+                    spAutoplayVideo.readyState >= 2 &&
+                    !spAutoplayVideo.seeking &&
+                    !spAutoplayVideo.paused
+                );
+                if (apReady) {
+                    if (!spAutoplayAlignedOnce) {
+                        var estPdt = spEstimateMainCurrentPdt(mv);
+                        if (spAlignAutoplayToPdt(estPdt)) {
+                            spAutoplayAlignedOnce = true;
+                            if (spAutoplayVideo.seeking && distToAd > 0.22) {
+                                return;
+                            }
+                        }
+                    }
+                    spSetMainMutedForAd(true);
+                    spShowAutoplayVisual(true);
+                    spClearSwapTimer();
+                    return;
+                }
+                // Garde-fou absolu : 140 ms avant la première image de pub en tampon,
+                // on coupe le son du lecteur principal et on bascule sur l'écran autoplay.
+                if (distToAd <= 0.14) {
+                    spSetMainMutedForAd(true);
+                    spShowAutoplayVisual(true);
+                    spClearSwapTimer();
+                }
+            }, 30);
+        }
+
+        spBootAutoplayHls(ch, seq, false);
+    }
+
+    function spFinishReturnToMainVideo(mainVideo, channel, seekDeltaSec) {
+        spCancelReturnToMain();
+        spSetMainMutedForAd(false);
+        spStopAutoplayOverlay(true);
+        spHideBadge();
+        updateActiveProxyDisplay();
+        renderAdblockStats();
+        if (mainVideo && spAheadOf(mainVideo) > 2.2) {
+            spStartSmoothRateCatchUp(mainVideo, 1.9);
+        }
+        logEvent(
+            'success',
+            '🛡️ Retour sur le vrai direct sans aucune relance sur ' + (channel || getTestChannel() || '') +
+            (typeof seekDeltaSec === 'number' && Math.abs(seekDeltaSec) >= 0.15
+                ? ' (recalage horodaté de ' + (seekDeltaSec >= 0 ? '+' : '') + spSec(seekDeltaSec) + ')'
+                : ' (alignement horodaté continu)')
+        );
+    }
+
+    function spScheduleReturnToMainVideo(data) {
+        if (!spAutoplayActive) {
+            spHideBadge();
+            return;
+        }
+        spClearSwapTimer();
+        spCancelReturnToMain();
+        // Si l'entrée était encore en attente de bascule et que la pub est déjà finie,
+        // le lecteur principal n'a jamais été masqué : on nettoie immédiatement.
+        if (!spAutoplayVisible && !spAutoplayMutingMain) {
+            spStopAutoplayOverlay(true);
+            spHideBadge();
+            return;
+        }
+        var mainVideo = adCleanPlaybackVideo();
+        if (!mainVideo) {
+            spStopAutoplayOverlay(true);
+            spHideBadge();
+            return;
+        }
+        spReturnInProgress = true;
+        var startedAt = Date.now();
+        var bufEndAtEndMsg = spBufferedEndAt(mainVideo);
+        var cleanDurSec = (data && data.postAdLiveDurSec > 0) ? data.postAdLiveDurSec : 4.0;
+        var postAdStartPdt = (data && data.postAdLiveStartPdt > 0) ? data.postAdLiveStartPdt : 0;
+        var initialMainEndPdt = (data && data.mainEndPdt > 0) ? data.mainEndPdt : 0;
+        var soughtMain = false;
+        var seekAt = 0;
+        var appliedSeekDelta = 0;
+        var channel = (data && data.channel) || spAutoplayChannel || getTestChannel();
+
+        if (mainVideo.paused && !isUserExplicitlyPausedLive()) {
+            try {
+                var pMain = mainVideo.play();
+                if (pMain && typeof pMain.catch === 'function') pMain.catch(function () {});
+            } catch (ePlay) {}
+        }
+
+        spReturnTimer = setInterval(function () {
+            if (!spAutoplayActive) {
+                spCancelReturnToMain();
+                return;
+            }
+            var mv = adCleanPlaybackVideo();
+            var now = Date.now();
+            var elapsed = now - startedAt;
+            if (!mv || elapsed > 2600) {
+                spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
+                return;
+            }
+            if (soughtMain) {
+                if ((!mv.seeking && mv.readyState >= 3) || (now - seekAt) >= 550) {
+                    spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
+                }
+                return;
+            }
+            var curBufEnd = spBufferedEndAt(mv);
+            var postAdBuffered = (curBufEnd >= bufEndAtEndMsg + 0.45) || (elapsed >= 420 && spAheadOf(mv) >= 1.1);
+            if (!postAdBuffered && elapsed < 1500) {
+                return;
+            }
+            var apPdt = spGetAutoplayCurrentPdt();
+            // Si le lecteur autoplay joue encore les ~0,5 à 1,2 s juste avant le
+            // premier segment live post-pub du flux principal, on le laisse finir
+            // naturellement cette phrase pour ne sauter aucun mot à la reprise.
+            if (
+                apPdt > 0 &&
+                postAdStartPdt > 0 &&
+                apPdt < (postAdStartPdt + 250) &&
+                elapsed < 1650 &&
+                spAutoplayVideo &&
+                !spAutoplayVideo.paused
+            ) {
+                return;
+            }
+            var bufStart = spBufferedStartAt(mv, curBufEnd);
+            var addedBufSec = Math.max(0, curBufEnd - bufEndAtEndMsg);
+            var effectiveCleanDur = Math.max(cleanDurSec, 2.0 + addedBufSec);
+            var minCleanTime = Math.max(bufStart + 0.05, curBufEnd - effectiveCleanDur + 0.25);
+            var maxSafeTime = Math.max(minCleanTime, curBufEnd - 1.45);
+            var seekTarget = maxSafeTime;
+
+            if (apPdt > 0 && initialMainEndPdt > 0) {
+                var dynamicMainEndPdt = initialMainEndPdt + (Math.max(0, addedBufSec - 2.0) * 1000);
+                var pdtMatchedTime = curBufEnd - ((dynamicMainEndPdt - apPdt) / 1000);
+                seekTarget = Math.max(minCleanTime, Math.min(maxSafeTime, pdtMatchedTime));
+            }
+
+            var prevMainTime = mv.currentTime || 0;
+            if (seekTarget > prevMainTime + 0.18 || prevMainTime < minCleanTime - 0.05) {
+                try {
+                    mv.currentTime = seekTarget;
+                    appliedSeekDelta = seekTarget - prevMainTime;
+                } catch (eSeek) {}
+            }
+            soughtMain = true;
+            seekAt = now;
+            if (!mv.seeking && mv.readyState >= 3) {
+                spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
+            }
+        }, 55);
+    }
+
     function spHandleMessage(data) {
         if (data.type === 'spProxy403') {
             if (data.channel) {
                 spChannelProxy403[String(data.channel).toLowerCase()] = Date.now();
+                spWarmAutoplayForChannel(data.channel);
                 updateActiveProxyDisplay();
                 if (dashboardVisible) {
                     renderDashboard();
@@ -39691,6 +40185,14 @@ dashboardButton.style.visibility = 'hidden';
         }
         if (data.type === 'spAd') {
             var wasSpAdActive = spAd.active;
+            if (data.active && data.useAutoplayOverlay) {
+                spStartOrUpdateAutoplayOverlay(data);
+                if (spAutoplayQuality && !data.quality) {
+                    data.quality = spAutoplayQuality;
+                }
+            } else if (data.active && spAutoplayActive && !data.useAutoplayOverlay) {
+                spStopAutoplayOverlay(true);
+            }
             spCountAd(data);
             spAd.active = !!data.active;
             spAd.stripping = !!data.stripping;
@@ -39700,7 +40202,17 @@ dashboardButton.style.visibility = 'hidden';
             if (wasSpAdActive && !spAd.active) {
                 spLastAdEndedAt = Date.now();
             }
-            spUpdateBadge(data);
+            if (!data.active && spAutoplayActive && !data.usedProxyInBreak) {
+                spScheduleReturnToMainVideo(data);
+                if (!spReturnInProgress) {
+                    spUpdateBadge(data);
+                }
+            } else {
+                if (!data.active && spAutoplayActive) {
+                    spStopAutoplayOverlay(true);
+                }
+                spUpdateBadge(data);
+            }
             updateActiveProxyDisplay();
             renderAdblockStats();
         }
@@ -40261,7 +40773,7 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
-    // « Pub 2/3 · intégré 720p60 12 s », et une barre sous le texte qui
+    // « Pub 2/3 · autoplay 480p 12 s », et une barre sous le texte qui
     // se remplit pendant la pub en cours puis repart de zéro.
     function spRenderBadge() {
         var data = spBadgeData;
@@ -40280,22 +40792,29 @@ dashboardButton.style.visibility = 'hidden';
         var time = '';
         var progress = null;
         var kind = data.midroll ? '(midroll)' : '(preroll)';
-        if (data.searching) {
+        var isZeroReloadAutoplay = (data.backupType === 'autoplay' || spAutoplayActive);
+        if (spReturnInProgress) {
+            title = tt('Pub ', 'Ad ') + kind + (len ? (' ' + len + '/' + len) : '');
+            sub = tt('retour au direct…', 'returning to live…');
+            quality = data.quality || spAutoplayQuality || '';
+            progress = 1;
+        } else if (data.searching) {
             title = tt('Pub ', 'Ad ') + kind + tt(' détectée', ' detected');
             sub = tt('recherche…', 'searching…');
         } else if (ended && pos && len && pos >= len) {
-            // Les pubs sont finies, mais Twitch garde leur trace une
-            // trentaine de secondes : le flux de secours tient jusque-là.
-            // Le badge reste celui d'une pub bloquée, avec sa barre, qui
-            // se remplit cette fois jusqu'à la relance.
             title = tt('Pub ', 'Ad ') + kind + ' ' + len + '/' + len;
             var reloadIn = Math.ceil((pod.end + SP_RELOAD_AFTER_AD_MS - now) / 1000);
             if (reloadIn >= 1) {
-                sub = tt('relance dans', 'restart in');
+                sub = isZeroReloadAutoplay
+                    ? tt('retour au direct dans', 'back to live in')
+                    : tt('relance dans', 'restart in');
                 time = reloadIn + ' s';
             } else {
-                sub = tt('relance…', 'restarting…');
+                sub = isZeroReloadAutoplay
+                    ? tt('retour au direct…', 'returning to live…')
+                    : tt('relance…', 'restarting…');
             }
+            quality = data.quality || (isZeroReloadAutoplay ? spAutoplayQuality : '') || '';
             progress = (now - pod.end) / SP_RELOAD_AFTER_AD_MS;
         } else {
             if (pos && len) {
@@ -40306,9 +40825,12 @@ dashboardButton.style.visibility = 'hidden';
             }
             if (data.backupType) {
                 sub = tt(SP_BADGE_TYPES[data.backupType] || data.backupType, SP_BADGE_TYPES_EN[data.backupType] || data.backupType);
-                quality = data.quality || '';
+                quality = data.quality || (data.backupType === 'autoplay' ? spAutoplayQuality : '') || '';
+            } else if (spAutoplayActive) {
+                sub = 'autoplay';
+                quality = spAutoplayQuality || '';
             } else {
-                sub = tt('image vide', 'blank image');
+                sub = 'autoplay';
             }
             if (timed && !ended) {
                 time = Math.max(1, Math.ceil((pod.end - now) / 1000)) + ' s';
@@ -40339,24 +40861,28 @@ dashboardButton.style.visibility = 'hidden';
         spBadgeProgress = progress;
     }
 
-    // Lecteur qui tourne en rond sans avancer : relance complète, au
-    // plus une fois toutes les 8 s (réglages de vaft).
-    //
-    // « Bloqué » veut dire que l'image ne bouge plus depuis 3 s. Vaft
-    // se contentait de moins d'1 s de réserve sans nouveau morceau,
-    // or c'est l'ordinaire en faible latence : il relançait des
-    // lecteurs qui tournaient très bien. Une simple
-    // pause/lecture laissait souvent le son sauter et décalé de
-    // l'image jusqu'au F5 ; la relance repart d'un lecteur neuf
-    // (option PlayerBufferingDoPlayerReload de vaft).
+    // Surveillance douce du lecteur principal HORS coupure pub, et maintien
+    // sans aucune relance du double lecteur pendant les pubs autoplay.
     function sansProxyBufferTick() {
         if (isDashboardOnlyTab || !vaftPlaybackOn()) {
             return;
         }
-        if (isUserExplicitlyPausedLive() || dvrStreamEnded() || (dvrOverlay && !dvrIsLive())) {
+        if (isUserExplicitlyPausedLive()) {
+            if (spAutoplayActive && spAutoplayVideo && !spAutoplayVideo.paused) {
+                try { spAutoplayVideo.pause(); } catch (ePauseAp) {}
+            }
             spBuffer.same = 0;
             spBuffer.deadTicks = 0;
             return;
+        }
+        if (dvrStreamEnded() || (dvrOverlay && !dvrIsLive())) {
+            spBuffer.same = 0;
+            spBuffer.deadTicks = 0;
+            return;
+        }
+        var curCh = getTestChannel();
+        if (curCh && !spAd.active) {
+            spWarmAutoplayForChannel(curCh);
         }
         var parts = spPlayerParts(false);
         if (!parts || !parts.player || !parts.state) {
@@ -40379,22 +40905,47 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.deadTicks = 0;
                 return;
             }
+            // Pendant toute la durée d'une pub couverte par le lecteur autoplay
+            // (et pendant le recalage de sortie), AUCUNE relance setSrc n'est émise.
+            if (spAutoplayActive || (spAd.active && !proxyAdsOnlyOn())) {
+                spBuffer.same = 0;
+                spBuffer.deadTicks = 0;
+                if (video) {
+                    spPositionAutoplayOverlay(video);
+                    if (video.paused) {
+                        try {
+                            var pBg = video.play();
+                            if (pBg && typeof pBg.catch === 'function') pBg.catch(function () {});
+                        } catch (eBgPlay) {}
+                    }
+                }
+                if (spAutoplayVideo && spAutoplayVideo.paused && spAutoplayVideo.readyState >= 2) {
+                    try {
+                        var pFg = spAutoplayVideo.play();
+                        if (pFg && typeof pFg.catch === 'function') pFg.catch(function () {});
+                    } catch (eFgPlay) {}
+                }
+                if (spAd.active && spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 25000) {
+                    spHandleMessage({
+                        type: 'spAd',
+                        channel: spAd.channel || curCh,
+                        active: false,
+                        stripping: false,
+                        usedProxyInBreak: false
+                    });
+                }
+                return;
+            }
             if (spAd.active) {
-                // Si le lecteur IVS a cessé de relire la playlist .m3u8 depuis > 12 s
-                // (ex: décodeur stoppé sur un segment vide) ou est tombé en erreur média,
-                // __sp_endAd ne pourra jamais être déclenché tout seul : on débloque et relance.
-                var adPollDead = spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 12000;
-                var adMediaErr = !!(video && video.error && spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 5000);
+                var adPollDead = spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 16000;
+                var adMediaErr = !!(video && video.error && spAd.lastUpdateAt > 0 && (now - spAd.lastUpdateAt) > 6000);
                 if ((adPollDead || adMediaErr) && spBuffer.lastFix <= now - 8000) {
-                    spHandleMessage({ type: 'spAd', channel: spAd.channel || getTestChannel(), active: false, stripping: false });
-                    logEvent('warn', '🛡️ Lecteur Twitch interrompu pendant le blocage pub : relance automatique du lecteur');
+                    spHandleMessage({ type: 'spAd', channel: spAd.channel || curCh, active: false, stripping: false });
+                    logEvent('warn', '🛡️ Flux proxy temporaire interrompu pendant la pub : relance automatique du lecteur');
                     spPlayerTask('reload', { force: true });
                     return;
                 }
-                // Pendant un remplacement par segments vides (stripping) ou la recherche
-                // initiale d'un flux de secours, l'image est normale si elle n'avance pas
-                // tant que le lecteur continue de relire .m3u8 toutes les 2 s.
-                if (spAd.stripping || spAd.searching || spBuffer.lastFix > now - 10000) {
+                if (spBuffer.lastFix > now - 10000) {
                     return;
                 }
             } else if (spBuffer.lastFix > now - 8000) {
@@ -40430,7 +40981,7 @@ dashboardButton.style.visibility = 'hidden';
                         try {
                             player.play();
                         } catch (e3) {}
-                    } else if (spBuffer.deadTicks >= 8) {
+                    } else if (spBuffer.deadTicks >= 10) {
                         spBuffer.deadTicks = 0;
                         logEvent('info', '🔄 Lecteur Twitch figé en pause involontaire : relance automatique du lecteur');
                         spPlayerTask('reload', { force: true });
@@ -40448,7 +40999,7 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.time = time;
                 return;
             }
-            var stallThreshold = spAd.active ? 10 : 5;
+            var stallThreshold = 12;
             if (
                 spBuffer.started &&
                 spBuffer.time !== null &&
@@ -40515,6 +41066,7 @@ dashboardButton.style.visibility = 'hidden';
         broadcastConfig();
         watchdogReset();
         adCleanWatch = null;
+        spStopAutoplayOverlay(true);
         spAd.active = false;
         spAd.stripping = false;
         spBuffer.same = 0;
@@ -40537,7 +41089,7 @@ dashboardButton.style.visibility = 'hidden';
                 ? (proxyAdsOnlyOn()
                     ? 'Mode Proxy réactivé (proxy uniquement pendant les pubs)'
                     : 'Proxys réactivés : le flux repasse par les proxys')
-                : 'Mode Adblock activé : lecture Twitch directe avec uniquement le bloqueur sans proxy (VAFT)'
+                : 'Mode Adblock activé : lecture Twitch directe avec lecteur autoplay sans pub (zéro relance)'
         );
         renderDashboard();
         if (on) {
@@ -40549,6 +41101,9 @@ dashboardButton.style.visibility = 'hidden';
         var activeCh = getWatchedChannel() || (getTestChannel() && findPlaybackVideo() ? getTestChannel() : null);
         if (!activeCh) {
             return;
+        }
+        if (!on) {
+            spWarmAutoplayForChannel(activeCh);
         }
         setTimeout(function () {
             if (!reloadTwitchPlayer()) {
@@ -40574,6 +41129,7 @@ dashboardButton.style.visibility = 'hidden';
         broadcastConfig();
         watchdogReset();
         adCleanWatch = null;
+        spStopAutoplayOverlay(true);
         spAd.active = false;
         spAd.stripping = false;
         spBuffer.same = 0;
@@ -40927,6 +41483,8 @@ dashboardButton.style.visibility = 'hidden';
 
         dvrForgetMemory();
 
+        spStopAutoplayOverlay(true);
+
         // Pub encore « en cours » sur la chaîne qu'on quitte (stream
         // coupé en pleine pub, départ pendant la pub) : on la clôt ici.
         // Restée ouverte, elle faisait ignorer la première pub de la
@@ -40959,6 +41517,8 @@ dashboardButton.style.visibility = 'hidden';
         }
 
         console.log('[TwitchProxy] Changement de chaîne détecté :', channel);
+
+        spWarmAutoplayForChannel(channel);
 
         scheduleVolumeRestore(channel, 2800);
         if (typeof onBttvChannelChange === 'function') {
@@ -42752,7 +43312,7 @@ dashboardButton.style.visibility = 'hidden';
         return [h * 360, s, l];
     }
 
-    function hslToRgbString(h, s, l) {
+    function hslToRgbArray(h, s, l) {
         h = ((h % 360) + 360) % 360 / 360;
         var r, g, b;
         if (s === 0) {
@@ -42772,7 +43332,146 @@ dashboardButton.style.visibility = 'hidden';
             g = hue2rgb(p, q, h);
             b = hue2rgb(p, q, h - 1 / 3);
         }
-        return 'rgb(' + Math.round(r * 255) + ', ' + Math.round(g * 255) + ', ' + Math.round(b * 255) + ')';
+        return [
+            Math.round(Math.min(Math.max(0, r * 255), 255)),
+            Math.round(Math.min(Math.max(0, g * 255), 255)),
+            Math.round(Math.min(Math.max(0, b * 255), 255))
+        ];
+    }
+
+    function hslToRgbString(h, s, l) {
+        var rgb = hslToRgbArray(h, s, l);
+        return 'rgb(' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ')';
+    }
+
+    function parseCssColorToRgb(colorStr) {
+        if (!colorStr || typeof colorStr !== 'string') return null;
+        var s = colorStr.trim();
+        var m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        if (m) {
+            return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+        }
+        var hx = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+        if (hx) {
+            var h = hx[1];
+            if (h.length === 3) {
+                h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+            }
+            return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+        }
+        return null;
+    }
+
+    function isTwitchChatDarkMode(refEl) {
+        try {
+            var root = document.documentElement;
+            if (root && root.classList) {
+                if (root.classList.contains('tw-root--theme-light')) return false;
+                if (root.classList.contains('tw-root--theme-dark')) return true;
+            }
+            if (typeof resolveInputContainerBackground === 'function') {
+                var bgRgb = parseCssColorToRgb(resolveInputContainerBackground(refEl || document.body));
+                if (bgRgb) {
+                    var bgYiq = (bgRgb[0] * 299 + bgRgb[1] * 587 + bgRgb[2] * 114) / 1000;
+                    return bgYiq < 128;
+                }
+            }
+        } catch (e) {}
+        return true;
+    }
+
+    // Algorithme exact de BetterTTV (src/utils/colors.js : calculateColor) :
+    // n'éclaircit (ou n'assombrit en thème clair) que les couleurs dont la luminance YIQ est insuffisante (< 128 sur fond sombre),
+    // par pas progressifs de 10 % en luminosité HSL sans jamais altérer la saturation ni décolorer les pseudos déjà lisibles.
+    var bttvReadableColorCache = new Map();
+
+    function bttvRgbToHsl01(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        var max = Math.max(r, g, b);
+        var min = Math.min(r, g, b);
+        var l = Math.min(Math.max(0, (max + min) / 2), 1);
+        var d = Math.min(Math.max(0, max - min), 1);
+        if (d === 0) return [0, 0, l];
+        var h = 0;
+        switch (max) {
+            case r: h = Math.min(Math.max(0, (g - b) / d + (g < b ? 6 : 0)), 6); break;
+            case g: h = Math.min(Math.max(0, (b - r) / d + 2), 6); break;
+            case b: h = Math.min(Math.max(0, (r - g) / d + 4), 6); break;
+        }
+        h /= 6;
+        var s = l > 0.5 ? d / (2 * (1 - l)) : d / (2 * l);
+        return [h, Math.min(Math.max(0, s), 1), l];
+    }
+
+    function bttvHsl01ToRgb(h, s, l) {
+        if (s === 0) {
+            var v = Math.round(Math.min(Math.max(0, 255 * l), 255));
+            return [v, v, v];
+        }
+        var hueToRgb = function (pp, qq, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return pp + (qq - pp) * 6 * t;
+            if (t < 1 / 2) return qq;
+            if (t < 2 / 3) return pp + (qq - pp) * (2 / 3 - t) * 6;
+            return pp;
+        };
+        var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        var p = 2 * l - q;
+        return [
+            Math.round(Math.min(Math.max(0, 255 * hueToRgb(p, q, h + 1 / 3)), 255)),
+            Math.round(Math.min(Math.max(0, 255 * hueToRgb(p, q, h)), 255)),
+            Math.round(Math.min(Math.max(0, 255 * hueToRgb(p, q, h - 1 / 3)), 255))
+        ];
+    }
+
+    function calculateBetterTtvReadableRgb(r, g, b, darkenedMode) {
+        var cacheKey = r + ',' + g + ',' + b + ':' + (darkenedMode ? '1' : '0');
+        if (bttvReadableColorCache.has(cacheKey)) {
+            return bttvReadableColorCache.get(cacheKey);
+        }
+        var curR = r;
+        var curG = g;
+        var curB = b;
+        var adjusted = false;
+        for (var step = 20; step >= 0; step--) {
+            var yiq = (curR * 299 + curG * 587 + curB * 114) / 1000;
+            var bgColor = yiq >= 128 ? 'dark' : 'light';
+            if ((bgColor === 'dark' && darkenedMode) || (bgColor === 'light' && !darkenedMode)) {
+                break;
+            }
+            adjusted = true;
+            var light = bgColor === 'light';
+            var factor = light ? 0.1 : -0.1;
+            var hsl = bttvRgbToHsl01(curR, curG, curB);
+            var nextL = light ? (1 - (1 - factor) * (1 - hsl[2])) : ((1 + factor) * hsl[2]);
+            nextL = Math.min(Math.max(0, nextL), 1);
+            var nextRgb = bttvHsl01ToRgb(hsl[0], hsl[1], nextL);
+            curR = nextRgb[0];
+            curG = nextRgb[1];
+            curB = nextRgb[2];
+        }
+        var out = adjusted ? ('rgb(' + curR + ', ' + curG + ', ' + curB + ')') : null;
+        bttvReadableColorCache.set(cacheKey, out);
+        if (bttvReadableColorCache.size > 1000) {
+            var firstKey = bttvReadableColorCache.keys().next().value;
+            if (firstKey !== undefined) bttvReadableColorCache.delete(firstKey);
+        }
+        return out;
+    }
+
+    function restoreAllReadableUsernameColors() {
+        var nodes = document.querySelectorAll('[data-tp9-orig-color]');
+        for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            if (el.__tp9ColorBrightened) {
+                el.__tp9ColorBrightened = false;
+                var orig = el.getAttribute('data-tp9-orig-color') || '';
+                if (orig) el.style.setProperty('color', orig);
+            }
+        }
     }
 
     function syncUsernameReadableColor(msgEl) {
@@ -42783,13 +43482,14 @@ dashboardButton.style.visibility = 'hidden';
             '.chat-line__username'
         );
         if (!authorEls.length) return;
-        var enabled = pageConfig.readableColors !== false;
+        var enabled = !scriptIsOff() && pageConfig.readableColors !== false;
+        var darkenedMode = enabled ? isTwitchChatDarkMode(msgEl) : true;
 
         for (var i = 0; i < authorEls.length; i++) {
             var el = authorEls[i];
             if (!el.hasAttribute('data-tp9-orig-color')) {
                 var inlineColor = (el.style && el.style.getPropertyValue('color')) || '';
-                if (!inlineColor || inlineColor.indexOf('rgb') === -1) {
+                if (!parseCssColorToRgb(inlineColor)) {
                     try {
                         inlineColor = window.getComputedStyle(el).color || '';
                     } catch (e) {}
@@ -42809,33 +43509,16 @@ dashboardButton.style.visibility = 'hidden';
                 continue;
             }
 
-            var m = origColor.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-            if (!m) continue;
-            var r = parseInt(m[1], 10);
-            var g = parseInt(m[2], 10);
-            var b = parseInt(m[3], 10);
+            var rgb = parseCssColorToRgb(origColor);
+            if (!rgb) continue;
 
-            // Luminance perceptuelle ITU-R BT.709 + conversion HSL pour conserver 100 % de la teinte d'origine
-            var perceivedLum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            var hsl = rgbToHsl(r, g, b);
-            var h = hsl[0];
-            var s = hsl[1];
-            var l = hsl[2];
-
-            // Les bleus/violets profonds (200°–305°) et les rouges/magentas sombres sont les plus durs à lire sur #18181b
-            var minL = 0.65;
-            if (h >= 200 && h <= 305) {
-                minL = 0.74;
-            } else if (h <= 28 || h >= 330) {
-                minL = 0.70;
-            }
-
-            if (l < minL || perceivedLum < 145) {
-                var targetL = Math.max(minL, Math.min(0.84, l + (minL - l) * 0.88 + 0.08));
-                var targetS = s > 0.12 ? Math.max(s, 0.78) : s;
-                var brightRgb = hslToRgbString(h, targetS, targetL);
-                el.style.setProperty('color', brightRgb, 'important');
+            var adjustedRgb = calculateBetterTtvReadableRgb(rgb[0], rgb[1], rgb[2], darkenedMode);
+            if (adjustedRgb) {
+                el.style.setProperty('color', adjustedRgb, 'important');
                 el.__tp9ColorBrightened = true;
+            } else if (el.__tp9ColorBrightened) {
+                el.__tp9ColorBrightened = false;
+                el.style.setProperty('color', origColor);
             }
         }
     }
@@ -45257,7 +45940,9 @@ dashboardButton.style.visibility = 'hidden';
         }
     }
 
-    // Miroir visuel d'émotes directement dans le champ de saisie du tchat Twitch ([data-a-target="chat-input"])
+    // Gestion de la zone de saisie du tchat Twitch façon BetterTTV :
+    // le texte tapé reste du texte brut (aucun remplacement automatique d'émote pendant la frappe),
+    // avec désactivation du soulignement orthographique et suivi d'historique / d'autocomplétion :code.
     var bttvInputMirrorEl = null;
     var bttvObservedInputEl = null;
     var bttvInputMutationObs = null;
@@ -45278,132 +45963,34 @@ dashboardButton.style.visibility = 'hidden';
 
     function updateChatInputEmoteMirror() {
         var input = document.querySelector('[data-a-target="chat-input"]');
-        var hasThirdParty = (pageConfig.bttvEmotes !== false || pageConfig.stvEmotes !== false) && bttvEmoteMap.size > 0;
-        var hasTwitchLookup = twitchUnlockedEmoteMap.size > 0;
-        if (
-            !input ||
-            scriptIsOff() ||
-            (!hasThirdParty && !hasTwitchLookup) ||
-            (input.querySelector && input.querySelector('img'))
-        ) {
-            if (input) input.classList.remove('tp9-has-input-emotes');
-            if (bttvInputMirrorEl) bttvInputMirrorEl.style.display = 'none';
+        if (input) {
+            input.classList.remove('tp9-has-input-emotes');
+        }
+        if (bttvInputMirrorEl) {
+            try { bttvInputMirrorEl.remove(); } catch (e) {}
+            bttvInputMirrorEl = null;
+        }
+        if (bttvInputMutationObs) {
+            try { bttvInputMutationObs.disconnect(); } catch (e) {}
+            bttvInputMutationObs = null;
+        }
+        if (!input || scriptIsOff()) {
             return;
         }
-
         if (input !== bttvObservedInputEl) {
             bttvObservedInputEl = input;
             // Désactive le soulignement rouge du correcteur orthographique sur les codes d'émotes (ex: catKISS, KEKW)
             input.setAttribute('spellcheck', 'false');
             input.spellcheck = false;
-            if (bttvInputMutationObs) bttvInputMutationObs.disconnect();
-            bttvInputMutationObs = new MutationObserver(function () {
-                updateChatInputEmoteMirror();
-            });
-            bttvInputMutationObs.observe(input, {
-                childList: true,
-                characterData: true,
-                subtree: true
-            });
             input.addEventListener('input', function (ev) {
                 if (ev && ev.isTrusted) {
                     bttvSentHistoryIdx = -1;
                 }
-                updateChatInputEmoteMirror();
+                if (!scriptIsOff() && typeof updateColonAutocompleteFromInput === 'function') {
+                    updateColonAutocompleteFromInput(input);
+                }
             });
-            input.addEventListener('scroll', function () {
-                if (bttvInputMirrorEl) bttvInputMirrorEl.scrollTop = input.scrollTop;
-            });
         }
-
-        var raw = (input.value !== undefined ? input.value : input.textContent) || '';
-        if (!raw || !raw.trim()) {
-            input.classList.remove('tp9-has-input-emotes');
-            if (bttvInputMirrorEl) {
-                bttvInputMirrorEl.__tp9LastHtml = '';
-                bttvInputMirrorEl.innerHTML = '';
-                bttvInputMirrorEl.style.display = 'none';
-            }
-            return;
-        }
-
-        var parts = raw.split(/(\s+)/);
-        var hasAnyEmote = false;
-        for (var i = 0; i < parts.length; i++) {
-            var pTok = parts[i];
-            if ((hasThirdParty && bttvEmoteMap.has(pTok)) || (hasTwitchLookup && twitchUnlockedEmoteMap.has(pTok))) {
-                hasAnyEmote = true;
-                break;
-            }
-        }
-        if (!hasAnyEmote) {
-            input.classList.remove('tp9-has-input-emotes');
-            if (bttvInputMirrorEl) {
-                bttvInputMirrorEl.__tp9LastHtml = '';
-                bttvInputMirrorEl.innerHTML = '';
-                bttvInputMirrorEl.style.display = 'none';
-            }
-            return;
-        }
-
-        input.setAttribute('spellcheck', 'false');
-        input.spellcheck = false;
-        input.classList.add('tp9-has-input-emotes');
-
-        var host = input.parentElement;
-        if (!host) return;
-        try {
-            var hostPos = window.getComputedStyle(host).position;
-            if (hostPos === 'static') host.style.position = 'relative';
-        } catch (e) {}
-
-        if (!bttvInputMirrorEl || bttvInputMirrorEl.parentElement !== host) {
-            if (bttvInputMirrorEl) bttvInputMirrorEl.remove();
-            bttvInputMirrorEl = document.createElement('div');
-            bttvInputMirrorEl.id = 'tp9-chat-input-mirror';
-            host.appendChild(bttvInputMirrorEl);
-        }
-
-        try {
-            var cs = window.getComputedStyle(input);
-            bttvInputMirrorEl.style.top = input.offsetTop + 'px';
-            bttvInputMirrorEl.style.left = input.offsetLeft + 'px';
-            bttvInputMirrorEl.style.width = input.clientWidth + 'px';
-            bttvInputMirrorEl.style.height = input.clientHeight + 'px';
-            bttvInputMirrorEl.style.paddingTop = cs.paddingTop;
-            bttvInputMirrorEl.style.paddingRight = cs.paddingRight;
-            bttvInputMirrorEl.style.paddingBottom = cs.paddingBottom;
-            bttvInputMirrorEl.style.paddingLeft = cs.paddingLeft;
-            bttvInputMirrorEl.style.font = cs.font;
-            bttvInputMirrorEl.style.fontFamily = cs.fontFamily;
-            bttvInputMirrorEl.style.fontSize = cs.fontSize;
-            bttvInputMirrorEl.style.fontWeight = cs.fontWeight;
-            bttvInputMirrorEl.style.lineHeight = cs.lineHeight;
-            bttvInputMirrorEl.style.letterSpacing = cs.letterSpacing;
-            bttvInputMirrorEl.style.textIndent = cs.textIndent;
-            bttvInputMirrorEl.style.setProperty('--tp9-cim-bg', resolveInputContainerBackground(input));
-        } catch (e) {}
-
-        var html = '';
-        for (var j = 0; j < parts.length; j++) {
-            var tok = parts[j];
-            var em = (hasThirdParty && bttvEmoteMap.get(tok)) || (hasTwitchLookup && twitchUnlockedEmoteMap.get(tok)) || null;
-            if (em) {
-                var u1 = resolveEmoteDisplayUrl(em, false);
-                html += '<span class="tp9-cim-emote">' +
-                    '<span class="tp9-cim-ghost">' + escapeHTML(tok) + '</span>' +
-                    '<img src="' + escapeHTML(u1) + '" alt="' + escapeHTML(em.code) + '">' +
-                '</span>';
-            } else if (tok) {
-                html += '<span class="tp9-cim-txt">' + escapeHTML(tok) + '</span>';
-            }
-        }
-        if (bttvInputMirrorEl.__tp9LastHtml !== html) {
-            bttvInputMirrorEl.__tp9LastHtml = html;
-            bttvInputMirrorEl.innerHTML = html;
-        }
-        bttvInputMirrorEl.style.display = 'block';
-        bttvInputMirrorEl.scrollTop = input.scrollTop;
     }
 
     // Recalage propre du compte à rebours Mode lent natif de Twitch (« Vous pourrez envoyer un autre message dans Xs »)
@@ -46809,7 +47396,7 @@ dashboardButton.style.visibility = 'hidden';
         snapBtn.addEventListener('click', function (e) {
             e.stopPropagation();
             snapBtn.blur();
-            var video = findPlaybackVideo();
+            var video = getForegroundStreamVideo();
             if (!video || !video.videoWidth) return;
             try {
                 var canvas = document.createElement('canvas');
@@ -46841,7 +47428,7 @@ dashboardButton.style.visibility = 'hidden';
         pipBtn.addEventListener('click', function (e) {
             e.stopPropagation();
             pipBtn.blur();
-            var video = findPlaybackVideo();
+            var video = getForegroundStreamVideo();
             if (!video) return;
             try {
                 if (document.pictureInPictureElement) {
