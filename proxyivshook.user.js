@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.7
+// @version      1.11.8
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -13,6 +13,11 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.11.8
+// - Moteur Adblock mis à niveau vers VAFT v58 (façon Pie Adblock / TwitchAdSolutions v58) : nouvel ordre prioritaire des flux Source (site, popout, mobile_web, embed, avec autoplay 360p uniquement en dernier secours) et mémorisation du lecteur propre, segment vidéo vide BLANK_MP4 servi instantanément en mémoire, filtrage anticipé des balises Low-Latency (#EXT-X-PART, #EXT-X-PRELOAD-HINT, #EXT-X-TWITCH-PREFETCH), cache anti-écran noir de la dernière playlist propre, détection rapide des pubs CSAI sans rechargement inutile, soft reload en fin de pub (préservant le Picture-in-Picture) et récupération automatique en cas de crash du Worker IVS || Upgraded Adblock engine to VAFT v58 (Pie Adblock / TwitchAdSolutions v58): new Source-first backup priority (site, popout, mobile_web, embed, with 360p autoplay as last resort only) with clean backup pinning, instant in-memory BLANK_MP4 segment response, early Low-Latency ad hint stripping (#EXT-X-PART, #EXT-X-PRELOAD-HINT, #EXT-X-TWITCH-PREFETCH), anti-black-screen clean playlist cache, fast CSAI zero-reload handling, smooth post-ad soft reload (preserving Picture-in-Picture), and automatic IVS Worker crash recovery
+// - Nouvelle option « Afficher les mots censurés (***) » (Tchat & Filtres) : révèle automatiquement en clair les mots remplacés par des astérisques violets par le filtre du tchat Twitch || New "Show censored words (***)" option (Chat & Filters): automatically reveals words masked with purple asterisks by Twitch's client-side chat filter
+// - Suivi de discussion & @mentions façon BetterTTV : surlignage rouge des réponses reçues et @mentions, aperçu flottant du fil de discussion au survol et clic pour remonter au message parent avec bouton de retour en bas || BetterTTV-style Reply & @mention tracking: red highlight on incoming replies and @mentions, floating thread preview on hover, and click-to-jump to parent message with return-to-bottom pill
+// - Correctif des Émotes géantes (100 %) dans le tchat : recalage automatique du défilement en bas lors de l'agrandissement et du chargement des émotes HD 3x pour qu'elles ne soient plus jamais coupées sous la zone de saisie, et prise en compte des @mentions/liens dans la détection 100 % émotes || Fixed Giant Emotes (100%) in chat: automatic bottom scroll adjustment on emote expansion and 3x HD image load so emotes are never clipped under the chat input box, plus proper @mention/link detection
 // 1.11.7
 // - Blocage en amont des pubs sur le côté (SDA) façon uBlock Origin sans jamais relancer le lecteur : blocage réseau/script/iframe dès document-start des SDK publicitaires (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, vidéos m.media-amazon.com), neutralisation de la requête GraphQL FetchAdsService_FetchAds et retrait silencieux des balises HLS #EXT-X-DATERANGE twitch-maf-ad, combinés aux règles cosmétiques exactes d'uBlock Origin (EasyList + uAssets) gardant le lecteur à 100 % sans aucun appel à .play() ni rechargement || uBlock Origin-style upstream blocking of side-by-side ads (SDA) without ever restarting the player: document-start network/script/iframe blocking of ad SDKs (amazon-adsystem/apstag, Google IMA imasdk, edge.ads.twitch.tv, doubleclick, m.media-amazon.com videos), GraphQL FetchAdsService_FetchAds neutralization, and silent stripping of HLS #EXT-X-DATERANGE twitch-maf-ad tags, paired with exact uBlock Origin cosmetic rules keeping the player at 100% with zero .play() calls or reloads
 // - Menu d'Émotes & Émojis complet façon BetterTTV : ajout des émotes Twitch natives du streamer (followers, abonnés et verrouillées 🔒 avec avatar), des chaînes abonnées, des émotes Twitch débloquées (🔓), des 310+ émotes Twitch Global, de toutes les émotes 7TV/FFZ/BTTV sans limite, et du catalogue complet de 1 870 émojis standard en 8 catégories avec recherche et auto-complétion :shortcode: || Complete BetterTTV-style Emote & Emoji Picker: added streamer's native Twitch emotes (follower, sub, and locked 🔒 with avatar), subscribed channels, unlocked Twitch emotes (🔓), 310+ Twitch Global emotes, uncapped 7TV/FFZ/BTTV emotes, and the full 1,870 standard emoji catalog across 8 categories with :shortcode: search and autocomplete
@@ -66,7 +71,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.7';
+    var CURRENT_VERSION = '1.11.8';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -657,6 +662,14 @@
         'Double-clique sur un message pour insérer @pseudo dans la zone de saisie.': 'Double-click a message to insert @username into the chat input.',
         'Double-clic pour @répondre': 'Double-click to @reply',
         'Mentionne rapidement un utilisateur du tchat': 'Quickly mention a chat user',
+        'Suivi des réponses et @mentions': 'Reply & @mention thread tracking',
+        'Affiche l\'historique de l\'échange au survol d\'une réponse ou @mention et remonte au message parent d\'un clic.': 'Shows conversation history when hovering a reply or @mention and scrolls to the parent message on click.',
+        'Suivi de discussion (survol & clic réponses)': 'Thread tracking (hover & click replies)',
+        'Aperçu du fil au survol et clic pour remonter au message': 'Preview thread on hover and click to jump to parent message',
+        'Afficher les mots censurés (***)': 'Show censored words (***)',
+        'Révèle automatiquement les mots masqués par des astérisques violets par le filtre du tchat Twitch.': 'Automatically reveals words masked with purple asterisks by Twitch\'s client-side chat filter.',
+        'Démasque les *** violets du filtre de langage Twitch': 'Unmasks purple *** from Twitch\'s profanity filter',
+        'Mot démasqué (censuré par Twitch) : ': 'Uncensored word (filtered by Twitch): ',
         'Cacher les badges secondaires': 'Hide secondary badges',
         'Masque les badges Prime, Bits, Gifter et classements.': 'Hides Prime, Bits, Sub Gifter, and leaderboard badges.',
         'Cacher les badges encombrants': 'Hide cluttered badges',
@@ -666,6 +679,10 @@
         'Cacher les alertes système (Subs, Dons)': 'Hide system alerts (Subs, Gifts)',
         'Ne garde que les vrais messages des spectateurs': 'Keeps only actual viewer chat messages',
         'Mots-clés, Bots & Blacklist': 'Keywords, Bots & Blacklist',
+        'Surligner mes @mentions & réponses': 'Highlight my @mentions & replies',
+        'Surligne automatiquement en rouge tous les messages qui te répondent ou contiennent ton pseudo.': 'Automatically highlights in red any message replying to you or mentioning your username.',
+        'Surligner mes @mentions et réponses en rouge': 'Highlight my @mentions & replies in red',
+        'Met en rouge (façon BTTV) les messages qui te mentionnent ou te répondent': 'Highlights in red (BTTV-style) messages mentioning or replying to you',
         'Surligner les mots-clés': 'Highlight keywords',
         'Met en évidence les messages contenant tes mots-clés.': 'Highlights messages containing your custom keywords.',
         'Mots-clés surlignés (Highlight)': 'Highlighted keywords',
@@ -890,6 +907,9 @@
         hoverPause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
         historyUp: '<circle cx="12" cy="12" r="9"/><polyline points="8 12 12 8 16 12"/><line x1="12" y1="16" x2="12" y2="8"/>',
         atReply: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/>',
+        replyThread: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
+        mentionRed: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/><circle cx="19" cy="5" r="2.6" fill="#ff3b30" stroke="none"/>',
+        uncensorEye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
         badgeOff: '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/><line x1="2" y1="22" x2="22" y2="2"/>',
         bellOff: '<path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/>',
         highlightKw: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
@@ -1293,6 +1313,7 @@
             hideBots: false,
             hideChatNotices: false,
             showDeleted: true,
+            uncensorChat: true,
             readableColors: true,
             antiSpam: true,
             slowChat: false,
@@ -1300,7 +1321,9 @@
             hoverPause: true,
             upArrowHistory: true,
             dblClickReply: false,
+            replyThreadNav: true,
             hideBadges: false,
+            highlightMentions: true,
             highlightKeywords: true,
             blacklistKeywords: true,
             autoPoints: true,
@@ -1479,9 +1502,9 @@
             'colonAutocomplete', 'emoteHover', 'bigEmotes', 'splitChat',
             'chatOnLeft', 'reverseChat', 'anonChat', 'roleHighlights',
             'highlightSound', 'chatTimestamps', 'botBadges', 'hideBots',
-            'hideChatNotices', 'showDeleted', 'readableColors', 'antiSpam',
-            'slowChat', 'hoverPause', 'upArrowHistory', 'dblClickReply', 'hideBadges',
-            'highlightKeywords', 'blacklistKeywords', 'autoPoints', 'autoDrops',
+            'hideChatNotices', 'showDeleted', 'uncensorChat', 'readableColors', 'antiSpam',
+            'slowChat', 'hoverPause', 'upArrowHistory', 'dblClickReply', 'replyThreadNav', 'hideBadges',
+            'highlightMentions', 'highlightKeywords', 'blacklistKeywords', 'autoPoints', 'autoDrops',
             'antiRaid', 'closeBanners', 'sidebarPreview', 'autoExpandSidebar',
             'hideOfflineChannels', 'hideRecom'
         ].forEach(
@@ -1843,6 +1866,7 @@
                 hideBots: !!pageConfig.hideBots,
                 hideChatNotices: !!pageConfig.hideChatNotices,
                 showDeleted: pageConfig.showDeleted !== false,
+                uncensorChat: pageConfig.uncensorChat !== false,
                 readableColors: pageConfig.readableColors !== false,
                 antiSpam: pageConfig.antiSpam !== false,
                 slowChat: !!pageConfig.slowChat,
@@ -1850,7 +1874,9 @@
                 hoverPause: pageConfig.hoverPause !== false,
                 upArrowHistory: pageConfig.upArrowHistory !== false,
                 dblClickReply: !!pageConfig.dblClickReply,
+                replyThreadNav: pageConfig.replyThreadNav !== false,
                 hideBadges: !!pageConfig.hideBadges,
+                highlightMentions: pageConfig.highlightMentions !== false,
                 highlightKeywords: pageConfig.highlightKeywords !== false,
                 blacklistKeywords: pageConfig.blacklistKeywords !== false,
                 autoPoints: pageConfig.autoPoints !== false,
@@ -7319,6 +7345,19 @@
                                     </span>
                                 </label>
                                 <label class="tp9-toggle-row"
+                                    data-tp9-tip="Afficher les mots censurés (***)"
+                                    data-tp9-tip-sub="Révèle automatiquement les mots masqués par des astérisques violets par le filtre du tchat Twitch.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.uncensorEye)}
+                                        <span>Afficher les mots censurés (***)</span>
+                                        <span class="tp9-toggle-sub">Démasque les *** violets du filtre de langage Twitch</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-uncensor-chat">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+                                <label class="tp9-toggle-row"
                                     data-tp9-tip="Couleurs de pseudos lisibles"
                                     data-tp9-tip-sub="Éclaircit automatiquement les pseudos trop sombres sur fond noir.">
                                     <span class="tp9-toggle-label">
@@ -7405,6 +7444,19 @@
                                     </span>
                                 </label>
                                 <label class="tp9-toggle-row"
+                                    data-tp9-tip="Suivi des réponses et @mentions"
+                                    data-tp9-tip-sub="Affiche l'historique de l'échange au survol d'une réponse ou @mention et remonte au message parent d'un clic.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.replyThread)}
+                                        <span>Suivi de discussion (survol & clic réponses)</span>
+                                        <span class="tp9-toggle-sub">Aperçu du fil au survol et clic pour remonter au message</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-reply-nav">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+                                <label class="tp9-toggle-row"
                                     data-tp9-tip="Cacher les badges secondaires"
                                     data-tp9-tip-sub="Masque les badges Prime, Bits, Gifter et classements.">
                                     <span class="tp9-toggle-label">
@@ -7436,6 +7488,19 @@
                                 <div class="tp9-bento-head">
                                     <span>Mots-clés, Bots & Blacklist</span>
                                 </div>
+                                <label class="tp9-toggle-row"
+                                    data-tp9-tip="Surligner mes @mentions & réponses"
+                                    data-tp9-tip-sub="Surligne automatiquement en rouge tous les messages qui te répondent ou contiennent ton pseudo.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.mentionRed)}
+                                        <span>Surligner mes @mentions et réponses en rouge</span>
+                                        <span class="tp9-toggle-sub">Met en rouge (façon BTTV) les messages qui te mentionnent ou te répondent</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-hl-mentions">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
                                 <div class="tp9-toggle-row"
                                     data-tp9-tip="Surligner les mots-clés"
                                     data-tp9-tip-sub="Met en évidence les messages contenant tes mots-clés.">
@@ -7989,14 +8054,17 @@
             ['.tp9-role-hl', 'roleHighlights'],
             ['.tp9-chat-ts', 'chatTimestamps'],
             ['.tp9-show-deleted', 'showDeleted'],
+            ['.tp9-uncensor-chat', 'uncensorChat'],
             ['.tp9-readable-colors', 'readableColors'],
             ['.tp9-anti-spam', 'antiSpam'],
             ['.tp9-slow-chat', 'slowChat'],
             ['.tp9-hover-pause', 'hoverPause'],
             ['.tp9-up-arrow', 'upArrowHistory'],
             ['.tp9-dblclick-reply', 'dblClickReply'],
+            ['.tp9-reply-nav', 'replyThreadNav'],
             ['.tp9-hide-badges', 'hideBadges'],
             ['.tp9-hide-notices', 'hideChatNotices'],
+            ['.tp9-hl-mentions', 'highlightMentions'],
             ['.tp9-highlight-kw', 'highlightKeywords'],
             ['.tp9-hl-sound', 'highlightSound'],
             ['.tp9-bot-badges', 'botBadges'],
@@ -9276,14 +9344,17 @@
             ['.tp9-role-hl', pageConfig.roleHighlights !== false],
             ['.tp9-chat-ts', !!pageConfig.chatTimestamps],
             ['.tp9-show-deleted', pageConfig.showDeleted !== false],
+            ['.tp9-uncensor-chat', pageConfig.uncensorChat !== false],
             ['.tp9-readable-colors', pageConfig.readableColors !== false],
             ['.tp9-anti-spam', pageConfig.antiSpam !== false],
             ['.tp9-slow-chat', !!pageConfig.slowChat],
             ['.tp9-hover-pause', pageConfig.hoverPause !== false],
             ['.tp9-up-arrow', pageConfig.upArrowHistory !== false],
             ['.tp9-dblclick-reply', !!pageConfig.dblClickReply],
+            ['.tp9-reply-nav', pageConfig.replyThreadNav !== false],
             ['.tp9-hide-badges', !!pageConfig.hideBadges],
             ['.tp9-hide-notices', !!pageConfig.hideChatNotices],
+            ['.tp9-hl-mentions', pageConfig.highlightMentions !== false],
             ['.tp9-highlight-kw', pageConfig.highlightKeywords !== false],
             ['.tp9-hl-sound', !!pageConfig.highlightSound],
             ['.tp9-bot-badges', pageConfig.botBadges !== false],
@@ -14970,10 +15041,17 @@ function showAddProxyForm() {
                 'tp9-bttv-big-emotes', 'tp9-bttv-hide-badges', 'tp9-bttv-hide-notices',
                 'tp9-bttv-hide-offline', 'tp9-bttv-hide-recom', 'tp9-bttv-close-banners',
                 'tp9-bttv-role-hl', 'tp9-bttv-chat-ts', 'tp9-bttv-bot-badges',
-                'tp9-bttv-hide-bots', 'tp9-bttv-hl-kw'
+                'tp9-bttv-hide-bots', 'tp9-bttv-hl-kw', 'tp9-bttv-hl-mentions',
+                'tp9-bttv-reply-nav', 'tp9-bttv-uncensor'
             ].forEach(function (cls) {
                 document.body.classList.remove(cls);
             });
+            if (typeof syncUncensoredChatDomState === 'function') {
+                syncUncensoredChatDomState();
+            }
+            if (typeof clearReplyThreadHover === 'function') {
+                clearReplyThreadHover(true);
+            }
             syncChatOnLeftLayout();
             if (typeof releaseChatHoverPause === 'function') {
                 releaseChatHoverPause(true);
@@ -15008,6 +15086,15 @@ function showAddProxyForm() {
         document.body.classList.toggle('tp9-bttv-bot-badges', pageConfig.botBadges !== false);
         document.body.classList.toggle('tp9-bttv-hide-bots', !!pageConfig.hideBots);
         document.body.classList.toggle('tp9-bttv-hl-kw', pageConfig.highlightKeywords !== false);
+        document.body.classList.toggle('tp9-bttv-hl-mentions', pageConfig.highlightMentions !== false);
+        document.body.classList.toggle('tp9-bttv-reply-nav', pageConfig.replyThreadNav !== false);
+        document.body.classList.toggle('tp9-bttv-uncensor', pageConfig.uncensorChat !== false);
+        if (typeof syncUncensoredChatDomState === 'function') {
+            syncUncensoredChatDomState();
+        }
+        if (pageConfig.replyThreadNav === false && typeof clearReplyThreadHover === 'function') {
+            clearReplyThreadHover(true);
+        }
         document.body.style.setProperty('--tp9-split-color', pageConfig.splitChatColor || '#9147ff');
         document.body.style.setProperty('--tp9-hl-color', pageConfig.highlightColor || '#9147ff');
         syncChatOnLeftLayout();
@@ -15558,6 +15645,14 @@ function showAddProxyForm() {
                             mutedAny = true;
                         }
                     }
+                }
+            }
+            var returnBtns = playerRoot.querySelectorAll('button[aria-label="Return to stream"]');
+            for (var bIdx = 0; bIdx < returnBtns.length; bIdx++) {
+                var rBtn = returnBtns[bIdx];
+                if (rBtn && (!rBtn.dataset || !rBtn.dataset.tp9AutoClicked)) {
+                    if (rBtn.dataset) rBtn.dataset.tp9AutoClicked = '1';
+                    try { rBtn.click(); } catch (eClick) {}
                 }
             }
         } catch (e) {} finally {
@@ -26062,6 +26157,16 @@ dashboardButton.style.visibility = 'hidden';
                 pointer-events: none;
                 z-index: 2;
             }
+            body.tp9-bttv-big-emotes .tp9-msg-only-emotes {
+                padding-top: 4px !important;
+                padding-bottom: 4px !important;
+                line-height: 1.25 !important;
+            }
+            body.tp9-bttv-big-emotes .tp9-msg-only-emotes [data-a-target="chat-line-message-body"] {
+                line-height: 1.25 !important;
+                display: inline-block;
+                vertical-align: middle;
+            }
             body.tp9-bttv-big-emotes .tp9-msg-only-emotes .chat-image__container,
             body.tp9-bttv-big-emotes .tp9-msg-only-emotes .chat-line__message--emote-button,
             body.tp9-bttv-big-emotes .tp9-msg-only-emotes [data-test-selector="emote-button"],
@@ -26121,6 +26226,246 @@ dashboardButton.style.visibility = 'hidden';
                 background: rgba(0, 212, 255, 0.08) !important;
                 padding-left: 5px !important;
                 border-radius: 3px;
+            }
+            /* Surlignage en rouge (façon BetterTTV) des @mentions et réponses reçues */
+            body.tp9-bttv-hl-mentions .chat-line__message.tp9-msg-mention-me,
+            body.tp9-bttv-hl-mentions [data-a-target="chat-line-message"].tp9-msg-mention-me,
+            body.tp9-bttv-hl-mentions .tp9-msg-mention-me {
+                background: rgba(233, 25, 22, 0.24) !important;
+                border-left: 3px solid #ff3b30 !important;
+                padding-left: 6px !important;
+                border-radius: 4px;
+            }
+            body.tp9-bttv-hl-mentions .tp9-msg-mention-me .tp9-self-mention-token,
+            body.tp9-bttv-hl-mentions .tp9-msg-mention-me .chat-line__message-mention--me,
+            body.tp9-bttv-hl-mentions .tp9-msg-mention-me .mention-fragment--recipient {
+                background: rgba(255, 59, 48, 0.34) !important;
+                color: #ffd7d5 !important;
+                padding: 0 4px !important;
+                border-radius: 3px !important;
+                font-weight: 700 !important;
+            }
+            /* Démasquage des mots censurés côté client par Twitch (***) */
+            body.tp9-bttv-uncensor .tp9-uncensored-word {
+                color: inherit !important;
+                background: rgba(169, 112, 255, 0.12) !important;
+                border: none !important;
+                border-radius: 3px !important;
+                padding: 0 2px !important;
+                font: inherit !important;
+                text-decoration: underline dotted rgba(169, 112, 255, 0.7) !important;
+                text-underline-offset: 2px !important;
+                cursor: text !important;
+            }
+            body:not(.tp9-bttv-uncensor) span.tp9-uncensored-word:not(.tp9-uncensored-native-wrap) {
+                color: #bf94ff;
+                text-decoration: none;
+            }
+            /* Suivi de discussion : survol & clic sur réponses et @mentions */
+            body.tp9-bttv-reply-nav .tp9-reply-header-nav {
+                cursor: pointer !important;
+                border-radius: 4px;
+                transition: background-color 0.12s ease, color 0.12s ease;
+            }
+            body.tp9-bttv-reply-nav .tp9-reply-header-nav:hover {
+                background-color: rgba(169, 112, 255, 0.20) !important;
+                color: #efeff1 !important;
+            }
+            body.tp9-bttv-reply-nav .tp9-reply-header-nav:hover p,
+            body.tp9-bttv-reply-nav .tp9-reply-header-nav:hover span {
+                color: #efeff1 !important;
+                text-decoration: underline;
+            }
+            body.tp9-bttv-reply-nav .chat-line__message .chat-line__message-mention,
+            body.tp9-bttv-reply-nav .chat-line__message .mention-fragment,
+            body.tp9-bttv-reply-nav .chat-line__message [data-a-target="chat-message-mention"],
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] .chat-line__message-mention,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] .mention-fragment,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] [data-a-target="chat-message-mention"] {
+                cursor: pointer !important;
+                border-radius: 3px;
+                transition: background-color 0.12s ease;
+            }
+            body.tp9-bttv-reply-nav .chat-line__message .chat-line__message-mention:hover,
+            body.tp9-bttv-reply-nav .chat-line__message .mention-fragment:hover,
+            body.tp9-bttv-reply-nav .chat-line__message [data-a-target="chat-message-mention"]:hover,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] .chat-line__message-mention:hover,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] .mention-fragment:hover,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"] [data-a-target="chat-message-mention"]:hover {
+                background-color: rgba(169, 112, 255, 0.28) !important;
+                text-decoration: underline;
+            }
+            body.tp9-bttv-reply-nav .chat-line__message.tp9-msg-thread-peer,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"].tp9-msg-thread-peer,
+            body.tp9-bttv-reply-nav .tp9-msg-thread-peer {
+                background: rgba(145, 71, 255, 0.20) !important;
+                box-shadow: inset 3px 0 0 #a970ff !important;
+                border-radius: 4px;
+            }
+            body.tp9-bttv-reply-nav .chat-line__message.tp9-msg-thread-parent-peer,
+            body.tp9-bttv-reply-nav [data-a-target="chat-line-message"].tp9-msg-thread-parent-peer,
+            body.tp9-bttv-reply-nav .tp9-msg-thread-parent-peer {
+                background: rgba(255, 159, 10, 0.24) !important;
+                box-shadow: inset 3px 0 0 #ff9f0a !important;
+                border-radius: 4px;
+            }
+            @keyframes tp9ReplyJumpFlash {
+                0% {
+                    background-color: rgba(255, 69, 58, 0.52);
+                    box-shadow: inset 4px 0 0 #ff453a, 0 0 0 1px rgba(255, 69, 58, 0.65);
+                }
+                35% {
+                    background-color: rgba(255, 69, 58, 0.36);
+                    box-shadow: inset 4px 0 0 #ff453a, 0 0 0 1px rgba(255, 69, 58, 0.42);
+                }
+                100% {
+                    background-color: rgba(255, 69, 58, 0);
+                    box-shadow: inset 0 0 0 transparent;
+                }
+            }
+            .chat-line__message.tp9-msg-jump-flash,
+            [data-a-target="chat-line-message"].tp9-msg-jump-flash,
+            .tp9-msg-jump-flash {
+                animation: tp9ReplyJumpFlash 2.4s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+                border-radius: 4px !important;
+            }
+            #tp9-reply-thread-card {
+                position: fixed;
+                z-index: 2147483645;
+                width: 325px;
+                max-width: calc(100vw - 20px);
+                background: rgba(18, 18, 23, 0.97);
+                border: 1px solid rgba(169, 112, 255, 0.40);
+                border-radius: 10px;
+                box-shadow: 0 14px 36px rgba(0, 0, 0, 0.72);
+                padding: 9px 11px;
+                color: #efeff1;
+                font-family: Inter, Roobert, "Helvetica Neue", Arial, sans-serif;
+                font-size: 12.5px;
+                line-height: 1.42;
+                pointer-events: none;
+                display: none;
+                backdrop-filter: blur(10px);
+            }
+            #tp9-reply-thread-card .tp9-rtc-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 7px;
+                padding-bottom: 5px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            #tp9-reply-thread-card .tp9-rtc-title {
+                font-size: 11.5px;
+                font-weight: 700;
+                color: #d3b8ff;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #tp9-reply-thread-card .tp9-rtc-hint {
+                font-size: 10.5px;
+                font-weight: 600;
+                color: #adadb8;
+                background: rgba(255, 255, 255, 0.07);
+                padding: 1px 6px;
+                border-radius: 999px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            #tp9-reply-thread-card .tp9-rtc-list {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                max-height: 280px;
+                overflow: hidden;
+            }
+            #tp9-reply-thread-card .tp9-rtc-item {
+                padding: 5px 7px;
+                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.04);
+                border-left: 2.5px solid rgba(255, 255, 255, 0.18);
+                word-break: break-word;
+            }
+            #tp9-reply-thread-card .tp9-rtc-item--parent {
+                background: rgba(255, 159, 10, 0.14);
+                border-left-color: #ff9f0a;
+            }
+            #tp9-reply-thread-card .tp9-rtc-item--current {
+                background: rgba(145, 71, 255, 0.17);
+                border-left-color: #a970ff;
+            }
+            #tp9-reply-thread-card .tp9-rtc-item--me {
+                background: rgba(233, 25, 22, 0.22);
+                border-left-color: #ff3b30;
+            }
+            #tp9-reply-thread-card .tp9-rtc-ts {
+                color: #898996;
+                font-size: 10.5px;
+                font-variant-numeric: tabular-nums;
+                margin-right: 5px;
+            }
+            #tp9-reply-thread-card .tp9-rtc-author {
+                font-weight: 700;
+                margin-right: 4px;
+            }
+            #tp9-reply-thread-card .tp9-rtc-body img {
+                height: 20px;
+                width: auto;
+                vertical-align: middle;
+                margin: -2px 2px;
+                object-fit: contain;
+            }
+            #tp9-reply-thread-card .tp9-rtc-foot {
+                margin-top: 6px;
+                font-size: 10.5px;
+                color: #adadb8;
+                font-style: italic;
+            }
+            #tp9-chat-jump-back {
+                position: fixed;
+                z-index: 2147483640;
+                display: none;
+                align-items: center;
+                gap: 5px;
+                background: rgba(20, 20, 26, 0.96);
+                border: 1px solid rgba(169, 112, 255, 0.48);
+                border-radius: 999px;
+                padding: 4px 8px;
+                box-shadow: 0 8px 22px rgba(0, 0, 0, 0.65);
+                font-family: Inter, Roobert, "Helvetica Neue", Arial, sans-serif;
+                font-size: 11.5px;
+                color: #efeff1;
+                backdrop-filter: blur(8px);
+            }
+            #tp9-chat-jump-back .tp9-jb-btn {
+                border: none;
+                background: rgba(145, 71, 255, 0.24);
+                color: #efeff1;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 3px 8px;
+                border-radius: 999px;
+                cursor: pointer;
+                transition: background-color 0.12s ease;
+            }
+            #tp9-chat-jump-back .tp9-jb-btn:hover {
+                background: rgba(145, 71, 255, 0.48);
+            }
+            #tp9-chat-jump-back .tp9-jb-close {
+                border: none;
+                background: transparent;
+                color: #adadb8;
+                font-size: 13px;
+                line-height: 1;
+                padding: 2px 4px;
+                cursor: pointer;
+                border-radius: 50%;
+            }
+            #tp9-chat-jump-back .tp9-jb-close:hover {
+                color: #fff;
+                background: rgba(255, 255, 255, 0.1);
             }
             .tp9-bot-badge {
                 display: none;
@@ -35903,23 +36248,63 @@ dashboardButton.style.visibility = 'hidden';
 
         lines.push(`
             // ----------------------------------------------------------
-            // BLOQUEUR DE PUB SANS PROXY
+            // BLOQUEUR DE PUB SANS PROXY (VAFT v58)
             // ----------------------------------------------------------
             // Proxys coupés : on reste sur la session Twitch de
             // l'utilisateur (donc sa qualité, 2K/4K compris). Quand une
             // pub est collée dans la liste de segments, on redemande la
-            // chaîne à Twitch comme un autre lecteur (intégré, popout,
-            // autoplay) qui n'en a souvent pas, et on sert sa liste le
-            // temps de la coupure. À défaut, les segments de pub sont
-            // remplacés par une vidéo vide. Méthode reprise de
-            // TwitchAdSolutions (vaft), réécrite ici.
+            // chaîne à Twitch comme un autre lecteur Source (site, popout,
+            // mobile_web, embed ; autoplay 360p en dernier recours) qui
+            // n'en a souvent pas, en mémorisant le lecteur propre trouvé
+            // (pinnedBackupType). À défaut, les segments de pub (et indices
+            // LL-HLS #EXT-X-PART / PRELOAD-HINT / PREFETCH) sont neutralisés
+            // et remplacés par un segment MP4 vide en mémoire ou par la
+            // réserve des derniers segments live. Basé sur TwitchAdSolutions
+            // vaft v58 (Pie Adblock / pixeltris).
             var __sp_NL = String.fromCharCode(10);
             var __sp_CR = String.fromCharCode(13);
-            var __sp_MARK = "stitched";
-            var __sp_TYPES = ["embed", "popout", "autoplay"];
-            var __sp_FALLBACK = "embed";
+            // Note : twitch-maf-ad (pub latérale SDA) est volontairement exclu
+            // de __sp_SIGNIFIERS et retiré silencieusement à part afin de ne
+            // jamais déclencher de relance ni de bascule du lecteur principal.
+            var __sp_SIGNIFIERS = ["stitched-ad", "EXT-X-CUE-OUT", "twitch-stitched"];
+            var __sp_AD_URL_PATTERNS = ["/adsquared/", "/_404/", "/processing"];
+            var __sp_AD_URL_REWRITE_RE = /(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g;
+            var __sp_URI_ATTR_RE = /URI="([^"]+)"/;
+            var __sp_TYPES = ["site", "popout", "mobile_web", "embed"];
+            var __sp_FALLBACK = "site";
+            var __sp_LOW_QUALITY_BACKUP = true;
+            var __sp_PIN_BACKUP = true;
+            var __sp_EARLY_RELOAD_POLLS = 5;
             var __sp_TOKEN_HASH = "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9";
-            var __sp_BLANK = "data:video/mp4;base64,AAAAKGZ0eXBtcDQyAAAAAWlzb21tcDQyZGFzaGF2YzFpc282aGxzZgAABEltb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAYagAAAAAAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAABqHRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAURtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAALuAAAAAAFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAADvbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAACzc3RibAAAAGdzdHNkAAAAAAAAAAEAAABXbXA0YQAAAAAAAAABAAAAAAAAAAAAAgAQAAAAALuAAAAAAAAzZXNkcwAAAAADgICAIgABAASAgIAUQBUAAAAAAAAAAAAAAAWAgIACEZAGgICAAQIAAAAQc3R0cwAAAAAAAAAAAAAAEHN0c2MAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAeV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAoAAAAFoAAAAAAGBbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAA9CQAAAAABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABLG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAOxzdGJsAAAAoHN0c2QAAAAAAAAAAQAAAJBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAoABaABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAOmF2Y0MBTUAe/+EAI2dNQB6WUoFAX/LgLUBAQFAAAD6AAA6mDgAAHoQAA9CW7y4KAQAEaOuPIAAAABBzdHRzAAAAAAAAAAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAASG12ZXgAAAAgdHJleAAAAAAAAAABAAAAAQAAAC4AAAAAAoAAAAAAACB0cmV4AAAAAAAAAAIAAAABAACCNQAAAAACQAAA";
+            var __sp_BLANK_B64 = "AAAAKGZ0eXBtcDQyAAAAAWlzb21tcDQyZGFzaGF2YzFpc282aGxzZgAABEltb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAYagAAAAAAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAABqHRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAURtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAALuAAAAAAFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAADvbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAACzc3RibAAAAGdzdHNkAAAAAAAAAAEAAABXbXA0YQAAAAAAAAABAAAAAAAAAAAAAgAQAAAAALuAAAAAAAAzZXNkcwAAAAADgICAIgABAASAgIAUQBUAAAAAAAAAAAAAAAWAgIACEZAGgICAAQIAAAAQc3R0cwAAAAAAAAAAAAAAEHN0c2MAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAeV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAoAAAAFoAAAAAAGBbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAA9CQAAAAABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABLG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAOxzdGJsAAAAoHN0c2QAAAAAAAAAAQAAAJBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAoABaABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAOmF2Y0MBTUAe/+EAI2dNQB6WUoFAX/LgLUBAQFAAAD6AAA6mDgAAHoQAA9CW7y4KAQAEaOuPIAAAABBzdHRzAAAAAAAAAAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAASG12ZXgAAAAgdHJleAAAAAAAAAABAAAAAQAAAC4AAAAAAoAAAAAAACB0cmV4AAAAAAAAAAIAAAABAACCNQAAAAACQAAA";
+            var __sp_BLANK = "data:video/mp4;base64," + __sp_BLANK_B64;
+            var __sp_BLANK_BLOB = null;
+            try {
+                var __sp_rawBin = self.atob(__sp_BLANK_B64);
+                var __sp_rawArr = new Uint8Array(__sp_rawBin.length);
+                for (var __sp_bi = 0; __sp_bi < __sp_rawBin.length; __sp_bi++) {
+                    __sp_rawArr[__sp_bi] = __sp_rawBin.charCodeAt(__sp_bi);
+                }
+                __sp_BLANK_BLOB = new Blob([__sp_rawArr], { type: "video/mp4" });
+            } catch(e) {}
+            function __sp_hasAdTags(text){
+                if (!text) return false;
+                for (var s = 0; s < __sp_SIGNIFIERS.length; s++) {
+                    if (text.indexOf(__sp_SIGNIFIERS[s]) >= 0) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            function __sp_hasAdUrlPattern(url){
+                if (!url) return false;
+                for (var p = 0; p < __sp_AD_URL_PATTERNS.length; p++) {
+                    if (url.indexOf(__sp_AD_URL_PATTERNS[p]) >= 0) {
+                        return true;
+                    }
+                }
+                return false;
+            }
             var __sp_streams = {};
             var __sp_byUrl = {};
             var __sp_adSegs = {};
@@ -36011,12 +36396,13 @@ dashboardButton.style.visibility = 'hidden';
             function __sp_warmBackups(info){
                 if (!info || info.backupWarming) return;
                 info.backupWarming = true;
+                var warmType = info.activePlayerType === "site" ? "popout" : "site";
                 setTimeout(function(){
-                    if (!__sp_streams[info.channel] || info.backupCache["embed"]) return;
-                    __sp_token(info.channel, "embed").then(function(tokenResponse){
+                    if (!__sp_streams[info.channel] || info.backupCache[warmType]) return;
+                    __sp_token(info.channel, warmType).then(function(tokenResponse){
                         if (!tokenResponse || tokenResponse.status !== 200) return;
                         var data = JSON.parse(tokenResponse.body);
-                        var token = data && data.data && data.data.streamPlaybackAccessToken;
+                        var token = (data && data.data && data.data.streamPlaybackAccessToken) || (data && data.streamPlaybackAccessToken);
                         if (!token) return;
                         var usher = new URL(
                             "https://usher.ttvnw.net/api/" + (info.v2 ? "v2/" : "") +
@@ -36028,7 +36414,7 @@ dashboardButton.style.visibility = 'hidden';
                             if (usherResponse && usherResponse.status === 200) {
                                 return usherResponse.text().then(function(masterText){
                                     if (masterText && masterText.indexOf("#EXT-X-STREAM-INF") >= 0) {
-                                        info.backupCache["embed"] = masterText;
+                                        info.backupCache[warmType] = masterText;
                                     }
                                 });
                             }
@@ -36183,7 +36569,7 @@ dashboardButton.style.visibility = 'hidden';
                             var mediaResponse = mediaURL ? await __tp_originalFetch(mediaURL) : null;
                             if (mediaResponse && mediaResponse.status === 200) {
                                 var list = await mediaResponse.text();
-                                if (list && list.indexOf(__sp_MARK) < 0) {
+                                if (list && !__sp_hasAdTags(list)) {
                                     return {
                                         text: list,
                                         type: "proxy",
@@ -36303,21 +36689,42 @@ dashboardButton.style.visibility = 'hidden';
                     list: [],
                     backupCache: {},
                     backupType: null,
+                    pinnedBackupType: null,
+                    lastCommittedBackupType: null,
+                    failedBackupTypes: {},
+                    activePlayerType: null,
                     inAd: false,
                     adStart: 0,
                     midroll: false,
                     stripping: false,
                     stripped: 0,
+                    everStrippedInBreak: false,
                     blankLogged: false,
-                    lastReload: Date.now(),
+                    lastSeenAt: Date.now(),
+                    lastReload: 0,
+                    lastCleanM3u8: null,
+                    lastCleanAt: 0,
+                    recoverySegments: [],
+                    recoveryStartSeq: undefined,
+                    consecutiveAllStripped: 0,
+                    totalAllStripped: 0,
+                    podLength: 1,
+                    earlyReloadCount: 0,
+                    earlyReloadTriggered: false,
+                    earlyReloadAwaiting: false,
+                    cycleRescued: false,
+                    lastCachePruneAt: 0,
                     requestedAds: {},
                     proxyCache: {},
                     proxyPending: {}
                 };
                 for (var i = 0; i < lines.length - 1; i++) {
+                    var nextVariant = lines[i + 1] ? lines[i + 1].trim() : "";
                     if (
                         lines[i].indexOf("#EXT-X-STREAM-INF") === 0 &&
-                        lines[i + 1].indexOf(".m3u8") >= 0
+                        nextVariant &&
+                        nextVariant.charAt(0) !== "#" &&
+                        (nextVariant.indexOf(".m3u8") >= 0 || nextVariant.indexOf("://") >= 0)
                     ) {
                         var a = __sp_attrs(lines[i]);
                         if (a.RESOLUTION) {
@@ -36325,12 +36732,12 @@ dashboardButton.style.visibility = 'hidden';
                                 resolution: a.RESOLUTION,
                                 fps: a["FRAME-RATE"],
                                 codecs: a.CODECS || "",
-                                url: lines[i + 1].trim()
+                                url: nextVariant
                             };
                             info.urls[item.url] = item;
                             info.list.push(item);
                         }
-                        __sp_byUrl[lines[i + 1].trim()] = info;
+                        __sp_byUrl[nextVariant] = info;
                     }
                 }
                 // Les lecteurs de secours n'ont pas de HEVC (2K/4K) :
@@ -36415,6 +36822,7 @@ dashboardButton.style.visibility = 'hidden';
                         // on évite un aller-retour réseau supplémentaire de 250–400 ms
                         // pendant setSrc.
                         var recentlyActive = (
+                            (info.lastSeenAt && (Date.now() - info.lastSeenAt) < 45000) ||
                             (info.lastReload && (Date.now() - info.lastReload) < 45000) ||
                             (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000)
                         );
@@ -36431,10 +36839,18 @@ dashboardButton.style.visibility = 'hidden';
                         }
                     }
                     if (!info) {
+                        __sp_reloaded = false;
                         info = __sp_readMaster(channel, text, url);
                         __sp_streams[channel] = info;
                     }
-                    info.lastReload = Date.now();
+                    info.lastSeenAt = Date.now();
+                    if (playerType) {
+                        info.activePlayerType = playerType;
+                    }
+                    if (__sp_reloaded) {
+                        __sp_reloaded = false;
+                        info.lastReload = Date.now();
+                    }
                     if (__sp_proxyAds()) {
                         __sp_warmProxies(info);
                     }
@@ -36517,7 +36933,8 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 });
             }
-            // Le rendu du secours le plus proche de celui qu'on regarde.
+            // Le rendu du secours le plus proche de celui qu'on regarde
+            // (compatible variantes Usher v1 en .m3u8 et Usher v2 en URL CDN brute).
             function __sp_pickRendition(master, current){
                 var lines = __sp_lines(master);
                 var target = __sp_area(current.resolution);
@@ -36526,9 +36943,12 @@ dashboardButton.style.visibility = 'hidden';
                 var closest = null;
                 var closestGap = Infinity;
                 for (var i = 0; i < lines.length - 1; i++) {
+                    var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                     if (
                         lines[i].indexOf("#EXT-X-STREAM-INF") !== 0 ||
-                        lines[i + 1].indexOf(".m3u8") < 0
+                        !nextLine ||
+                        nextLine.charAt(0) === "#" ||
+                        (nextLine.indexOf(".m3u8") < 0 && nextLine.indexOf("://") < 0)
                     ) {
                         continue;
                     }
@@ -36540,7 +36960,7 @@ dashboardButton.style.visibility = 'hidden';
                         a.RESOLUTION === current.resolution &&
                         (!matched || (!matchedFps && a["FRAME-RATE"] === current.fps))
                     ) {
-                        matched = lines[i + 1].trim();
+                        matched = nextLine;
                         matchedFps = a["FRAME-RATE"] === current.fps;
                         if (matchedFps) {
                             return matched;
@@ -36548,7 +36968,7 @@ dashboardButton.style.visibility = 'hidden';
                     }
                     var gap = Math.abs(__sp_area(a.RESOLUTION) - target);
                     if (gap < closestGap) {
-                        closest = lines[i + 1].trim();
+                        closest = nextLine;
                         closestGap = gap;
                     }
                 }
@@ -36578,10 +36998,9 @@ dashboardButton.style.visibility = 'hidden';
                 var fallbackLabel = "";
                 var start = 0;
                 var minimal = false;
-                // Juste après une relance, le lecteur fait déjà beaucoup
-                // de requêtes : on va droit au plus léger (autoplay).
-                if (info.lastReload > Date.now() - 1500) {
-                    start = 2;
+                // Juste après une vraie relance du lecteur, on limite le nombre
+                // d'allers-retours réseau pour répondre immédiatement.
+                if (info.lastReload > 0 && info.lastReload > Date.now() - 1500) {
                     minimal = true;
                 }
                 if (__sp_proxyAds()) {
@@ -36590,8 +37009,25 @@ dashboardButton.style.visibility = 'hidden';
                         return viaProxy;
                     }
                 }
-                for (var t = start; !found && t < __sp_TYPES.length; t++) {
-                    var type = __sp_TYPES[t];
+                var typesToTry = __sp_LOW_QUALITY_BACKUP
+                    ? __sp_TYPES.concat(["autoplay"])
+                    : __sp_TYPES.slice();
+                if (__sp_PIN_BACKUP && info.pinnedBackupType && info.pinnedBackupType !== "autoplay") {
+                    var pinIdx = typesToTry.indexOf(info.pinnedBackupType);
+                    if (pinIdx > 0) {
+                        typesToTry.splice(pinIdx, 1);
+                        typesToTry.unshift(info.pinnedBackupType);
+                    }
+                }
+                if (minimal && !info.backupCache[typesToTry[0]]) {
+                    start = Math.min(2, typesToTry.length - 1);
+                }
+                for (var t = start; !found && t < typesToTry.length; t++) {
+                    var type = typesToTry[t];
+                    var failedAt = info.failedBackupTypes && info.failedBackupTypes[type];
+                    if (failedAt && (Date.now() - failedAt) < 15000) {
+                        continue;
+                    }
                     for (var pass = 0; pass < 2; pass++) {
                         var fresh = false;
                         var master = info.backupCache[type];
@@ -36599,9 +37035,10 @@ dashboardButton.style.visibility = 'hidden';
                             fresh = true;
                             try {
                                 var tokenResponse = await __sp_token(info.channel, type);
-                                if (tokenResponse.status === 200) {
+                                if (tokenResponse && tokenResponse.status === 200) {
                                     var data = JSON.parse(tokenResponse.body);
-                                    var token = data && data.data && data.data.streamPlaybackAccessToken;
+                                    var token = (data && data.data && data.data.streamPlaybackAccessToken) ||
+                                        (data && data.streamPlaybackAccessToken);
                                     if (token) {
                                         var usher = new URL(
                                             "https://usher.ttvnw.net/api/" + (info.v2 ? "v2/" : "") +
@@ -36610,13 +37047,24 @@ dashboardButton.style.visibility = 'hidden';
                                         usher.searchParams.set("sig", token.signature);
                                         usher.searchParams.set("token", token.value);
                                         var usherResponse = await __tp_originalFetch(usher.href);
-                                        if (usherResponse.status === 200) {
+                                        if (usherResponse && usherResponse.status === 200) {
                                             master = info.backupCache[type] = await usherResponse.text();
                                         }
+                                    } else {
+                                        if (!info.failedBackupTypes) info.failedBackupTypes = {};
+                                        info.failedBackupTypes[type] = Date.now();
+                                        break;
                                     }
+                                } else {
+                                    if (!info.failedBackupTypes) info.failedBackupTypes = {};
+                                    info.failedBackupTypes[type] = Date.now();
+                                    break;
                                 }
                             } catch(e) {
+                                if (!info.failedBackupTypes) info.failedBackupTypes = {};
+                                info.failedBackupTypes[type] = Date.now();
                                 console.warn("[TwitchProxy] Bloqueur sans proxy : jeton " + type + " refusé", e);
+                                break;
                             }
                         }
                         if (master) {
@@ -36627,14 +37075,28 @@ dashboardButton.style.visibility = 'hidden';
                                     var list = await mediaResponse.text();
                                     if (list) {
                                         var listLabel = __sp_renditionLabel(master, mediaURL);
+                                        var listHasAds = __sp_hasAdTags(list);
                                         if (type === __sp_FALLBACK) {
                                             fallback = list;
                                             fallbackLabel = listLabel;
                                         }
+                                        if (!listHasAds) {
+                                            if (
+                                                (info.consecutiveAllStripped || 0) >= 1 &&
+                                                info.lastCommittedBackupType &&
+                                                info.lastCommittedBackupType !== type
+                                            ) {
+                                                info.cycleRescued = true;
+                                            }
+                                            found = list;
+                                            foundType = type;
+                                            foundLabel = listLabel;
+                                            break;
+                                        }
                                         if (
-                                            list.indexOf(__sp_MARK) < 0 ||
-                                            (!fallback && t >= __sp_TYPES.length - 1) ||
-                                            minimal
+                                            minimal ||
+                                            (!fallback && t >= typesToTry.length - 1) ||
+                                            (listHasAds && t >= typesToTry.length - 1)
                                         ) {
                                             found = list;
                                             foundType = type;
@@ -36660,54 +37122,170 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 return { text: found, type: foundType, label: foundLabel };
             }
-            // Retire les segments de pub restants (remplacés par une
-            // vidéo vide au moment où le lecteur les demande) et le
-            // préchargement, qui laisserait passer une image de pub.
+            // Retire les segments de pub restants (remplacés par un segment MP4
+            // vide en mémoire au moment où le lecteur les demande), neutralise
+            // les indices LL-HLS (#EXT-X-PART, #EXT-X-PRELOAD-HINT, PREFETCH),
+            // gère les bornes SCTE-35 (CUE-OUT/CUE-IN) et réinjecte la dernière
+            // playlist propre (< 1,5 s) ou la réserve de segments live si 100 %
+            // de la fenêtre est publicitaire (vaft v58).
             function __sp_strip(text, all, info){
                 var lines = __sp_lines(text);
                 var found = false;
+                var inCueOut = false;
+                var liveSegments = [];
                 var now = Date.now();
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
+                    if (line.indexOf("EXT-X-CUE-OUT") >= 0) {
+                        inCueOut = true;
+                    } else if (line.indexOf("EXT-X-CUE-IN") >= 0) {
+                        inCueOut = false;
+                    }
+                    if (line.indexOf("X-TV-TWITCH-AD") >= 0) {
+                        line = lines[i] = line.replace(__sp_AD_URL_REWRITE_RE, '$1https://twitch.tv$2');
+                    }
+                    var isLiveSeg = line.indexOf(",live") >= 0;
                     if (
                         i < lines.length - 1 &&
                         line.indexOf("#EXTINF") === 0 &&
-                        (line.indexOf(",live") < 0 || all)
+                        (!isLiveSeg || all || inCueOut)
                     ) {
                         var segment = lines[i + 1].trim();
-                        if (!__sp_adSegs[segment]) {
-                            info.stripped++;
+                        if (segment) {
+                            if (!__sp_adSegs[segment]) {
+                                info.stripped++;
+                                info.everStrippedInBreak = true;
+                            }
+                            __sp_adSegs[segment] = now;
                         }
-                        __sp_adSegs[segment] = now;
                         found = true;
-                    }
-                    if (line.indexOf(__sp_MARK) >= 0) {
+                    } else if (
+                        i < lines.length - 1 &&
+                        line.indexOf("#EXTINF") === 0 &&
+                        __sp_hasAdUrlPattern(lines[i + 1])
+                    ) {
+                        var patSeg = lines[i + 1].trim();
+                        if (patSeg) {
+                            if (!__sp_adSegs[patSeg]) {
+                                info.stripped++;
+                                info.everStrippedInBreak = true;
+                            }
+                            __sp_adSegs[patSeg] = now;
+                        }
                         found = true;
+                    } else if (i < lines.length - 1 && line.indexOf("#EXTINF") === 0 && isLiveSeg) {
+                        liveSegments.push({ extinf: line, url: lines[i + 1] });
+                    } else if (line.indexOf("#EXT-X-PART:") === 0) {
+                        var partMatch = line.match(__sp_URI_ATTR_RE);
+                        var partUri = partMatch ? partMatch[1].trim() : "";
+                        if (partUri && (inCueOut || __sp_adSegs[partUri] || __sp_hasAdUrlPattern(partUri))) {
+                            __sp_adSegs[partUri] = now;
+                            info.everStrippedInBreak = true;
+                            lines[i] = "";
+                            found = true;
+                        }
+                    } else if (
+                        line.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0 ||
+                        line.indexOf("#EXT-X-PRELOAD-HINT:") === 0
+                    ) {
+                        var hintUrl = "";
+                        if (line.indexOf("#EXT-X-TWITCH-PREFETCH:") === 0) {
+                            hintUrl = line.substring(23).trim();
+                        } else {
+                            var hintMatch = line.match(__sp_URI_ATTR_RE);
+                            hintUrl = hintMatch ? hintMatch[1].trim() : "";
+                        }
+                        if (hintUrl && (inCueOut || __sp_adSegs[hintUrl] || __sp_hasAdUrlPattern(hintUrl))) {
+                            __sp_adSegs[hintUrl] = now;
+                            info.everStrippedInBreak = true;
+                            found = true;
+                        }
                     }
+                }
+                if (!found && __sp_hasAdTags(text)) {
+                    found = true;
                 }
                 if (found) {
                     for (var j = 0; j < lines.length; j++) {
-                        if (lines[j].indexOf("#EXT-X-TWITCH-PREFETCH:") === 0) {
+                        if (
+                            lines[j].indexOf("#EXT-X-TWITCH-PREFETCH:") === 0 ||
+                            lines[j].indexOf("#EXT-X-PRELOAD-HINT:") === 0 ||
+                            __sp_hasAdTags(lines[j])
+                        ) {
                             lines[j] = "";
                         }
                     }
                 } else {
                     info.stripped = 0;
                 }
-                info.stripping = found;
-                Object.keys(__sp_adSegs).forEach(function(key){
-                    if (__sp_adSegs[key] < now - 120000) {
-                        delete __sp_adSegs[key];
+                if (liveSegments.length > 0) {
+                    info.recoverySegments = liveSegments.slice(-6);
+                    var seqMatch = text.match(/#EXT-X-MEDIA-SEQUENCE:([0-9]+)/);
+                    var seqNum = seqMatch ? parseInt(seqMatch[1], 10) : NaN;
+                    if (!isNaN(seqNum)) {
+                        info.recoveryStartSeq = seqNum + Math.max(0, liveSegments.length - info.recoverySegments.length);
                     }
-                });
+                    info.consecutiveAllStripped = 0;
+                } else if (found && liveSegments.length === 0) {
+                    info.consecutiveAllStripped = (info.consecutiveAllStripped || 0) + 1;
+                    info.totalAllStripped = (info.totalAllStripped || 0) + 1;
+                    var snapAge = info.lastCleanAt ? (now - info.lastCleanAt) : Infinity;
+                    if (info.lastCleanM3u8 && snapAge <= 1500 && !__sp_hasAdTags(info.lastCleanM3u8)) {
+                        info.stripping = true;
+                        return info.lastCleanM3u8;
+                    }
+                    if (info.recoverySegments && info.recoverySegments.length > 0) {
+                        var recOut = [];
+                        for (var r = 0; r < lines.length; r++) {
+                            var rl = lines[r];
+                            if (!rl) continue;
+                            if (rl.indexOf("#EXT-X-MEDIA-SEQUENCE:") === 0 && info.recoveryStartSeq !== undefined) {
+                                recOut.push("#EXT-X-MEDIA-SEQUENCE:" + info.recoveryStartSeq);
+                                continue;
+                            }
+                            if (rl.indexOf("#EXTINF") === 0 && r + 1 < lines.length) {
+                                r++;
+                                continue;
+                            }
+                            if (
+                                rl.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0 ||
+                                rl.indexOf("#EXT-X-DISCONTINUITY") === 0 ||
+                                rl.indexOf("#EXT-X-CUE-") === 0
+                            ) {
+                                continue;
+                            }
+                            recOut.push(rl);
+                        }
+                        for (var rs = 0; rs < info.recoverySegments.length; rs++) {
+                            recOut.push(info.recoverySegments[rs].extinf);
+                            recOut.push(info.recoverySegments[rs].url);
+                        }
+                        lines = recOut;
+                    }
+                }
+                info.stripping = found;
+                if (!info.lastCachePruneAt || (now - info.lastCachePruneAt) > 60000) {
+                    info.lastCachePruneAt = now;
+                    Object.keys(__sp_adSegs).forEach(function(key){
+                        if (__sp_adSegs[key] < now - 120000) {
+                            delete __sp_adSegs[key];
+                        }
+                    });
+                }
                 return lines.join(__sp_NL);
             }
             function __sp_typeLabel(type){
-                if (type === "embed") {
-                    return "lecteur intégré";
+                if (type === "site") {
+                    return "lecteur site";
                 }
                 if (type === "popout") {
                     return "lecteur popout";
+                }
+                if (type === "mobile_web") {
+                    return "lecteur mobile";
+                }
+                if (type === "embed") {
+                    return "lecteur intégré";
                 }
                 if (type === "autoplay") {
                     return "lecteur autoplay, 360p";
@@ -36727,7 +37305,7 @@ dashboardButton.style.visibility = 'hidden';
                     var line = lines[i];
                     if (
                         line.indexOf("#EXT-X-DATERANGE") !== 0 ||
-                        line.indexOf(__sp_MARK) < 0
+                        !__sp_hasAdTags(line)
                     ) {
                         continue;
                     }
@@ -36787,7 +37365,7 @@ dashboardButton.style.visibility = 'hidden';
                     }
                     if (
                         line.indexOf("#EXT-X-DATERANGE") !== 0 ||
-                        line.indexOf(__sp_MARK) < 0
+                        !__sp_hasAdTags(line)
                     ) {
                         continue;
                     }
@@ -36907,7 +37485,7 @@ dashboardButton.style.visibility = 'hidden';
                     dropCount++;
                 }
                 var isAdMetaLine = function(ln){
-                    return (ln.indexOf("#EXT-X-DATERANGE") === 0 && (ln.indexOf(__sp_MARK) >= 0 || /twitch-ad|X-TV-TWITCH-AD|twitch-maf-ad|X-TTV-MAF-AD/i.test(ln))) ||
+                    return (ln.indexOf("#EXT-X-DATERANGE") === 0 && (__sp_hasAdTags(ln) || /twitch-ad|X-TV-TWITCH-AD|twitch-maf-ad|X-TTV-MAF-AD/i.test(ln))) ||
                         /^#EXT-X-(SCTE35|CUE-OUT|CUE-OUT-CONT|CUE-IN)/i.test(ln) ||
                         (ln.charAt(0) === "#" && /X-TV-TWITCH-AD|X-TTV-MAF-AD/i.test(ln));
                 };
@@ -37021,6 +37599,7 @@ dashboardButton.style.visibility = 'hidden';
                 var pendingPdt = 0;
                 var adEnd = 0;
                 var adUnknown = false;
+                var inCue = false;
                 var latestPodStart = -1;
                 var podNotLast = false;
                 var tail = 0;
@@ -37029,7 +37608,13 @@ dashboardButton.style.visibility = 'hidden';
                     var line = lines[i];
                     if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
                         pendingPdt = Date.parse(line.substring(25).trim()) || 0;
-                    } else if (line.indexOf("#EXT-X-DATERANGE") === 0 && line.indexOf(__sp_MARK) >= 0) {
+                    } else if (line.indexOf("EXT-X-CUE-OUT") >= 0) {
+                        inCue = true;
+                        tail = 0;
+                        tailStart = 0;
+                    } else if (line.indexOf("EXT-X-CUE-IN") >= 0) {
+                        inCue = false;
+                    } else if (line.indexOf("#EXT-X-DATERANGE") === 0 && __sp_hasAdTags(line)) {
                         var a = __sp_attrs(line);
                         var start = Date.parse(a["START-DATE"] || "");
                         var dur = parseFloat(a.DURATION);
@@ -37049,7 +37634,7 @@ dashboardButton.style.visibility = 'hidden';
                             adEnd = Math.max(adEnd, start + dur * 1000);
                         }
                     } else if (line.indexOf("#EXTINF") === 0) {
-                        if (line.indexOf(",live") >= 0) {
+                        if (line.indexOf(",live") >= 0 && !inCue) {
                             if (!tail) {
                                 tailStart = pendingPdt;
                             }
@@ -37061,7 +37646,8 @@ dashboardButton.style.visibility = 'hidden';
                         pendingPdt = 0;
                     }
                 }
-                return !adUnknown &&
+                return !inCue &&
+                    !adUnknown &&
                     !podNotLast &&
                     adEnd > 0 &&
                     tail >= __sp_LIVE_TAIL_MIN &&
@@ -37099,6 +37685,7 @@ dashboardButton.style.visibility = 'hidden';
             }
             function __sp_endAd(info, liveBack){
                 var wasModified = info.usingModified;
+                var hadMixedStream = !!(info.everStrippedInBreak || info.lastCommittedBackupType || wasModified);
                 var now = Date.now();
                 __sp_lastEndAt = now;
                 __sp_blankAfterEnd = 0;
@@ -37115,19 +37702,50 @@ dashboardButton.style.visibility = 'hidden';
                 info.inAd = false;
                 info.stripping = false;
                 info.stripped = 0;
+                info.everStrippedInBreak = false;
                 info.backupType = null;
                 info.backupName = null;
+                info.lastCommittedBackupType = null;
+                info.failedBackupTypes = {};
+                info.consecutiveAllStripped = 0;
+                info.totalAllStripped = 0;
+                info.earlyReloadCount = 0;
+                info.earlyReloadTriggered = false;
+                info.earlyReloadAwaiting = false;
+                info.cycleRescued = false;
                 info.usingModified = false;
+                __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
+                if (!hadMixedStream) {
+                    __tp_postLog("info",
+                        "🛡️ Fin de la pub CSAI sur " + info.channel + " (" +
+                        Math.round((now - info.adStart) / 1000) + " s) : flux déjà propre, aucune relance nécessaire");
+                    return;
+                }
                 info.lastReload = now;
                 __tp_postLog("info",
                     "🛡️ Fin de la pub sur " + info.channel + " (" +
                     Math.round((now - info.adStart) / 1000) + " s) : " +
                     "relance du lecteur" + (wasModified ? " (retour en 2K/4K)" : "") +
                     (liveBack ? " · direct revenu, sans attendre que Twitch efface ses repères" : ""));
-                __sp_post({ type: "spAd", channel: info.channel, active: false, stripping: false });
-                __sp_post({ type: "spPlayer", action: "reload", afterAd: true, channel: info.channel, edgeGap: __sp_median(info.edgeGaps) });
+                __sp_post({ type: "spPlayer", action: "reload", afterAd: true, hard: true, channel: info.channel, edgeGap: __sp_median(info.edgeGaps) });
+            }
+            function __sp_stripMafOnly(text){
+                if (!/twitch-maf-ad|X-TTV-MAF-AD/i.test(text)) {
+                    return text;
+                }
+                var mafLines = __sp_lines(text);
+                var mafOut = [];
+                for (var mi = 0; mi < mafLines.length; mi++) {
+                    var ml = mafLines[mi];
+                    if (ml.indexOf("#EXT-X-DATERANGE") === 0 && /twitch-maf-ad|X-TTV-MAF-AD/i.test(ml)) {
+                        continue;
+                    }
+                    mafOut.push(ml);
+                }
+                return mafOut.join(__sp_NL);
             }
             async function __sp_processMedia(url, text, info){
+                info.lastSeenAt = Date.now();
                 if (__sp_reloaded) {
                     __sp_reloaded = false;
                     info.lastReload = Date.now();
@@ -37135,7 +37753,7 @@ dashboardButton.style.visibility = 'hidden';
                         info.postAdReloadSeen = true;
                     }
                 }
-                var marked = text.indexOf(__sp_MARK) >= 0;
+                var marked = __sp_hasAdTags(text);
                 // Direct revenu alors que Twitch garde encore ses repères :
                 // coupure finie. Le lecteur relancé reçoit la même liste,
                 // nettoyée, et n'y voit pas une nouvelle pub.
@@ -37150,8 +37768,18 @@ dashboardButton.style.visibility = 'hidden';
                     if (!info.inAd) {
                         info.inAd = true;
                         info.adStart = Date.now();
+                        var podLenMatch = text.match(/X-TV-TWITCH-AD-POD-LENGTH="([0-9]+)"/);
+                        info.podLength = podLenMatch ? Math.max(1, parseInt(podLenMatch[1], 10)) : 1;
                         info.backupType = null;
                         info.backupName = null;
+                        info.lastCommittedBackupType = null;
+                        info.everStrippedInBreak = false;
+                        info.consecutiveAllStripped = 0;
+                        info.totalAllStripped = 0;
+                        info.earlyReloadCount = 0;
+                        info.earlyReloadTriggered = false;
+                        info.earlyReloadAwaiting = false;
+                        info.cycleRescued = false;
                         info.blankLogged = false;
                         info.adIdsSeen = {};
                         info.adTimes = {};
@@ -37187,7 +37815,7 @@ dashboardButton.style.visibility = 'hidden';
                     }
                     var current = info.urls[url];
                     if (!current) {
-                        return text;
+                        return __sp_strip(text, false, info);
                     }
                     var isHevc = __sp_isHevc(current.codecs);
                     if (isHevc && info.modified && !info.usingModified) {
@@ -37195,7 +37823,37 @@ dashboardButton.style.visibility = 'hidden';
                         info.lastReload = Date.now();
                         __tp_postLog("info",
                             "🛡️ Stream en 2K/4K : le lecteur repasse en H.264 le temps de la pub");
-                        __sp_post({ type: "spPlayer", action: "reload" });
+                        __sp_post({ type: "spPlayer", action: "reload", hard: true });
+                    }
+                    // Si tous les segments de la liste principale sont ,live (pub CSAI pure
+                    // hors m3u8) et qu'on n'est pas en 2K/4K modifié ni en mode proxyAdsOnly,
+                    // inutile de basculer vers un flux de secours : on garde les segments live
+                    // natifs en retirant simplement les repères publicitaires (vaft v58).
+                    var checkMainLines = __sp_lines(text);
+                    var hasNonLiveSeg = false;
+                    for (var mlIdx = 0; mlIdx < checkMainLines.length; mlIdx++) {
+                        var mLn = checkMainLines[mlIdx];
+                        if (
+                            (mLn.indexOf("#EXTINF") === 0 && (mLn.indexOf(",live") < 0 || (mlIdx + 1 < checkMainLines.length && __sp_hasAdUrlPattern(checkMainLines[mlIdx + 1])))) ||
+                            mLn.indexOf("EXT-X-CUE-OUT") >= 0
+                        ) {
+                            hasNonLiveSeg = true;
+                            break;
+                        }
+                    }
+                    if (!hasNonLiveSeg && !info.usingModified && !__sp_proxyAds()) {
+                        text = __sp_strip(text, false, info);
+                        __sp_post({
+                            type: "spAd",
+                            channel: info.channel,
+                            active: true,
+                            midroll: info.midroll,
+                            stripping: info.stripping,
+                            backupType: "site",
+                            quality: "",
+                            pod: pod
+                        });
+                        return text;
                     }
                     var backup = await __sp_findBackup(info, current);
                     // La coupure s'est terminée pendant la recherche (autre
@@ -37227,6 +37885,16 @@ dashboardButton.style.visibility = 'hidden';
                         }
                         text = __sp_trimToLiveEdge(backup.text, 3, info);
                         info.backupLabel = backup.label || "";
+                        info.lastCommittedBackupType = backup.type;
+                        if (
+                            __sp_PIN_BACKUP &&
+                            backup.type &&
+                            backup.type !== "proxy" &&
+                            backup.type !== "autoplay" &&
+                            !__sp_hasAdTags(backup.text)
+                        ) {
+                            info.pinnedBackupType = backup.type;
+                        }
                         if (
                             info.backupType !== backup.type ||
                             info.backupName !== backup.proxyName
@@ -37241,6 +37909,29 @@ dashboardButton.style.visibility = 'hidden';
                         }
                     }
                     text = __sp_strip(text, isHevc && !!info.modified, info);
+                    if (info.earlyReloadAwaiting) {
+                        info.earlyReloadAwaiting = false;
+                        info.earlyReloadTriggered = false;
+                    }
+                    var recThin = !info.recoverySegments || info.recoverySegments.length < 3;
+                    var maxEarly = recThin ? Math.max(2, info.podLength || 1) : Math.max(1, info.podLength || 1);
+                    var effThresh = recThin ? 2 : __sp_EARLY_RELOAD_POLLS;
+                    if (
+                        __sp_EARLY_RELOAD_POLLS > 0 &&
+                        (info.consecutiveAllStripped || 0) >= effThresh &&
+                        !info.earlyReloadTriggered &&
+                        (info.earlyReloadCount || 0) < maxEarly
+                    ) {
+                        info.earlyReloadTriggered = true;
+                        info.earlyReloadAwaiting = true;
+                        info.earlyReloadCount = (info.earlyReloadCount || 0) + 1;
+                        info.lastReload = Date.now();
+                        __tp_postLog("info",
+                            "🛡️ Tous les flux ont une pub sur " + info.channel +
+                            " (" + info.consecutiveAllStripped + " cycles) : relance anticipée [" +
+                            info.earlyReloadCount + "/" + maxEarly + "]");
+                        __sp_post({ type: "spPlayer", action: "reload", force: true, hard: true, kind: "early", channel: info.channel });
+                    }
                     if (!backup.text && !info.blankLogged) {
                         info.blankLogged = true;
                         __tp_postLog("warn",
@@ -37258,36 +37949,34 @@ dashboardButton.style.visibility = 'hidden';
                         pod: pod
                     });
                 } else {
-                    // Plus aucun repère de pub dans la liste : fin de coupure
-                    // comme vaft, quand le retour du direct n'a pas pu être
-                    // prouvé plus tôt (voir __sp_adOver). L'ancien retour
-                    // anticipé devinait la fin et se trompait parfois ;
-                    // celui-ci attend des morceaux de direct bien réels.
                     if (info.inAd) {
-                        // Relance complète, comme Vaft : les morceaux servis
-                        // pendant la pub n'ont pas tout à fait la même durée
-                        // de son et d'image que le stream, et une simple
-                        // pause/lecture laissait le décalage jusqu'au F5.
-                        // La relance remet tout à zéro (et rend la 2K/4K si
-                        // le lecteur était passé en H.264).
                         __sp_endAd(info);
                         return __sp_cleanAfter(text, info);
                     }
                     if (info.lastEndAt && (Date.now() - info.lastEndAt) < 45000) {
                         return __sp_cleanAfter(text, info);
                     }
-                    if (/twitch-maf-ad|X-TTV-MAF-AD/i.test(text)) {
-                        var mafLines = __sp_lines(text);
-                        var mafOut = [];
-                        for (var mi = 0; mi < mafLines.length; mi++) {
-                            var ml = mafLines[mi];
-                            if (ml.indexOf("#EXT-X-DATERANGE") === 0 && /twitch-maf-ad|X-TTV-MAF-AD/i.test(ml)) {
-                                continue;
+                    var cleanMafText = __sp_stripMafOnly(text);
+                    if (cleanMafText.indexOf("#EXTINF") >= 0) {
+                        info.lastCleanM3u8 = cleanMafText;
+                        info.lastCleanAt = Date.now();
+                        var cleanLines = __sp_lines(cleanMafText);
+                        var cleanLiveSegs = [];
+                        for (var cl = 0; cl < cleanLines.length - 1; cl++) {
+                            if (cleanLines[cl].indexOf("#EXTINF") === 0 && cleanLines[cl].indexOf(",live") >= 0) {
+                                cleanLiveSegs.push({ extinf: cleanLines[cl], url: cleanLines[cl + 1] });
                             }
-                            mafOut.push(ml);
                         }
-                        return mafOut.join(__sp_NL);
+                        if (cleanLiveSegs.length > 0) {
+                            info.recoverySegments = cleanLiveSegs.slice(-6);
+                            var cSeqMatch = cleanMafText.match(/#EXT-X-MEDIA-SEQUENCE:([0-9]+)/);
+                            var cSeqNum = cSeqMatch ? parseInt(cSeqMatch[1], 10) : NaN;
+                            if (!isNaN(cSeqNum)) {
+                                info.recoveryStartSeq = cSeqNum + Math.max(0, cleanLiveSegs.length - info.recoverySegments.length);
+                            }
+                        }
                     }
+                    return cleanMafText;
                 }
                 return text;
             }
@@ -37345,7 +38034,8 @@ dashboardButton.style.visibility = 'hidden';
                     ) >= 0;
 
                 if (!isUsher) {
-                    if (__sp_adSegs[originalURL.trim()]) {
+                    var trimmedOriginalURL = originalURL.trim();
+                    if (__sp_adSegs[trimmedOriginalURL]) {
                         if (__sp_lastEndAt && (Date.now() - __sp_lastEndAt) < 90000) {
                             __sp_blankAfterEnd++;
                             if (__sp_blankAfterEnd === 1) {
@@ -37355,6 +38045,13 @@ dashboardButton.style.visibility = 'hidden';
                                     " s après la relance de fin de pub (" + (__tp_lastChannel || "?") + ")");
                             }
                         }
+                        if (__sp_BLANK_BLOB) {
+                            return Promise.resolve(new Response(__sp_BLANK_BLOB, {
+                                status: 200,
+                                statusText: "OK",
+                                headers: { "Content-Type": "video/mp4" }
+                            }));
+                        }
                         return __tp_originalFetch.call(this, __sp_BLANK);
                     }
                     var __tp_passthrough =
@@ -37363,9 +38060,10 @@ dashboardButton.style.visibility = 'hidden';
                             input,
                             init
                         );
+                    var isKnownVariantUrl = !!__sp_byUrl[trimmedOriginalURL];
                     if (
                         __tp_dvrSpan > 0 &&
-                        lowerURL.indexOf(".m3u8") >= 0
+                        (lowerURL.indexOf(".m3u8") >= 0 || isKnownVariantUrl)
                     ) {
                         __tp_dvrDiagOnce("playlist",
                             "Liste de segments vue (mémoire " + (__tp_dvrActive() ? "active" : "inactive") + ")");
@@ -37377,11 +38075,11 @@ dashboardButton.style.visibility = 'hidden';
                     // Si le bloqueur sans proxy (VAFT) est actif ou a pris
                     // le relais après un refus 403 des proxys sur cette
                     // chaîne (__sp_byUrl), on passe par __sp_media.
-                    if (lowerURL.indexOf(".m3u8") >= 0) {
+                    if (lowerURL.indexOf(".m3u8") >= 0 || isKnownVariantUrl) {
                         __tp_passthrough = __tp_passthrough.then(
                             function(response){
                                 __tp_diagPlaylist(originalURL, response);
-                                return (__sp_on() || !!__sp_byUrl[originalURL.trim()])
+                                return (__sp_on() || isKnownVariantUrl)
                                     ? __sp_media(originalURL, response)
                                     : __tp_cleanAds(originalURL, response);
                             }
@@ -37925,7 +38623,10 @@ dashboardButton.style.visibility = 'hidden';
                                         info.postAdReloadSeen = true;
                                     }
                                     __sp_streams[channel] = info;
-                                    info.lastReload = Date.now();
+                                    info.lastSeenAt = Date.now();
+                                    if (__tp_ptype) {
+                                        info.activePlayerType = __tp_ptype;
+                                    }
                                     __sp_warmBackups(info);
                                     var out = __sp_withServerTime(
                                         info.usingModified && info.modified ? info.modified : info.master,
@@ -38149,8 +38850,10 @@ dashboardButton.style.visibility = 'hidden';
                     if (
                         pType &&
                         pType !== 'popout' &&
+                        pType !== 'frontpage' &&
                         pType !== 'autoplay' &&
-                        pType !== 'embed'
+                        pType !== 'embed' &&
+                        pType !== 'mobile_web'
                     ) {
                         entry.variables.playerType = 'popout';
                         changedArr = true;
@@ -38168,8 +38871,10 @@ dashboardButton.style.visibility = 'hidden';
                 parsed.variables &&
                 parsed.variables.playerType &&
                 parsed.variables.playerType !== 'popout' &&
+                parsed.variables.playerType !== 'frontpage' &&
                 parsed.variables.playerType !== 'autoplay' &&
-                parsed.variables.playerType !== 'embed'
+                parsed.variables.playerType !== 'embed' &&
+                parsed.variables.playerType !== 'mobile_web'
             ) {
                 parsed.variables.playerType = 'popout';
                 return JSON.stringify(parsed);
@@ -38398,6 +39103,21 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 if (init && vaftPlaybackOn() && typeof init.body === 'string') {
                     var body = spRewriteTokenBody(init.body);
+                    if (body === '') {
+                        var pbpRespJson = '{"data":{"streamPlaybackAccessToken":null}}';
+                        try {
+                            var pbpOrig = JSON.parse(init.body);
+                            if (Array.isArray(pbpOrig)) {
+                                pbpRespJson = JSON.stringify(pbpOrig.map(function () {
+                                    return { data: { streamPlaybackAccessToken: null } };
+                                }));
+                            }
+                        } catch (ePbp) {}
+                        return Promise.resolve(new Response(pbpRespJson, {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        }));
+                    }
                     if (body !== init.body) {
                         init = Object.assign({}, init, { body: body });
                     }
@@ -38528,10 +39248,13 @@ dashboardButton.style.visibility = 'hidden';
         spBuffer.lastFix = Date.now();
         spBuffer.same = 0;
         spBuffer.deadTicks = 0;
-        if (action === 'pausePlay') {
+        if (action === 'pausePlay' || (typeof document !== 'undefined' && document.pictureInPictureElement)) {
             try {
                 player.pause();
-                player.play();
+                var playRes = player.play();
+                if (playRes && typeof playRes.catch === 'function') {
+                    playRes.catch(function () {});
+                }
             } catch (e) {}
             return;
         }
@@ -38548,7 +39271,13 @@ dashboardButton.style.visibility = 'hidden';
             } catch (e) {}
         }
         try {
-            parts.state.setSrc({ isNewMediaPlayerInstance: true, refreshAccessToken: true });
+            if (player.core && player.core.state && player.core.state.quality && player.core.state.quality.group) {
+                localStorage.setItem('video-quality', JSON.stringify({ default: player.core.state.quality.group }));
+            }
+        } catch (eQual) {}
+        var hardReload = !options || options.hard !== false;
+        try {
+            parts.state.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: hardReload });
         } catch (e) {
             spCatchUp = null;
             logEvent('warn', 'Relance du lecteur Twitch refusée : ' + (e && e.message));
@@ -39407,13 +40136,22 @@ dashboardButton.style.visibility = 'hidden';
     // bloquée, laquelle (début ou milieu de stream) et en quelle
     // qualité on regarde pendant ce temps. Il disparaît avec la pub.
     var SP_BADGE_TYPES = {
-        embed: 'intégré',
+        site: 'site',
         popout: 'popout',
+        mobile_web: 'mobile',
+        embed: 'intégré',
         autoplay: 'autoplay',
         proxy: 'proxy'
     };
 
-    var SP_BADGE_TYPES_EN = { embed: 'embed', popout: 'popout', autoplay: 'autoplay', proxy: 'proxy' };
+    var SP_BADGE_TYPES_EN = {
+        site: 'site',
+        popout: 'popout',
+        mobile_web: 'mobile',
+        embed: 'embed',
+        autoplay: 'autoplay',
+        proxy: 'proxy'
+    };
 
     function spInjectBadgeCSS() {
         if (document.getElementById('tp9-sp-badge-style')) {
@@ -39422,6 +40160,9 @@ dashboardButton.style.visibility = 'hidden';
         var style = document.createElement('style');
         style.id = 'tp9-sp-badge-style';
         style.textContent =
+            '.player-overlay-background:has(a[href*="turbo"]),' +
+            '.player-overlay-background:has(a[href*="how-to-allow-ads"]),' +
+            '.turbo-sda-upsell,[role="banner"][aria-label*="Turbo"]{display:none!important}' +
             '.tp9-sp-badge{position:absolute;top:10px;left:10px;z-index:20;' +
             'display:flex;align-items:center;gap:7px;max-width:calc(100% - 20px);' +
             'padding:5px 11px 5px 9px;border-radius:999px;' +
@@ -39941,6 +40682,22 @@ dashboardButton.style.visibility = 'hidden';
             JSON.stringify(TAB_ID) + ');';
     }
 
+    var spNativeRevokeObjectURL = typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function'
+        ? URL.revokeObjectURL
+        : null;
+    if (spNativeRevokeObjectURL && !spNativeRevokeObjectURL.__tp9Guarded) {
+        try {
+            var guardedRevoke = function (blobUrl) {
+                if (blobUrl && blobUrl === lastPatchedBlobURL) {
+                    return;
+                }
+                return spNativeRevokeObjectURL.call(URL, blobUrl);
+            };
+            guardedRevoke.__tp9Guarded = true;
+            URL.revokeObjectURL = guardedRevoke;
+        } catch (eRev) {}
+    }
+
     window.Worker =
         function (
             scriptURL,
@@ -39980,18 +40737,32 @@ dashboardButton.style.visibility = 'hidden';
                     var newURL =
                         URL.createObjectURL(blob);
 
-                    if (lastPatchedBlobURL) {
-                        URL.revokeObjectURL(lastPatchedBlobURL);
-                    }
-
+                    var prevURL = lastPatchedBlobURL;
                     lastPatchedBlobURL = newURL;
+                    if (prevURL && prevURL !== newURL && spNativeRevokeObjectURL) {
+                        try { spNativeRevokeObjectURL.call(URL, prevURL); } catch (ePrevRev) {}
+                    }
 
                     console.log('[TwitchProxy] >>> Blob Worker PATCHÉ');
 
-                    return new NativeWorker(
+                    var workerInst = new NativeWorker(
                         newURL,
                         options
                     );
+                    if (!scriptIsOff() && workerInst && typeof workerInst.addEventListener === 'function') {
+                        var workerCrashed = false;
+                        workerInst.addEventListener('error', function (errEv) {
+                            if (workerCrashed || scriptIsOff() || !vaftPlaybackOn()) return;
+                            workerCrashed = true;
+                            var nowErr = Date.now();
+                            if (spBuffer.lastFix > nowErr - 8000) return;
+                            logEvent('warn', '🛡️ Crash du Worker vidéo IVS (' + ((errEv && errEv.message) || 'RuntimeError') + ') : relance automatique du lecteur');
+                            try {
+                                spPlayerTask('reload', { force: true, hard: true });
+                            } catch (eRec) {}
+                        });
+                    }
+                    return workerInst;
                 }
 
                 console.warn('[TwitchProxy] Impossible de lire le Blob → Worker original');
@@ -40351,6 +41122,19 @@ dashboardButton.style.visibility = 'hidden';
     var bttvSlowChatLastRefillAt = 0;
     var bttvSlowChatLastIrcAt = 0;
     var bttvOrigMsgDataGet = null;
+    var bttvChatMsgById = new Map();
+    var bttvChatMsgsByAuthor = new Map();
+    var bttvChatThreadIndex = new Map();
+    var bttvPendingIrcQueue = [];
+    var bttvChatRecordSeq = 0;
+    var bttvSyntheticMsgSeq = 0;
+    var bttvReplyThreadCard = null;
+    var bttvCurrentHoverTarget = null;
+    var bttvHighlightedPeerEls = [];
+    var bttvJumpBackPill = null;
+    var bttvJumpOriginMsgEl = null;
+    var bttvLastJumpFlashEl = null;
+    var bttvJumpFlashTimer = null;
 
     var BTTV_ZERO_WIDTH_CODES = {
         cvHazmat: true,
@@ -40409,6 +41193,22 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 }
             } catch (e) {}
+            if (!bttvCachedCookieLogin || !bttvCachedCookieDisplayLower) {
+                try {
+                    var lsRaw = typeof localStorage !== 'undefined' && localStorage ? localStorage.getItem('twilight.user') : null;
+                    if (lsRaw) {
+                        var lsUser = JSON.parse(lsRaw);
+                        if (lsUser && typeof lsUser === 'object') {
+                            if (!bttvCachedCookieLogin && lsUser.login) {
+                                bttvCachedCookieLogin = String(lsUser.login).trim().toLowerCase();
+                            }
+                            if (!bttvCachedCookieDisplayLower && lsUser.displayName) {
+                                bttvCachedCookieDisplayLower = String(lsUser.displayName).trim().toLowerCase();
+                            }
+                        }
+                    }
+                } catch (eLs) {}
+            }
         }
         var login = bttvDetectedUserLogin || bttvCachedCookieLogin || '';
         var displayLower = bttvDetectedUserDisplayLower || bttvCachedCookieDisplayLower || login;
@@ -40437,7 +41237,8 @@ dashboardButton.style.visibility = 'hidden';
         badgesRaw,
         isModFlag,
         isHighlightedRedeem,
-        msgBodyLower
+        msgBodyLower,
+        replyParentLoginLower
     ) {
         if (isModFlag || isHighlightedRedeem) return true;
         if (channelLogin && senderLogin && senderLogin === channelLogin) return true;
@@ -40455,10 +41256,12 @@ dashboardButton.style.visibility = 'hidden';
         var me = getCurrentTwitchUserLogins();
         if (me.login) {
             if (senderLogin === me.login || senderDisplayLower === me.login) return true;
+            if (replyParentLoginLower && replyParentLoginLower === me.login) return true;
             if (bodyMentionsUsername(msgBodyLower, me.login)) return true;
         }
         if (me.displayLower && me.displayLower !== me.login) {
             if (senderDisplayLower === me.displayLower || senderLogin === me.displayLower) return true;
+            if (replyParentLoginLower && replyParentLoginLower === me.displayLower) return true;
             if (bodyMentionsUsername(msgBodyLower, me.displayLower)) return true;
         }
         if (pageConfig.highlightKeywords !== false && Array.isArray(pageConfig.highlightWords) && pageConfig.highlightWords.length && msgBodyLower) {
@@ -40514,34 +41317,83 @@ dashboardButton.style.visibility = 'hidden';
         return false;
     }
 
-    function shouldKeepSingleIrcLine(line) {
-        if (!line) return true;
+    function unescapeIrcTagValue(val) {
+        if (!val || val.indexOf('\\') === -1) return val || '';
+        return val.replace(/\\([s;\\rn])/g, function (_, c) {
+            if (c === 's') return ' ';
+            if (c === ';') return ';';
+            if (c === '\\') return '\\';
+            if (c === 'n') return ' ';
+            return '';
+        });
+    }
+
+    function registerIrcPrivmsgMeta(parsed) {
+        if (!parsed) return;
+        var now = Date.now();
+        while (bttvPendingIrcQueue.length > 0 && (bttvPendingIrcQueue.length >= 80 || (now - bttvPendingIrcQueue[0].createdAt) > 10000)) {
+            bttvPendingIrcQueue.shift();
+        }
+        var rec = {
+            id: parsed.msgId || ('irc-' + (++bttvSyntheticMsgSeq)),
+            authorLogin: parsed.senderLogin || '',
+            authorDisplay: parsed.senderDisplay || parsed.senderLogin || '',
+            authorColor: parsed.color || '',
+            rawBody: parsed.msgBody || '',
+            bodyText: parsed.cleanBody || parsed.msgBody || '',
+            uncensoredBody: parsed.cleanBody || parsed.msgBody || '',
+            uncensoredRawBody: parsed.msgBody || '',
+            ircFlags: parsed.flagsRaw || '',
+            parts: null,
+            tsText: '',
+            createdAt: now,
+            seq: 0,
+            parentMsgId: parsed.replyParentMsgId || '',
+            parentUserLogin: parsed.replyParentUserLogin || '',
+            parentDisplayName: parsed.replyParentDisplayName || '',
+            parentMsgBody: parsed.replyParentMsgBody || '',
+            threadId: parsed.replyThreadParentMsgId || parsed.replyParentMsgId || '',
+            msgEl: null,
+            matchedDom: false
+        };
+        bttvPendingIrcQueue.push(rec);
+        if (parsed.msgId) {
+            if (!bttvChatMsgById.has(parsed.msgId)) {
+                while (bttvChatMsgById.size >= 500) {
+                    var oldestKey = bttvChatMsgById.keys().next().value;
+                    var evicted = bttvChatMsgById.get(oldestKey);
+                    if (evicted) evicted.msgEl = null;
+                    bttvChatMsgById.delete(oldestKey);
+                }
+                bttvChatMsgById.set(parsed.msgId, rec);
+            }
+        }
+    }
+
+    function parseSingleIrcLine(line) {
+        if (!line) return null;
         if (line.indexOf('USERSTATE') !== -1 && line.charCodeAt(0) === 64) {
             var spU = line.indexOf(' ');
             if (spU > 1) {
                 var dm = line.slice(1, spU).match(/(?:^|;)display-name=([^;]+)/);
                 if (dm && dm[1] && !/^justinfan\d+$/i.test(dm[1])) {
-                    bttvDetectedUserDisplayLower = dm[1].trim().toLowerCase();
+                    bttvDetectedUserDisplayLower = unescapeIrcTagValue(dm[1]).trim().toLowerCase();
                 }
             }
-            return true;
+            return null;
         }
-
-        if (!pageConfig.slowChat || scriptIsOff()) return true;
 
         var tagsStr = '';
         var rest = line;
         if (line.charCodeAt(0) === 64) {
             var spIdx = line.indexOf(' ');
-            if (spIdx === -1) return true;
+            if (spIdx === -1) return null;
             tagsStr = line.slice(1, spIdx);
             rest = line.slice(spIdx + 1);
         }
 
         var privIdx = rest.indexOf(' PRIVMSG #');
-        if (privIdx === -1) return true;
-
-        bttvSlowChatLastIrcAt = Date.now();
+        if (privIdx === -1) return null;
 
         var bangIdx = rest.indexOf('!');
         var senderLogin = (rest.charCodeAt(0) === 58 && bangIdx > 1 && bangIdx < privIdx)
@@ -40555,12 +41407,20 @@ dashboardButton.style.visibility = 'hidden';
         if (msgBody.charCodeAt(0) === 1 && msgBody.indexOf('ACTION ') === 1) {
             msgBody = msgBody.slice(8, msgBody.charCodeAt(msgBody.length - 1) === 1 ? -1 : msgBody.length);
         }
-        var msgBodyLower = msgBody.toLowerCase();
 
+        var msgId = '';
         var badgesRaw = '';
+        var senderDisplay = '';
         var senderDisplayLower = '';
+        var color = '';
         var isModFlag = false;
         var isHighlightedRedeem = false;
+        var replyParentMsgId = '';
+        var replyParentUserLogin = '';
+        var replyParentDisplayName = '';
+        var replyParentMsgBody = '';
+        var replyThreadParentMsgId = '';
+        var flagsRaw = '';
 
         if (tagsStr) {
             var tagParts = tagsStr.split(';');
@@ -40570,10 +41430,15 @@ dashboardButton.style.visibility = 'hidden';
                 if (eq === -1) continue;
                 var k = kv.slice(0, eq);
                 var v = kv.slice(eq + 1);
-                if (k === 'badges') {
+                if (k === 'id') {
+                    msgId = v;
+                } else if (k === 'badges') {
                     badgesRaw = v.toLowerCase();
                 } else if (k === 'display-name') {
-                    senderDisplayLower = v.trim().toLowerCase();
+                    senderDisplay = unescapeIrcTagValue(v).trim();
+                    senderDisplayLower = senderDisplay.toLowerCase();
+                } else if (k === 'color') {
+                    color = v;
                 } else if (k === 'mod') {
                     if (v === '1') isModFlag = true;
                 } else if (k === 'user-type') {
@@ -40582,27 +41447,95 @@ dashboardButton.style.visibility = 'hidden';
                     if (v === 'highlighted-message') isHighlightedRedeem = true;
                 } else if (k === 'custom-reward-id') {
                     if (v) isHighlightedRedeem = true;
+                } else if (k === 'flags') {
+                    flagsRaw = v;
+                } else if (k === 'reply-parent-msg-id') {
+                    replyParentMsgId = v;
+                } else if (k === 'reply-parent-user-login') {
+                    replyParentUserLogin = unescapeIrcTagValue(v).trim().toLowerCase();
+                } else if (k === 'reply-parent-display-name') {
+                    replyParentDisplayName = unescapeIrcTagValue(v).trim();
+                } else if (k === 'reply-parent-msg-body') {
+                    replyParentMsgBody = unescapeIrcTagValue(v).trim();
+                } else if (k === 'reply-thread-parent-msg-id') {
+                    replyThreadParentMsgId = v;
                 }
             }
         }
 
-        if (isExemptPriorityChatMessage(
-            senderLogin,
-            senderDisplayLower,
-            channelLogin,
-            badgesRaw,
-            isModFlag,
-            isHighlightedRedeem,
-            msgBodyLower
-        )) {
+        var cleanBody = msgBody;
+        if (replyParentMsgId && cleanBody.charAt(0) === '@') {
+            var spReply = cleanBody.indexOf(' ');
+            if (spReply > 1) {
+                var leadMention = cleanBody.slice(1, spReply).toLowerCase();
+                if (
+                    (replyParentUserLogin && leadMention === replyParentUserLogin) ||
+                    (replyParentDisplayName && leadMention === replyParentDisplayName.toLowerCase())
+                ) {
+                    cleanBody = cleanBody.slice(spReply + 1);
+                }
+            }
+        }
+
+        return {
+            msgId: msgId,
+            senderLogin: senderLogin,
+            senderDisplay: senderDisplay,
+            senderDisplayLower: senderDisplayLower,
+            channelLogin: channelLogin,
+            color: color,
+            badgesRaw: badgesRaw,
+            isModFlag: isModFlag,
+            isHighlightedRedeem: isHighlightedRedeem,
+            msgBody: msgBody,
+            cleanBody: cleanBody,
+            msgBodyLower: msgBody.toLowerCase(),
+            flagsRaw: flagsRaw,
+            replyParentMsgId: replyParentMsgId,
+            replyParentUserLogin: replyParentUserLogin,
+            replyParentDisplayName: replyParentDisplayName,
+            replyParentMsgBody: replyParentMsgBody,
+            replyThreadParentMsgId: replyThreadParentMsgId
+        };
+    }
+
+    function shouldKeepSingleIrcLine(line) {
+        if (!line) return true;
+        var parsed = parseSingleIrcLine(line);
+        if (!parsed) return true;
+
+        if (!pageConfig.slowChat || scriptIsOff()) {
+            if (!scriptIsOff()) {
+                registerIrcPrivmsgMeta(parsed);
+            }
             return true;
         }
 
-        if (isPreDroppedChatMessage(senderLogin, senderDisplayLower, msgBodyLower)) {
+        bttvSlowChatLastIrcAt = Date.now();
+
+        if (isExemptPriorityChatMessage(
+            parsed.senderLogin,
+            parsed.senderDisplayLower,
+            parsed.channelLogin,
+            parsed.badgesRaw,
+            parsed.isModFlag,
+            parsed.isHighlightedRedeem,
+            parsed.msgBodyLower,
+            parsed.replyParentUserLogin
+        )) {
+            registerIrcPrivmsgMeta(parsed);
+            return true;
+        }
+
+        if (isPreDroppedChatMessage(parsed.senderLogin, parsed.senderDisplayLower, parsed.msgBodyLower)) {
             return false;
         }
 
-        return consumeSlowChatSlot();
+        if (consumeSlowChatSlot()) {
+            registerIrcPrivmsgMeta(parsed);
+            return true;
+        }
+        return false;
     }
 
     function filterIrcPayloadForSlowChat(rawText) {
@@ -40611,10 +41544,10 @@ dashboardButton.style.visibility = 'hidden';
             return rawText;
         }
         if (!pageConfig.slowChat || scriptIsOff()) {
-            if (rawText.indexOf('USERSTATE') !== -1) {
-                var uLines = rawText.split('\r\n');
-                for (var u = 0; u < uLines.length; u++) {
-                    if (uLines[u].indexOf('USERSTATE') !== -1) shouldKeepSingleIrcLine(uLines[u]);
+            var pLines = rawText.split('\r\n');
+            for (var u = 0; u < pLines.length; u++) {
+                if (pLines[u] && (pLines[u].indexOf('PRIVMSG #') !== -1 || pLines[u].indexOf('USERSTATE') !== -1)) {
+                    shouldKeepSingleIrcLine(pLines[u]);
                 }
             }
             return rawText;
@@ -41693,10 +42626,36 @@ dashboardButton.style.visibility = 'hidden';
             '[data-test-selector="emote-button"] img'
         );
         var hasEmoteImg = emoteImgs.length > 0;
-        var textNodes = msgEl.querySelectorAll('.text-fragment, [data-a-target="chat-message-text"]');
+        var bodyScope = msgEl.querySelector('[data-a-target="chat-line-message-body"]') || msgEl;
+        var replyHdr = (bodyScope === msgEl && typeof findReplyHeaderElement === 'function')
+            ? findReplyHeaderElement(msgEl)
+            : null;
+        var mentionSel = (typeof CHAT_MENTION_TOKEN_SEL === 'string' && CHAT_MENTION_TOKEN_SEL)
+            ? CHAT_MENTION_TOKEN_SEL
+            : '.chat-line__message-mention, .mention-fragment, [data-a-target="chat-message-mention"]';
+        var textSel =
+            '.text-fragment, [data-a-target="chat-message-text"], ' +
+            mentionSel + ', ' +
+            'a.link-fragment, [data-a-target="chat-message-link"], ' +
+            '.tp9-uncensored-word';
+        var textNodes = bodyScope.querySelectorAll(textSel);
         var rawText = '';
         for (var i = 0; i < textNodes.length; i++) {
-            rawText += (textNodes[i].textContent || '');
+            var tn = textNodes[i];
+            if (!tn) continue;
+            if (replyHdr && (tn === replyHdr || (replyHdr.contains && replyHdr.contains(tn)))) continue;
+            if (tn.style && tn.style.display === 'none') continue;
+            if (tn.closest && tn.closest(
+                '.tp9-reply-header-nav, .chat-author__display-name, [data-a-target="chat-message-username"], ' +
+                '.chat-line__username-container, .tp9-chat-ts-tag, .chat-line__timestamp, [data-a-target="chat-timestamp"], ' +
+                '.tp9-bot-badge, .tp9-spam-badge, [hidden]'
+            )) {
+                continue;
+            }
+            if (tn.parentElement && tn.parentElement !== bodyScope && tn.parentElement.matches && tn.parentElement.matches(textSel)) {
+                continue;
+            }
+            rawText += (tn.textContent || '');
         }
         var hasUnicodeEmoji = false;
         if (rawText) {
@@ -41757,6 +42716,18 @@ dashboardButton.style.visibility = 'hidden';
                     img.removeAttribute('data-tp9-orig-src');
                     img.removeAttribute('data-tp9-orig-srcset');
                 }
+            }
+            if ((useBigHd || img.classList.contains('tp9-emote')) && !img.__tp9LiveLoadBound && typeof img.addEventListener === 'function') {
+                img.__tp9LiveLoadBound = true;
+                img.addEventListener('load', function () {
+                    if (!msgEl.isConnected || scriptIsOff()) return;
+                    if (typeof resolveChatScroller === 'function' && typeof isChatScrollerNearLiveEdge === 'function' && typeof scheduleChatLiveEdgePin === 'function') {
+                        var sc = resolveChatScroller(bttvObservedChatNode);
+                        if (sc && isChatScrollerNearLiveEdge(sc, 95)) {
+                            scheduleChatLiveEdgePin(sc);
+                        }
+                    }
+                });
             }
         }
         return isOnlyEmotes;
@@ -41998,39 +42969,38 @@ dashboardButton.style.visibility = 'hidden';
         var parts = [];
         var bodyRoot = msgEl.querySelector('[data-a-target="chat-line-message-body"]');
         if (bodyRoot) {
-            bodyRoot.childNodes.forEach(function (n) {
-                if (n.nodeType === 3) {
-                    parts.push(n.nodeValue || '');
-                } else if (n.nodeType === 1) {
-                    if (n.tagName === 'IMG') {
-                        parts.push(n.getAttribute('data-tp9-emote-code') || n.getAttribute('alt') || '');
-                    } else {
-                        var imgs = n.querySelectorAll ? n.querySelectorAll('img') : [];
-                        if (imgs.length) {
-                            n.childNodes.forEach(function (cn) {
-                                if (cn.nodeType === 3) parts.push(cn.nodeValue || '');
-                                else if (cn.nodeType === 1 && cn.tagName === 'IMG') {
-                                    parts.push(cn.getAttribute('data-tp9-emote-code') || cn.getAttribute('alt') || '');
-                                } else if (cn.nodeType === 1) {
-                                    parts.push(cn.textContent || '');
-                                }
-                            });
-                            for (var k = 0; k < imgs.length; k++) {
-                                var code = imgs[k].getAttribute('data-tp9-emote-code') || imgs[k].getAttribute('alt') || '';
-                                if (code) parts.push(code);
-                            }
-                        } else {
-                            parts.push(n.textContent || '');
-                        }
-                    }
+            var walkBodyPlain = function (node) {
+                if (!node) return;
+                if (node.nodeType === 3) {
+                    parts.push(node.nodeValue || '');
+                    return;
                 }
-            });
+                if (node.nodeType !== 1) return;
+                if (node.classList && node.classList.contains('tp9-emote-zw')) return;
+                if (node.tagName === 'IMG') {
+                    parts.push(node.getAttribute('data-tp9-emote-code') || node.getAttribute('alt') || '');
+                    return;
+                }
+                var ch = node.childNodes;
+                for (var c = 0; c < ch.length; c++) {
+                    walkBodyPlain(ch[c]);
+                }
+            };
+            walkBodyPlain(bodyRoot);
             return parts.join(' ').replace(/\s+/g, ' ').trim();
         }
-        var frags = msgEl.querySelectorAll('.text-fragment, [data-a-target="chat-message-text"], img.tp9-emote, .chat-image__container img, img.chat-line__message--emote');
+        var fallbackSel =
+            '.text-fragment, [data-a-target="chat-message-text"], ' +
+            (typeof CHAT_MENTION_TOKEN_SEL === 'string' ? CHAT_MENTION_TOKEN_SEL + ', ' : '') +
+            'a.link-fragment, [data-a-target="chat-message-link"], ' +
+            'img.tp9-emote, .chat-image__container img, img.chat-line__message--emote';
+        var frags = msgEl.querySelectorAll(fallbackSel);
         if (frags.length) {
             for (var i = 0; i < frags.length; i++) {
                 var f = frags[i];
+                if (f.parentElement && f.parentElement !== msgEl && f.parentElement.matches && f.parentElement.matches(fallbackSel)) {
+                    continue;
+                }
                 if (f.tagName === 'IMG') {
                     parts.push(f.getAttribute('data-tp9-emote-code') || f.getAttribute('alt') || '');
                 } else {
@@ -42039,7 +43009,1007 @@ dashboardButton.style.visibility = 'hidden';
             }
             return parts.join(' ').replace(/\s+/g, ' ').trim();
         }
-        return (msgEl.textContent || '').trim();
+        var cloneTxt = (msgEl.textContent || '');
+        var hdrSkip = msgEl.__tp9ReplyHdrEl || msgEl.querySelector('.tp9-reply-header-nav');
+        if (hdrSkip && hdrSkip.textContent) {
+            var hTxt = hdrSkip.textContent;
+            var hPos = cloneTxt.indexOf(hTxt);
+            if (hPos !== -1) {
+                cloneTxt = cloneTxt.slice(0, hPos) + ' ' + cloneTxt.slice(hPos + hTxt.length);
+            }
+        }
+        return cloneTxt.replace(/\s+/g, ' ').trim();
+    }
+
+    var CHAT_MENTION_TOKEN_SEL =
+        '.chat-line__message-mention, ' +
+        '.mention-fragment, ' +
+        '[data-a-target="chat-message-mention"], ' +
+        '[class*="mention-fragment" i], ' +
+        '[class*="message-mention" i]';
+
+    var CHAT_REPLY_HEADER_RE =
+        /^(?:R[ée]pond(?:\s+[àa])?|Replying\s+to|En\s+r[ée]ponse\s+[àa])\s+@?([a-zA-Z0-9_\u00C0-\u024F]{2,35})(?:\s*:\s*([\s\S]*))?$/i;
+
+    function findReplyHeaderElement(msgEl) {
+        if (!msgEl || msgEl.nodeType !== 1) return null;
+        if (msgEl.__tp9ReplyHdrEl && msgEl.contains(msgEl.__tp9ReplyHdrEl)) {
+            return msgEl.__tp9ReplyHdrEl;
+        }
+        var authorOrBody = msgEl.querySelector(
+            '.chat-author__display-name, [data-a-target="chat-message-username"], [data-a-target="chat-line-message-body"]'
+        );
+        var explicit = msgEl.querySelector(
+            '[data-a-target*="reply" i], [data-test-selector*="reply" i], [class*="message-reply" i], [class*="reply-line" i], ' +
+            'p[title*="Répond" i], p[title*="Replying" i], span[title*="Répond" i], span[title*="Replying" i]'
+        );
+        if (explicit && (!authorOrBody || (!explicit.contains(authorOrBody) && !authorOrBody.contains(explicit)))) {
+            var cur = explicit;
+            while (
+                cur.parentElement &&
+                cur.parentElement !== msgEl &&
+                (!authorOrBody || !cur.parentElement.contains(authorOrBody)) &&
+                !(cur.parentElement.classList && cur.parentElement.classList.contains('tp9-chat-ts-tag'))
+            ) {
+                cur = cur.parentElement;
+            }
+            msgEl.__tp9ReplyHdrEl = cur;
+            return cur;
+        }
+
+        // Parcours rapide O(1) des frères précédant le bloc auteur/message
+        var spine = authorOrBody;
+        while (spine && spine !== msgEl) {
+            var prev = spine.previousElementSibling;
+            while (prev) {
+                if (!prev.classList || (!prev.classList.contains('tp9-chat-ts-tag') && !prev.classList.contains('tp9-bot-badge'))) {
+                    var tNode = (prev.getAttribute && prev.getAttribute('title'))
+                        ? prev
+                        : (prev.querySelector ? prev.querySelector('[title]') : null);
+                    var candTxt = ((tNode && tNode.getAttribute('title')) || prev.textContent || '').replace(/\s+/g, ' ').trim();
+                    if (candTxt && CHAT_REPLY_HEADER_RE.test(candTxt)) {
+                        msgEl.__tp9ReplyHdrEl = prev;
+                        return prev;
+                    }
+                }
+                prev = prev.previousElementSibling;
+            }
+            spine = spine.parentElement;
+        }
+        return null;
+    }
+
+    function extractChatMsgMetaFromFiber(msgEl) {
+        if (!msgEl || typeof msgEl !== 'object') return null;
+        var fiber = null;
+        try {
+            var keys = Object.keys(msgEl);
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0) {
+                    fiber = msgEl[k];
+                    break;
+                }
+            }
+            if (!fiber) {
+                for (var pIdx = 0; pIdx < keys.length; pIdx++) {
+                    if (keys[pIdx].indexOf('__reactProps$') === 0 && msgEl[keys[pIdx]]) {
+                        fiber = { memoizedProps: msgEl[keys[pIdx]], return: null, child: null };
+                        break;
+                    }
+                }
+            }
+        } catch (e) {}
+        if (!fiber) return null;
+
+        var readMsgObj = function (f) {
+            if (!f) return null;
+            var mp = f.memoizedProps || f.pendingProps;
+            var cand = (mp && (mp.message || mp.msg)) || (f.stateNode && f.stateNode.props && f.stateNode.props.message) || null;
+            if (cand && typeof cand === 'object' && (cand.id || cand.msgid || cand.reply || cand.user)) {
+                return cand;
+            }
+            if (mp && typeof mp === 'object' && mp.reply && typeof mp.reply === 'object') {
+                return mp;
+            }
+            return null;
+        };
+
+        var found = null;
+        var cur = fiber;
+        for (var up = 0; up < 8 && cur; up++) {
+            found = readMsgObj(cur);
+            if (found) break;
+            cur = cur.return;
+        }
+        if (!found && fiber.child) {
+            var ch = fiber.child;
+            for (var dn = 0; dn < 4 && ch; dn++) {
+                found = readMsgObj(ch);
+                if (found) break;
+                ch = ch.child;
+            }
+        }
+        if (!found) return null;
+
+        var u = found.user || found.sender || {};
+        var rep = found.reply || null;
+        var rawMsgText = '';
+        if (typeof found.messageBody === 'string' && found.messageBody) {
+            rawMsgText = found.messageBody;
+        } else if (typeof found.message === 'string' && found.message) {
+            rawMsgText = found.message;
+        } else if (found.content && typeof found.content.text === 'string' && found.content.text) {
+            rawMsgText = found.content.text;
+        } else if (Array.isArray(found.messageParts) || Array.isArray(found.tokens)) {
+            var arrT = found.messageParts || found.tokens;
+            var accT = '';
+            for (var ti = 0; ti < arrT.length; ti++) {
+                var tk = arrT[ti];
+                if (!tk) continue;
+                if (typeof tk === 'string') accT += tk;
+                else if (typeof tk.content === 'string') accT += tk.content;
+                else if (typeof tk.text === 'string') accT += tk.text;
+                else if (tk.content && typeof tk.content.text === 'string') accT += tk.content.text;
+                else if (tk.content && typeof tk.content.alt === 'string') accT += tk.content.alt;
+                else if (typeof tk.alt === 'string') accT += tk.alt;
+            }
+            if (accT && accT.indexOf('**') === -1) rawMsgText = accT;
+        }
+        return {
+            id: String(found.id || found.msgid || ''),
+            authorLogin: String(u.userLogin || u.login || found.userLogin || '').trim().toLowerCase(),
+            authorDisplay: String(u.userDisplayName || u.displayName || found.userDisplayName || '').trim(),
+            authorColor: String(u.color || found.color || '').trim(),
+            uncensoredBody: rawMsgText,
+            parentMsgId: rep ? String(rep.parentMsgId || rep.parentId || '') : '',
+            parentUserLogin: rep ? String(rep.parentUserLogin || '').trim().toLowerCase() : '',
+            parentDisplayName: rep ? String(rep.parentDisplayName || '').trim() : '',
+            parentMsgBody: rep ? String(rep.parentMessageBody || rep.parentMsgBody || '').trim() : '',
+            threadId: rep ? String(rep.threadParentMsgId || rep.parentMsgId || '') : ''
+        };
+    }
+
+    function buildMaskedIrcMatchRegex(normBody, exactMaskLen) {
+        if (!normBody || normBody.indexOf('**') === -1) return null;
+        try {
+            var parts = normBody.split(/(\*{2,})/);
+            var pattern = '^';
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                if (!p) continue;
+                if (/^\*{2,}$/.test(p)) {
+                    pattern += exactMaskLen ? ('[\\s\\S]{' + p.length + '}') : '[\\s\\S]+?';
+                } else {
+                    var esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+                    pattern += esc;
+                }
+            }
+            pattern += '$';
+            return new RegExp(pattern, 'i');
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function consumeMatchingPendingIrc(authorLogin, authorLower, bodyText, domReplyUserLower) {
+        if (!bttvPendingIrcQueue.length) return null;
+        var now = Date.now();
+        var normBody = (bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        var maskedExactRe = normBody.indexOf('**') !== -1 ? buildMaskedIrcMatchRegex(normBody, true) : null;
+        var maskedFlexRe = normBody.indexOf('**') !== -1 ? buildMaskedIrcMatchRegex(normBody, false) : null;
+        var bestIdx = -1;
+        var bestScore = 0;
+        for (var i = bttvPendingIrcQueue.length - 1; i >= 0; i--) {
+            var item = bttvPendingIrcQueue[i];
+            if (item.matchedDom || (now - item.createdAt) > 10000) continue;
+            var itemAuthor = item.authorLogin || (item.authorDisplay ? item.authorDisplay.toLowerCase() : '');
+            var sameAuthor =
+                (authorLogin && itemAuthor === authorLogin) ||
+                (authorLower && (itemAuthor === authorLower || (item.authorDisplay && item.authorDisplay.toLowerCase() === authorLower)));
+            if (!sameAuthor) continue;
+            var itemClean = ((item.uncensoredBody || item.bodyText) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            var itemRaw = ((item.uncensoredRawBody || item.rawBody) || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            if (normBody && (itemClean === normBody || itemRaw === normBody || itemRaw.indexOf(normBody) !== -1)) {
+                bestIdx = i;
+                bestScore = 4;
+                break;
+            }
+            if (maskedExactRe && (maskedExactRe.test(itemClean) || maskedExactRe.test(itemRaw)) && bestScore < 3) {
+                bestIdx = i;
+                bestScore = 3;
+                break;
+            }
+            if (maskedFlexRe && (maskedFlexRe.test(itemClean) || maskedFlexRe.test(itemRaw)) && bestScore < 2) {
+                bestIdx = i;
+                bestScore = 2;
+            }
+            if (domReplyUserLower && item.parentUserLogin === domReplyUserLower && bestScore < 1) {
+                bestIdx = i;
+                bestScore = 1;
+            } else if (!normBody && bestScore < 1) {
+                bestIdx = i;
+                bestScore = 1;
+            }
+        }
+        if (bestIdx !== -1) {
+            var matched = bttvPendingIrcQueue[bestIdx];
+            matched.matchedDom = true;
+            return matched;
+        }
+        return null;
+    }
+
+    function findParentRecordInHistory(parentUserLower, parentSnippet, beforeSeq) {
+        if (!parentUserLower) return null;
+        var arr = bttvChatMsgsByAuthor.get(parentUserLower);
+        if (!arr || !arr.length) return null;
+        var cleanSnip = (parentSnippet || '')
+            .replace(/(?:\.\.\.|…)+\s*$/, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        if (cleanSnip.charAt(0) === '@') {
+            var sp = cleanSnip.indexOf(' ');
+            var cleanNoLead = sp > 1 ? cleanSnip.slice(sp + 1).trim() : '';
+            for (var i = arr.length - 1; i >= 0; i--) {
+                var r = arr[i];
+                if (beforeSeq && r.seq && r.seq >= beforeSeq) continue;
+                var rb = (r.bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                if (cleanSnip && rb.indexOf(cleanSnip) === 0) return r;
+                if (cleanNoLead && rb.indexOf(cleanNoLead) === 0) return r;
+            }
+        } else if (cleanSnip) {
+            for (var j = arr.length - 1; j >= 0; j--) {
+                var r2 = arr[j];
+                if (beforeSeq && r2.seq && r2.seq >= beforeSeq) continue;
+                var rb2 = (r2.bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                if (rb2.indexOf(cleanSnip) === 0 || cleanSnip.indexOf(rb2) === 0) return r2;
+            }
+        }
+        for (var k = arr.length - 1; k >= 0; k--) {
+            if (!beforeSeq || !arr[k].seq || arr[k].seq < beforeSeq) {
+                return arr[k];
+            }
+        }
+        return null;
+    }
+
+    function ensureChatMessageMeta(msgEl, preBodyText) {
+        if (!msgEl || msgEl.nodeType !== 1) return null;
+        if (msgEl.__tp9Meta) return msgEl.__tp9Meta;
+
+        var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
+        var authorDisplay = authorEl ? (authorEl.textContent || '').trim() : '';
+        var parenM = authorDisplay.match(/\(([a-zA-Z0-9_]+)\)\s*$/);
+        var authorLogin = (
+            msgEl.getAttribute('data-a-user') ||
+            (authorEl && authorEl.getAttribute('data-a-user')) ||
+            (parenM ? parenM[1] : '')
+        ).trim().toLowerCase();
+        var authorLower = authorDisplay.toLowerCase();
+        var authorColor = authorEl ? (authorEl.style.color || '') : '';
+
+        var replyHdrEl = findReplyHeaderElement(msgEl);
+        var domReplyUser = '';
+        var domReplyDisplay = '';
+        var domReplyBody = '';
+        if (replyHdrEl) {
+            replyHdrEl.classList.add('tp9-reply-header-nav');
+            var tNode = (replyHdrEl.getAttribute && replyHdrEl.getAttribute('title'))
+                ? replyHdrEl
+                : (replyHdrEl.querySelector ? replyHdrEl.querySelector('[title]') : null);
+            var hdrFull = ((tNode && tNode.getAttribute('title')) || replyHdrEl.textContent || '').replace(/\s+/g, ' ').trim();
+            var hm = hdrFull.match(CHAT_REPLY_HEADER_RE);
+            if (hm) {
+                domReplyDisplay = hm[1].trim();
+                domReplyUser = domReplyDisplay.toLowerCase();
+                domReplyBody = (hm[2] || '').trim();
+            }
+        }
+
+        var fiberMeta = extractChatMsgMetaFromFiber(msgEl);
+        var bodyTxt = preBodyText !== undefined ? preBodyText : extractChatMessagePlainText(msgEl);
+        var ircRec = null;
+        if (fiberMeta && fiberMeta.id && bttvChatMsgById.has(fiberMeta.id)) {
+            ircRec = bttvChatMsgById.get(fiberMeta.id);
+            ircRec.matchedDom = true;
+        } else {
+            ircRec = consumeMatchingPendingIrc(
+                (fiberMeta && fiberMeta.authorLogin) || authorLogin,
+                authorLower,
+                bodyTxt,
+                (fiberMeta && fiberMeta.parentUserLogin) || domReplyUser
+            );
+        }
+
+        var msgId =
+            (fiberMeta && fiberMeta.id) ||
+            (ircRec && ircRec.id) ||
+            msgEl.getAttribute('data-id') ||
+            ('dom-' + (++bttvSyntheticMsgSeq));
+        var finalAuthorLogin =
+            authorLogin ||
+            (fiberMeta && fiberMeta.authorLogin) ||
+            (ircRec && ircRec.authorLogin) ||
+            authorLower;
+        var finalAuthorDisplay =
+            authorDisplay ||
+            (fiberMeta && fiberMeta.authorDisplay) ||
+            (ircRec && ircRec.authorDisplay) ||
+            finalAuthorLogin;
+        var finalColor =
+            authorColor ||
+            (fiberMeta && fiberMeta.authorColor) ||
+            (ircRec && ircRec.authorColor) ||
+            '';
+
+        var parentMsgId = (fiberMeta && fiberMeta.parentMsgId) || (ircRec && ircRec.parentMsgId) || '';
+        var parentUserLogin = (fiberMeta && fiberMeta.parentUserLogin) || (ircRec && ircRec.parentUserLogin) || domReplyUser || '';
+        var parentDisplayName = (fiberMeta && fiberMeta.parentDisplayName) || (ircRec && ircRec.parentDisplayName) || domReplyDisplay || '';
+        var parentMsgBody = (fiberMeta && fiberMeta.parentMsgBody) || (ircRec && ircRec.parentMsgBody) || domReplyBody || '';
+        var threadId = (fiberMeta && fiberMeta.threadId) || (ircRec && ircRec.threadId) || parentMsgId || '';
+
+        if (!parentMsgId && parentUserLogin) {
+            var guessedParent = findParentRecordInHistory(parentUserLogin, parentMsgBody, 0);
+            if (guessedParent) {
+                parentMsgId = guessedParent.id;
+                if (!threadId) {
+                    threadId = guessedParent.threadId || guessedParent.id;
+                }
+                if (!parentDisplayName && guessedParent.authorDisplay) {
+                    parentDisplayName = guessedParent.authorDisplay;
+                }
+                if ((!parentMsgBody || /(?:\.\.\.|…)\s*$/.test(parentMsgBody)) && guessedParent.bodyText) {
+                    parentMsgBody = guessedParent.bodyText;
+                }
+            }
+        } else if (parentMsgId && bttvChatMsgById.has(parentMsgId)) {
+            var knownParent = bttvChatMsgById.get(parentMsgId);
+            if (!threadId) {
+                threadId = knownParent.threadId || knownParent.id;
+            }
+        }
+
+        if (msgId) msgEl.setAttribute('data-tp9-msg-id', msgId);
+        if (finalAuthorLogin) msgEl.setAttribute('data-tp9-author', finalAuthorLogin);
+        if (parentMsgId) msgEl.setAttribute('data-tp9-reply-parent-id', parentMsgId);
+        if (threadId) msgEl.setAttribute('data-tp9-thread-id', threadId);
+
+        var uncensoredBody =
+            (ircRec && ircRec.uncensoredBody) ||
+            (fiberMeta && fiberMeta.uncensoredBody) ||
+            '';
+        var uncensoredRawBody =
+            (ircRec && ircRec.uncensoredRawBody) ||
+            uncensoredBody ||
+            '';
+
+        var meta = {
+            id: msgId,
+            authorLogin: finalAuthorLogin,
+            authorLower: authorLower || finalAuthorLogin,
+            authorDisplay: finalAuthorDisplay,
+            authorColor: finalColor,
+            uncensoredBody: uncensoredBody,
+            uncensoredRawBody: uncensoredRawBody,
+            ircFlags: (ircRec && ircRec.ircFlags) || '',
+            parentMsgId: parentMsgId,
+            parentUserLogin: parentUserLogin,
+            parentDisplayName: parentDisplayName,
+            parentDisplayLower: parentDisplayName ? parentDisplayName.toLowerCase() : parentUserLogin,
+            parentMsgBody: parentMsgBody,
+            threadId: threadId,
+            ircRec: ircRec
+        };
+        msgEl.__tp9Meta = meta;
+        return meta;
+    }
+
+    function extractUncensoredWordFromTokenFiber(el, maskLen) {
+        if (!el || typeof el !== 'object') return '';
+        try {
+            var keys = Object.keys(el);
+            var fiber = null;
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.indexOf('__reactFiber$') === 0 || k.indexOf('__reactInternalInstance$') === 0) {
+                    fiber = el[k];
+                    break;
+                }
+            }
+            if (!fiber) {
+                for (var p = 0; p < keys.length; p++) {
+                    if (keys[p].indexOf('__reactProps$') === 0 && el[keys[p]]) {
+                        fiber = { memoizedProps: el[keys[p]], return: null };
+                        break;
+                    }
+                }
+            }
+            var cur = fiber;
+            for (var up = 0; up < 6 && cur; up++) {
+                var mp = cur.memoizedProps || cur.pendingProps;
+                if (mp && typeof mp === 'object') {
+                    var cands = [
+                        mp.text,
+                        mp.word,
+                        mp.content,
+                        mp.rawText,
+                        mp.originalText,
+                        mp.token && (mp.token.text || mp.token.content || mp.token.word),
+                        mp.fragment && (mp.fragment.text || mp.fragment.content)
+                    ];
+                    for (var c = 0; c < cands.length; c++) {
+                        var v = cands[c];
+                        if (typeof v === 'string' && v.length > 0 && !/^\*+$/.test(v.trim())) {
+                            if (!maskLen || v.length === maskLen || Math.abs(v.length - maskLen) <= 2) {
+                                return v;
+                            }
+                        }
+                    }
+                }
+                cur = cur.return;
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    function formatUncensoredTooltip(maskStr) {
+        var prefix = (typeof uiLang === 'function' && uiLang() === 'en')
+            ? 'Uncensored word (filtered by Twitch): '
+            : 'Mot démasqué (censuré par Twitch) : ';
+        return prefix + (maskStr || '***');
+    }
+
+    function applyUncensoredSpanState(spanEl, showUncensored) {
+        if (!spanEl || spanEl.nodeType !== 1) return;
+        var maskStr = spanEl.getAttribute('data-tp9-censored-mask') || '';
+        var realStr = spanEl.getAttribute('data-tp9-uncensored-text') || '';
+        var leadWs = spanEl.getAttribute('data-tp9-lead-ws') || '';
+        var trailWs = spanEl.getAttribute('data-tp9-trail-ws') || '';
+        if (!maskStr || !realStr) return;
+        var targetTxt = showUncensored ? (leadWs + realStr + trailWs) : (leadWs + maskStr + trailWs);
+        if (spanEl.textContent !== targetTxt) {
+            spanEl.textContent = targetTxt;
+        }
+        if (showUncensored) {
+            spanEl.setAttribute('title', formatUncensoredTooltip(maskStr));
+        } else {
+            var origTitle = spanEl.getAttribute('data-tp9-orig-title');
+            if (origTitle) {
+                spanEl.setAttribute('title', origTitle);
+            } else {
+                spanEl.removeAttribute('title');
+            }
+        }
+    }
+
+    function bindUncensoredClickShield(el) {
+        if (!el || el.__tp9UncensorClickBound || typeof el.addEventListener !== 'function') return;
+        el.__tp9UncensorClickBound = true;
+        el.addEventListener('click', function (e) {
+            if (!scriptIsOff() && pageConfig.uncensorChat !== false) {
+                e.stopPropagation();
+            }
+        }, true);
+    }
+
+    function alignMasksWithRawSource(segments, maskEntries, rawSources) {
+        if (!maskEntries.length || !rawSources.length) return false;
+        var buildRegex = function (exactLengths, allowLeadMention) {
+            var pat = allowLeadMention ? '^\\s*(?:@\\S+\\s+)?' : '^\\s*';
+            var prevWasImg = false;
+            for (var s = 0; s < segments.length; s++) {
+                var seg = segments[s];
+                if (seg.kind === 'mask') {
+                    var mLen = seg.entry.maskStr.length;
+                    pat += exactLengths ? ('([\\s\\S]{' + mLen + '})') : '([\\s\\S]+?)';
+                    prevWasImg = false;
+                } else if (seg.kind === 'img') {
+                    if (seg.text) {
+                        var escImg = seg.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        pat += '\\s*' + escImg + '\\s*';
+                    }
+                    prevWasImg = true;
+                } else if (seg.text) {
+                    var txt = seg.text;
+                    if (prevWasImg) txt = txt.replace(/^\s+/, '');
+                    if (s + 1 < segments.length && segments[s + 1].kind === 'img') {
+                        txt = txt.replace(/\s+$/, '');
+                    }
+                    if (s === 0) txt = txt.replace(/^\s+/, '');
+                    if (s === segments.length - 1) txt = txt.replace(/\s+$/, '');
+                    if (txt) {
+                        var subParts = txt.split(/(\s+)/);
+                        for (var sp = 0; sp < subParts.length; sp++) {
+                            var chunk = subParts[sp];
+                            if (!chunk) continue;
+                            if (/^\s+$/.test(chunk)) {
+                                pat += '\\s+';
+                            } else {
+                                pat += chunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            }
+                        }
+                    }
+                    prevWasImg = false;
+                }
+            }
+            pat += '\\s*$';
+            try {
+                return new RegExp(pat, 'i');
+            } catch (e) {
+                return null;
+            }
+        };
+
+        var attempts = [
+            buildRegex(true, false),
+            buildRegex(false, false),
+            buildRegex(true, true),
+            buildRegex(false, true)
+        ];
+
+        for (var r = 0; r < rawSources.length; r++) {
+            var src = rawSources[r];
+            if (!src) continue;
+            for (var a = 0; a < attempts.length; a++) {
+                var re = attempts[a];
+                if (!re) continue;
+                var m = src.match(re);
+                if (m && m.length === maskEntries.length + 1) {
+                    var anyReal = false;
+                    for (var idx = 0; idx < maskEntries.length; idx++) {
+                        var captured = m[idx + 1] || '';
+                        if (captured && !/^\*+$/.test(captured.trim())) {
+                            maskEntries[idx].resolved = captured;
+                            anyReal = true;
+                        }
+                    }
+                    if (anyReal) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function uncensorChatMessageNode(msgEl) {
+        if (!msgEl || msgEl.nodeType !== 1) return false;
+        var showUncensored = !scriptIsOff() && pageConfig.uncensorChat !== false;
+
+        var existingSpans = msgEl.querySelectorAll('.tp9-uncensored-word');
+        if (existingSpans.length > 0) {
+            for (var ex = 0; ex < existingSpans.length; ex++) {
+                applyUncensoredSpanState(existingSpans[ex], showUncensored);
+            }
+            return true;
+        }
+
+        if (msgEl.__tp9UncensorChecked) return false;
+
+        var bodyRoot = msgEl.querySelector('[data-a-target="chat-line-message-body"]');
+        var scopeRoot = bodyRoot || msgEl;
+        if ((scopeRoot.textContent || '').indexOf('**') === -1) {
+            msgEl.__tp9UncensorChecked = true;
+            return false;
+        }
+
+        var meta = ensureChatMessageMeta(msgEl);
+        var replyHdr = (!bodyRoot && typeof findReplyHeaderElement === 'function') ? findReplyHeaderElement(msgEl) : null;
+        var segments = [];
+        var maskEntries = [];
+        var textNodeGroups = [];
+
+        var walk = function (node) {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                var val = node.nodeValue || '';
+                if (!val) return;
+                if (!bodyRoot && segments.length === 0 && /^\s*:\s*$/.test(val)) return;
+                if (/\*{2,}/.test(val)) {
+                    var group = { node: node, text: val, matches: [] };
+                    var reMask = /\*{2,}/g;
+                    var lastIdx = 0;
+                    var mm;
+                    while ((mm = reMask.exec(val)) !== null) {
+                        if (mm.index > lastIdx) {
+                            segments.push({ kind: 'text', text: val.slice(lastIdx, mm.index) });
+                        }
+                        var mEntry = {
+                            type: 'textMatch',
+                            maskStr: mm[0],
+                            index: mm.index,
+                            length: mm[0].length,
+                            resolved: ''
+                        };
+                        group.matches.push(mEntry);
+                        maskEntries.push(mEntry);
+                        segments.push({ kind: 'mask', entry: mEntry });
+                        lastIdx = mm.index + mm[0].length;
+                    }
+                    if (lastIdx < val.length) {
+                        segments.push({ kind: 'text', text: val.slice(lastIdx) });
+                    }
+                    textNodeGroups.push(group);
+                } else {
+                    segments.push({ kind: 'text', text: val });
+                }
+                return;
+            }
+            if (node.nodeType !== 1) return;
+            if (replyHdr && (node === replyHdr || (replyHdr.contains && replyHdr.contains(node)))) return;
+            if (node.classList && (
+                node.classList.contains('tp9-reply-header-nav') ||
+                node.classList.contains('tp9-chat-ts-tag') ||
+                node.classList.contains('tp9-bot-badge') ||
+                node.classList.contains('tp9-spam-badge') ||
+                node.classList.contains('tp9-emote-zw') ||
+                node.classList.contains('chat-author__display-name') ||
+                node.classList.contains('chat-line__username-container') ||
+                node.classList.contains('chat-line__username') ||
+                node.classList.contains('chat-line__timestamp') ||
+                node.classList.contains('chat-line__message--badges') ||
+                node.classList.contains('chat-line__message--colon')
+            )) {
+                return;
+            }
+            var aTarget = node.getAttribute ? (node.getAttribute('data-a-target') || '') : '';
+            if (
+                aTarget === 'chat-message-username' ||
+                aTarget === 'chat-timestamp' ||
+                aTarget === 'chat-badge'
+            ) {
+                return;
+            }
+            if (node.tagName === 'IMG') {
+                if (node.classList && node.classList.contains('chat-badge')) return;
+                var code = node.getAttribute('data-tp9-emote-code') || node.getAttribute('alt') || '';
+                segments.push({ kind: 'img', text: code });
+                return;
+            }
+            if (
+                node !== scopeRoot &&
+                !(node.matches && node.matches('.text-fragment, [data-a-target="chat-message-text"], [data-a-target="chat-line-message-body"]')) &&
+                !(node.querySelector && node.querySelector('img'))
+            ) {
+                var rawElemTxt = node.textContent || '';
+                if (/^\s*\*{2,}\s*$/.test(rawElemTxt)) {
+                    var leadWs = (rawElemTxt.match(/^\s*/) || [''])[0];
+                    var trailWs = (rawElemTxt.match(/\s*$/) || [''])[0];
+                    var coreMask = rawElemTxt.trim();
+                    if (leadWs) segments.push({ kind: 'text', text: leadWs });
+                    var elemEntry = {
+                        type: 'maskElem',
+                        el: node,
+                        maskStr: coreMask,
+                        leadWs: leadWs,
+                        trailWs: trailWs,
+                        resolved: extractUncensoredWordFromTokenFiber(node, coreMask.length)
+                    };
+                    maskEntries.push(elemEntry);
+                    segments.push({ kind: 'mask', entry: elemEntry });
+                    if (trailWs) segments.push({ kind: 'text', text: trailWs });
+                    return;
+                }
+            }
+            var ch = node.childNodes;
+            for (var c = 0; c < ch.length; c++) {
+                walk(ch[c]);
+            }
+        };
+
+        walk(scopeRoot);
+        msgEl.__tp9UncensorChecked = true;
+        if (!maskEntries.length) return false;
+
+        var rawSources = [];
+        if (meta && meta.uncensoredBody) rawSources.push(meta.uncensoredBody);
+        if (meta && meta.uncensoredRawBody && meta.uncensoredRawBody !== meta.uncensoredBody) {
+            rawSources.push(meta.uncensoredRawBody);
+        }
+        if (rawSources.length) {
+            alignMasksWithRawSource(segments, maskEntries, rawSources);
+        }
+
+        var changedAny = false;
+        for (var eIdx = 0; eIdx < maskEntries.length; eIdx++) {
+            var ent = maskEntries[eIdx];
+            if (ent.type === 'maskElem' && ent.resolved && !/^\*+$/.test(ent.resolved.trim())) {
+                var el = ent.el;
+                var origTitle = el.getAttribute('title') || '';
+                el.classList.add('tp9-uncensored-word', 'tp9-uncensored-native-wrap');
+                el.setAttribute('data-tp9-censored-mask', ent.maskStr);
+                el.setAttribute('data-tp9-uncensored-text', ent.resolved);
+                if (ent.leadWs) el.setAttribute('data-tp9-lead-ws', ent.leadWs);
+                if (ent.trailWs) el.setAttribute('data-tp9-trail-ws', ent.trailWs);
+                if (origTitle) el.setAttribute('data-tp9-orig-title', origTitle);
+                bindUncensoredClickShield(el);
+                applyUncensoredSpanState(el, showUncensored);
+                changedAny = true;
+            }
+        }
+
+        for (var gIdx = 0; gIdx < textNodeGroups.length; gIdx++) {
+            var grp = textNodeGroups[gIdx];
+            var hasResolvedInGroup = false;
+            for (var mI = 0; mI < grp.matches.length; mI++) {
+                if (grp.matches[mI].resolved && !/^\*+$/.test(grp.matches[mI].resolved.trim())) {
+                    hasResolvedInGroup = true;
+                    break;
+                }
+            }
+            if (!hasResolvedInGroup || !grp.node.parentNode) continue;
+
+            var frag = document.createDocumentFragment();
+            var cursor = 0;
+            for (var k = 0; k < grp.matches.length; k++) {
+                var mt = grp.matches[k];
+                if (mt.index > cursor) {
+                    frag.appendChild(document.createTextNode(grp.text.slice(cursor, mt.index)));
+                }
+                if (mt.resolved && !/^\*+$/.test(mt.resolved.trim())) {
+                    var sp = document.createElement('span');
+                    sp.className = 'tp9-uncensored-word';
+                    sp.setAttribute('data-tp9-censored-mask', mt.maskStr);
+                    sp.setAttribute('data-tp9-uncensored-text', mt.resolved);
+                    applyUncensoredSpanState(sp, showUncensored);
+                    frag.appendChild(sp);
+                    changedAny = true;
+                } else {
+                    frag.appendChild(document.createTextNode(mt.maskStr));
+                }
+                cursor = mt.index + mt.length;
+            }
+            if (cursor < grp.text.length) {
+                frag.appendChild(document.createTextNode(grp.text.slice(cursor)));
+            }
+            grp.node.parentNode.replaceChild(frag, grp.node);
+        }
+
+        return changedAny;
+    }
+
+    function syncUncensoredChatDomState() {
+        if (typeof document === 'undefined' || !document.querySelectorAll) return;
+        var showUncensored = !scriptIsOff() && pageConfig.uncensorChat !== false;
+        if (showUncensored) {
+            var uncheckedMsgs = document.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+            for (var u = 0; u < uncheckedMsgs.length; u++) {
+                if (!uncheckedMsgs[u].__tp9UncensorChecked) {
+                    uncensorChatMessageNode(uncheckedMsgs[u]);
+                }
+            }
+        }
+        var spans = document.querySelectorAll('.tp9-uncensored-word');
+        var touchedMsgs = [];
+        for (var i = 0; i < spans.length; i++) {
+            applyUncensoredSpanState(spans[i], showUncensored);
+            var parentMsg = spans[i].closest ? spans[i].closest('.chat-line__message, [data-a-target="chat-line-message"]') : null;
+            if (parentMsg && touchedMsgs.indexOf(parentMsg) === -1) {
+                touchedMsgs.push(parentMsg);
+            }
+        }
+        for (var m = 0; m < touchedMsgs.length; m++) {
+            evaluateMessageDynamicRules(touchedMsgs[m]);
+        }
+    }
+
+    function doesMessageMentionOrReplyToUser(msgEl, meta, lowerBody, me) {
+        if (!me || (!me.login && !me.displayLower)) return false;
+        var aLogin = (meta && meta.authorLogin) || '';
+        var aLower = (meta && meta.authorLower) || '';
+        if (me.login && (aLogin === me.login || aLower === me.login)) return false;
+        if (me.displayLower && (aLower === me.displayLower || aLogin === me.displayLower)) return false;
+
+        if (msgEl.querySelector('.chat-line__message-mention--me, .mention-fragment--recipient')) {
+            return true;
+        }
+        if (meta && (meta.parentUserLogin || meta.parentDisplayLower)) {
+            if (me.login && (meta.parentUserLogin === me.login || meta.parentDisplayLower === me.login)) {
+                return true;
+            }
+            if (me.displayLower && (meta.parentUserLogin === me.displayLower || meta.parentDisplayLower === me.displayLower)) {
+                return true;
+            }
+        }
+
+        var mentionSpans = msgEl.querySelectorAll(CHAT_MENTION_TOKEN_SEL);
+        var matchedSpan = false;
+        for (var mIdx = 0; mIdx < mentionSpans.length; mIdx++) {
+            var sp = mentionSpans[mIdx];
+            var mName = (sp.textContent || '').replace(/^@+/, '').replace(/[,.:;!?)]+$/, '').trim().toLowerCase();
+            if (mName && ((me.login && mName === me.login) || (me.displayLower && mName === me.displayLower))) {
+                sp.classList.add('tp9-self-mention-token');
+                matchedSpan = true;
+            }
+        }
+        if (matchedSpan) return true;
+
+        if (me.login && bodyMentionsUsername(lowerBody, me.login)) return true;
+        if (me.displayLower && me.displayLower !== me.login && bodyMentionsUsername(lowerBody, me.displayLower)) return true;
+        return false;
+    }
+
+    function extractSafeMessagePreviewParts(msgEl, fallbackText) {
+        var parts = [];
+        var pushText = function (txt) {
+            if (!txt) return;
+            if (parts.length && parts[parts.length - 1].t === 'text') {
+                parts[parts.length - 1].v += txt;
+            } else {
+                parts.push({ t: 'text', v: txt });
+            }
+        };
+        var walk = function (node) {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                pushText(node.nodeValue || '');
+                return;
+            }
+            if (node.nodeType !== 1) return;
+            if (node.classList && (
+                node.classList.contains('tp9-emote-zw') ||
+                node.classList.contains('tp9-chat-ts-tag') ||
+                node.classList.contains('tp9-spam-badge') ||
+                node.classList.contains('tp9-reply-header-nav')
+            )) {
+                return;
+            }
+            if (node.tagName === 'IMG') {
+                var src = node.getAttribute('src') || '';
+                var alt = node.getAttribute('data-tp9-emote-code') || node.getAttribute('alt') || '';
+                if (/^https:\/\//i.test(src)) {
+                    parts.push({ t: 'img', src: src, alt: alt });
+                } else if (alt) {
+                    pushText(alt);
+                }
+                return;
+            }
+            var ch = node.childNodes;
+            for (var c = 0; c < ch.length; c++) {
+                walk(ch[c]);
+            }
+        };
+
+        var bodyRoot = msgEl ? msgEl.querySelector('[data-a-target="chat-line-message-body"]') : null;
+        if (bodyRoot) {
+            walk(bodyRoot);
+        } else if (msgEl) {
+            var frags = msgEl.querySelectorAll(
+                '.text-fragment, [data-a-target="chat-message-text"], ' + CHAT_MENTION_TOKEN_SEL + ', img.tp9-emote, .chat-image__container img, img.chat-line__message--emote'
+            );
+            if (frags.length) {
+                for (var i = 0; i < frags.length; i++) {
+                    var f = frags[i];
+                    if (f.parentElement && f.parentElement.matches && f.parentElement.matches('.text-fragment, [data-a-target="chat-message-text"]')) {
+                        continue;
+                    }
+                    walk(f);
+                }
+            }
+        }
+        if (!parts.length && fallbackText) {
+            parts.push({ t: 'text', v: fallbackText });
+        }
+        return parts;
+    }
+
+    function pruneChatHistoryMapRefs() {
+        while (bttvChatMsgById.size > 500) {
+            var oldestK = bttvChatMsgById.keys().next().value;
+            var oldR = bttvChatMsgById.get(oldestK);
+            if (oldR) oldR.msgEl = null;
+            bttvChatMsgById.delete(oldestK);
+        }
+    }
+
+    function finalizeChatMessageHistoryRecord(msgEl) {
+        if (!msgEl || msgEl.nodeType !== 1) return;
+        var meta = ensureChatMessageMeta(msgEl);
+        if (!meta) return;
+
+        var bodyText = extractChatMessagePlainText(msgEl);
+        var tsNode = msgEl.querySelector('.tp9-chat-ts-tag, .chat-line__timestamp, [data-a-target="chat-timestamp"]');
+        var tsText = tsNode ? (tsNode.textContent || '').trim() : '';
+        var authorEl = msgEl.querySelector('.chat-author__display-name, [data-a-target="chat-message-username"]');
+        var liveColor = (authorEl && authorEl.style && authorEl.style.color) || meta.authorColor || '';
+
+        var rec = (meta.id && bttvChatMsgById.get(meta.id)) || meta.ircRec || null;
+        if (!rec) {
+            rec = {
+                id: meta.id,
+                createdAt: Date.now()
+            };
+        }
+        rec.id = meta.id;
+        rec.authorLogin = meta.authorLogin;
+        rec.authorDisplay = meta.authorDisplay || meta.authorLogin;
+        rec.authorColor = liveColor;
+        rec.bodyText = bodyText || rec.bodyText || '';
+        if (meta.uncensoredBody && !rec.uncensoredBody) {
+            rec.uncensoredBody = meta.uncensoredBody;
+        }
+        if (meta.uncensoredRawBody && !rec.uncensoredRawBody) {
+            rec.uncensoredRawBody = meta.uncensoredRawBody;
+        }
+        rec.parts = extractSafeMessagePreviewParts(msgEl, rec.bodyText);
+        rec.tsText = tsText || rec.tsText || '';
+        if (!rec.seq) {
+            rec.seq = ++bttvChatRecordSeq;
+        }
+        rec.parentMsgId = meta.parentMsgId || rec.parentMsgId || '';
+        rec.parentUserLogin = meta.parentUserLogin || rec.parentUserLogin || '';
+        rec.parentDisplayName = meta.parentDisplayName || rec.parentDisplayName || '';
+        rec.parentMsgBody = meta.parentMsgBody || rec.parentMsgBody || '';
+        rec.threadId = meta.threadId || rec.threadId || rec.parentMsgId || '';
+        rec.msgEl = msgEl;
+        rec.matchedDom = true;
+        msgEl.__tp9HistoryRec = rec;
+
+        if (rec.id) {
+            bttvChatMsgById.set(rec.id, rec);
+            pruneChatHistoryMapRefs();
+        }
+
+        var authorKey = (rec.authorLogin || (rec.authorDisplay || '').toLowerCase()).trim();
+        if (authorKey) {
+            var uList = bttvChatMsgsByAuthor.get(authorKey);
+            if (!uList) {
+                while (bttvChatMsgsByAuthor.size >= 300) {
+                    var oldAuthor = bttvChatMsgsByAuthor.keys().next().value;
+                    bttvChatMsgsByAuthor.delete(oldAuthor);
+                }
+                uList = [];
+                bttvChatMsgsByAuthor.set(authorKey, uList);
+            }
+            for (var p = 0; p < uList.length; p++) {
+                if (uList[p].msgEl && uList[p].msgEl.isConnected === false) {
+                    uList[p].msgEl = null;
+                }
+            }
+            if (uList.indexOf(rec) === -1) {
+                uList.push(rec);
+                if (uList.length > 14) {
+                    var droppedU = uList.shift();
+                    if (droppedU && droppedU.msgEl && droppedU.msgEl.isConnected === false) {
+                        droppedU.msgEl = null;
+                    }
+                }
+            }
+        }
+
+        var tRootId = rec.threadId || rec.parentMsgId || '';
+        if (tRootId) {
+            var tList = bttvChatThreadIndex.get(tRootId);
+            if (!tList) {
+                while (bttvChatThreadIndex.size >= 150) {
+                    var oldTid = bttvChatThreadIndex.keys().next().value;
+                    bttvChatThreadIndex.delete(oldTid);
+                }
+                tList = [];
+                bttvChatThreadIndex.set(tRootId, tList);
+                var rootRec = bttvChatMsgById.get(tRootId);
+                if (rootRec && rootRec !== rec) {
+                    rootRec.threadId = tRootId;
+                    if (rootRec.msgEl && rootRec.msgEl.isConnected) {
+                        rootRec.msgEl.setAttribute('data-tp9-thread-id', tRootId);
+                    }
+                    tList.push(rootRec);
+                }
+            }
+            if (rec.parentMsgId && rec.parentMsgId !== tRootId) {
+                var directParent = bttvChatMsgById.get(rec.parentMsgId);
+                if (directParent && tList.indexOf(directParent) === -1) {
+                    directParent.threadId = tRootId;
+                    tList.push(directParent);
+                }
+            }
+            if (tList.indexOf(rec) === -1) {
+                tList.push(rec);
+                if (tList.length > 25) {
+                    tList.shift();
+                }
+            }
+        }
     }
 
     function evaluateMessageDynamicRules(msgEl) {
@@ -42050,6 +44020,10 @@ dashboardButton.style.visibility = 'hidden';
         var authorLower = author.toLowerCase();
         var bodyText = extractChatMessagePlainText(msgEl);
         var lowerBody = bodyText.toLowerCase();
+        var meta = ensureChatMessageMeta(msgEl, bodyText);
+        if (meta && meta.authorLogin && !authorLogin) {
+            authorLogin = meta.authorLogin;
+        }
 
         // 1. Blacklist (corps du message + codes d'émotes + pseudo)
         var isBlacklisted = false;
@@ -42074,7 +44048,12 @@ dashboardButton.style.visibility = 'hidden';
             }
         }
 
-        // 2. Highlight mots-clés (uniquement sur le corps du message / émotes, jamais sur l'horodatage ou le badge BOT)
+        // 2a. Surlignage rouge (façon BetterTTV) des réponses reçues et @mentions de l'utilisateur courant
+        var me = getCurrentTwitchUserLogins();
+        var mentionsMe = doesMessageMentionOrReplyToUser(msgEl, meta, lowerBody, me);
+        msgEl.classList.toggle('tp9-msg-mention-me', mentionsMe);
+
+        // 2b. Highlight mots-clés personnalisés (uniquement sur le corps du message / émotes, jamais sur l'horodatage ou le badge BOT)
         var highlighted = false;
         if (pageConfig.highlightKeywords !== false && Array.isArray(pageConfig.highlightWords) && pageConfig.highlightWords.length) {
             for (var h = 0; h < pageConfig.highlightWords.length; h++) {
@@ -42117,9 +44096,11 @@ dashboardButton.style.visibility = 'hidden';
                 'img.chat-badge[alt*="VIP" i], img.chat-badge[alt*="Staff" i]'
             );
             var hasSelfMentionOrRedeem = !!msgEl.querySelector(
-                '.chat-line__message-mention--me, [data-a-target="chat-message-mention"], [data-a-target="chat-highlighted-message"]'
+                '.chat-line__message-mention--me, .mention-fragment--recipient, [data-a-target="chat-highlighted-message"]'
             ) || msgEl.classList.contains('chat-line__message--highlighted');
-            var domBodyLower = extractChatMessagePlainText(msgEl).toLowerCase();
+            var domBodyText = extractChatMessagePlainText(msgEl);
+            var domBodyLower = domBodyText.toLowerCase();
+            var preMeta = ensureChatMessageMeta(msgEl, domBodyText);
             var curChan = (getTestChannel() || '').toLowerCase();
             if (!isExemptPriorityChatMessage(
                 authorLogin || authorLower,
@@ -42128,7 +44109,8 @@ dashboardButton.style.visibility = 'hidden';
                 hasRoleBadge ? 'moderator/1' : '',
                 hasRoleBadge,
                 hasSelfMentionOrRedeem,
-                domBodyLower
+                domBodyLower,
+                preMeta ? preMeta.parentUserLogin : ''
             )) {
                 if (isPreDroppedChatMessage(authorLogin || authorLower, authorLower, domBodyLower) || !consumeSlowChatSlot()) {
                     msgEl.__tp9Processed = true;
@@ -42182,11 +44164,20 @@ dashboardButton.style.visibility = 'hidden';
             msgEl.classList.add('tp9-role-first');
         }
 
-        // 1 & 2. Blacklist + Highlight
+        // 0e. Démasquage des mots censurés côté client par Twitch (***)
+        uncensorChatMessageNode(msgEl);
+
+        // 1 & 2. Blacklist + Highlight mentions / mots-clés
         if (evaluateMessageDynamicRules(msgEl)) {
             return;
         }
-        if (msgEl.classList.contains('tp9-msg-highlighted') || msgEl.querySelector('.chat-line__message-mention--me, [data-a-target="chat-message-mention"]')) {
+        if (
+            !isInitialBatch &&
+            (
+                (pageConfig.highlightKeywords !== false && msgEl.classList.contains('tp9-msg-highlighted')) ||
+                (pageConfig.highlightMentions !== false && msgEl.classList.contains('tp9-msg-mention-me'))
+            )
+        ) {
             playBttvHighlightSound();
         }
 
@@ -42206,6 +44197,9 @@ dashboardButton.style.visibility = 'hidden';
                 });
             });
         }
+
+        // 4b. Indexation dans l'historique des fils de réponses et @mentions (après rendu des émotes)
+        finalizeChatMessageHistoryRecord(msgEl);
 
         // Sauvegarde du corps du message pour "Afficher les messages supprimés"
         var savedHtml = extractMessageOnlyHtml(msgEl);
@@ -42887,6 +44881,9 @@ dashboardButton.style.visibility = 'hidden';
         bttvHoverActiveScroller = null;
 
         if (snapToLive === false) return;
+        if (typeof hideChatJumpBackPill === 'function') {
+            hideChatJumpBackPill();
+        }
         if (!wasPaused || !scroller || scroller.isConnected === false) return;
 
         var isRev = !!pageConfig.reverseChat;
@@ -42900,6 +44897,42 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         setRawChatScrollTop(scroller, isRev ? 0 : scroller.scrollHeight);
+    }
+
+    var bttvLivePinRaf = 0;
+
+    function isChatScrollerNearLiveEdge(scroller, maxDist) {
+        if (!scroller || scroller.isConnected === false || scriptIsOff()) return false;
+        if (bttvChatHoverPaused || bttvChatManualScrolled || isChatHoverScrollLocked(scroller)) return false;
+        if (typeof bttvJumpBackPill !== 'undefined' && bttvJumpBackPill && bttvJumpBackPill.style && bttvJumpBackPill.style.display !== 'none') {
+            return false;
+        }
+        if (typeof findBestTwitchChatPauseBannerTarget === 'function' && findBestTwitchChatPauseBannerTarget(bttvObservedChatNode)) {
+            return false;
+        }
+        if (scroller.scrollHeight <= scroller.clientHeight + 2) return true;
+        var isRev = !!pageConfig.reverseChat;
+        var curSt = getRawChatScrollTop(scroller);
+        var dist = isRev ? curSt : (scroller.scrollHeight - curSt - scroller.clientHeight);
+        return dist <= (typeof maxDist === 'number' ? maxDist : 85);
+    }
+
+    function scheduleChatLiveEdgePin(scroller) {
+        if (!scroller || scroller.isConnected === false || scriptIsOff()) return;
+        if (bttvChatHoverPaused || bttvChatManualScrolled || isChatHoverScrollLocked(scroller)) return;
+        var isRev = !!pageConfig.reverseChat;
+        setRawChatScrollTop(scroller, isRev ? 0 : scroller.scrollHeight);
+        if (typeof requestAnimationFrame === 'function' && !bttvLivePinRaf) {
+            bttvLivePinRaf = requestAnimationFrame(function () {
+                bttvLivePinRaf = 0;
+                var activeSc = resolveChatScroller(bttvObservedChatNode) || scroller;
+                if (!activeSc || activeSc.isConnected === false || scriptIsOff()) return;
+                if (isChatScrollerNearLiveEdge(activeSc, 140)) {
+                    var revNow = !!pageConfig.reverseChat;
+                    setRawChatScrollTop(activeSc, revNow ? 0 : activeSc.scrollHeight);
+                }
+            });
+        }
     }
 
     function ensureChatObserver() {
@@ -42918,6 +44951,18 @@ dashboardButton.style.visibility = 'hidden';
         }
         bttvChatObserver = new MutationObserver(function (records) {
             if (scriptIsOff()) return;
+            var scBefore = resolveChatScroller(container);
+            var wasAtLive = scBefore ? isChatScrollerNearLiveEdge(scBefore, 85) : false;
+            var needsLiveRepin = false;
+            var inspectProcessedMsg = function (mEl) {
+                if (!mEl || mEl.nodeType !== 1) return;
+                if (
+                    mEl.classList.contains('tp9-msg-only-emotes') ||
+                    (mEl.querySelector && mEl.querySelector('img.tp9-emote'))
+                ) {
+                    needsLiveRepin = true;
+                }
+            };
             for (var i = 0; i < records.length; i++) {
                 var rec = records[i];
                 var targetMsg = rec.target && rec.target.nodeType === 1 && rec.target.closest
@@ -42931,18 +44976,25 @@ dashboardButton.style.visibility = 'hidden';
                     if (n.nodeType !== 1) continue;
                     if (n.matches && n.matches('.chat-line__message, [data-a-target="chat-line-message"]')) {
                         processChatMessageNode(n);
+                        inspectProcessedMsg(n);
                     } else if (n.querySelectorAll) {
                         var msgs = n.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
                         for (var k = 0; k < msgs.length; k++) {
                             processChatMessageNode(msgs[k]);
+                            inspectProcessedMsg(msgs[k]);
                         }
                         var parentMsg = n.closest && n.closest('.chat-line__message, [data-a-target="chat-line-message"]');
-                        if (parentMsg) processChatMessageNode(parentMsg);
+                        if (parentMsg) {
+                            processChatMessageNode(parentMsg);
+                            inspectProcessedMsg(parentMsg);
+                        }
                     }
                 }
             }
             if (isChatHoverScrollLocked(null)) {
                 syncHoverPausePosition();
+            } else if (wasAtLive && needsLiveRepin && scBefore) {
+                scheduleChatLiveEdgePin(scBefore);
             }
         });
         bttvChatObserver.observe(container, { childList: true, subtree: true });
@@ -42978,6 +45030,14 @@ dashboardButton.style.visibility = 'hidden';
                 if (!sc || sc.__tp9HoverScrollListenerBound) return;
                 sc.__tp9HoverScrollListenerBound = true;
                 sc.addEventListener('scroll', function () {
+                    if (typeof bttvJumpBackPill !== 'undefined' && bttvJumpBackPill && bttvJumpBackPill.style.display !== 'none' && !bttvInternalScrollWrite) {
+                        var isRevJb = !!pageConfig.reverseChat;
+                        var stJb = getRawChatScrollTop(sc);
+                        var distJb = isRevJb ? stJb : (sc.scrollHeight - stJb - sc.clientHeight);
+                        if (distJb <= 10 && typeof hideChatJumpBackPill === 'function') {
+                            hideChatJumpBackPill();
+                        }
+                    }
                     if (!bttvChatHoverPaused || bttvInternalScrollWrite) return;
                     var isRev = !!pageConfig.reverseChat;
                     var curSt = getRawChatScrollTop(sc);
@@ -43111,7 +45171,7 @@ dashboardButton.style.visibility = 'hidden';
                     var activeContainer = bttvObservedChatNode || container;
                     var pauseBannerEl = findChatPauseFloatingAncestor(rel, activeContainer);
                     var floatingEl = pauseBannerEl || (rel.closest && rel.closest(
-                        '[data-a-target="viewer-card"], .viewer-card, [role="tooltip"], .tw-balloon'
+                        '[data-a-target="viewer-card"], .viewer-card, [role="tooltip"], .tw-balloon, #tp9-chat-jump-back, #tp9-reply-thread-card'
                     ));
                     if (floatingEl && !hoverZone.contains(floatingEl)) {
                         var onFloatClick = pauseBannerEl ? function () {
@@ -45201,7 +47261,604 @@ dashboardButton.style.visibility = 'hidden';
         renderColonAutocompletePopup(input);
     }
 
-    // Aperçu géant d'émote au survol + Aperçu live vidéo de la barre latérale
+    function ensureReplyThreadCard() {
+        if (!bttvReplyThreadCard) {
+            bttvReplyThreadCard = document.createElement('div');
+            bttvReplyThreadCard.id = 'tp9-reply-thread-card';
+            bttvReplyThreadCard.innerHTML =
+                '<div class="tp9-rtc-head">' +
+                    '<span class="tp9-rtc-title"></span>' +
+                    '<span class="tp9-rtc-hint"></span>' +
+                '</div>' +
+                '<div class="tp9-rtc-list"></div>' +
+                '<div class="tp9-rtc-foot" style="display:none;"></div>';
+            document.body.appendChild(bttvReplyThreadCard);
+        }
+        return bttvReplyThreadCard;
+    }
+
+    function clearReplyThreadPeers() {
+        for (var i = 0; i < bttvHighlightedPeerEls.length; i++) {
+            var el = bttvHighlightedPeerEls[i];
+            if (el && el.classList) {
+                el.classList.remove('tp9-msg-thread-peer');
+                el.classList.remove('tp9-msg-thread-parent-peer');
+            }
+        }
+        bttvHighlightedPeerEls.length = 0;
+    }
+
+    function addReplyThreadPeerHighlight(el, isParent) {
+        if (!el || !el.classList || el.isConnected === false) return;
+        el.classList.add(isParent ? 'tp9-msg-thread-parent-peer' : 'tp9-msg-thread-peer');
+        if (bttvHighlightedPeerEls.indexOf(el) === -1) {
+            bttvHighlightedPeerEls.push(el);
+        }
+    }
+
+    function clearReplyThreadHover(alsoHideJumpBack) {
+        bttvCurrentHoverTarget = null;
+        clearReplyThreadPeers();
+        if (bttvReplyThreadCard && bttvReplyThreadCard.style.display !== 'none') {
+            bttvReplyThreadCard.style.display = 'none';
+        }
+        if (alsoHideJumpBack) {
+            hideChatJumpBackPill();
+        }
+    }
+
+    function hideChatJumpBackPill() {
+        bttvJumpOriginMsgEl = null;
+        if (bttvJumpBackPill && bttvJumpBackPill.style.display !== 'none') {
+            bttvJumpBackPill.style.display = 'none';
+        }
+    }
+
+    function showChatJumpBackPill(scroller, container, originMsgEl) {
+        bttvJumpOriginMsgEl = originMsgEl || null;
+        if (!bttvJumpBackPill) {
+            bttvJumpBackPill = document.createElement('div');
+            bttvJumpBackPill.id = 'tp9-chat-jump-back';
+            var btnOrigin = document.createElement('button');
+            btnOrigin.type = 'button';
+            btnOrigin.className = 'tp9-jb-btn tp9-jb-origin';
+            var btnLive = document.createElement('button');
+            btnLive.type = 'button';
+            btnLive.className = 'tp9-jb-btn tp9-jb-live';
+            var btnClose = document.createElement('button');
+            btnClose.type = 'button';
+            btnClose.className = 'tp9-jb-close';
+            btnClose.textContent = '\u00d7';
+
+            btnOrigin.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                var orig = bttvJumpOriginMsgEl;
+                hideChatJumpBackPill();
+                if (orig && orig.isConnected) {
+                    jumpToChatMessageElement(orig, null);
+                } else {
+                    resumeTwitchChatToLive(bttvObservedChatNode, null);
+                }
+            });
+            btnLive.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                hideChatJumpBackPill();
+                var curCont = bttvObservedChatNode;
+                var curSc = resolveChatScroller(curCont);
+                bttvChatHoverPaused = false;
+                bttvChatManualScrolled = false;
+                bttvManualMovedAway = false;
+                resumeTwitchChatToLive(curCont, curSc);
+            });
+            btnClose.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                hideChatJumpBackPill();
+            });
+
+            bttvJumpBackPill.appendChild(btnOrigin);
+            bttvJumpBackPill.appendChild(btnLive);
+            bttvJumpBackPill.appendChild(btnClose);
+            document.body.appendChild(bttvJumpBackPill);
+        }
+
+        var originBtn = bttvJumpBackPill.querySelector('.tp9-jb-origin');
+        var liveBtn = bttvJumpBackPill.querySelector('.tp9-jb-live');
+        if (originBtn) {
+            originBtn.textContent = tt('\u21a9 Retour r\u00e9ponse', '\u21a9 Back to reply');
+            originBtn.style.display = (originMsgEl && originMsgEl.isConnected) ? 'inline-block' : 'none';
+        }
+        if (liveBtn) {
+            liveBtn.textContent = tt('\u2193 Direct', '\u2193 Live');
+        }
+
+        bttvJumpBackPill.style.display = 'inline-flex';
+        var refEl = scroller || container || bttvObservedChatNode;
+        if (refEl && typeof refEl.getBoundingClientRect === 'function') {
+            var r = refEl.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+                var pw = bttvJumpBackPill.offsetWidth || 190;
+                var ph = bttvJumpBackPill.offsetHeight || 30;
+                var left = Math.max(8, Math.min(r.left + (r.width - pw) / 2, window.innerWidth - pw - 8));
+                var top = Math.max(8, Math.min(r.bottom - ph - 38, window.innerHeight - ph - 8));
+                bttvJumpBackPill.style.left = left + 'px';
+                bttvJumpBackPill.style.top = top + 'px';
+            }
+        }
+    }
+
+    function appendSafePreviewPartsToNode(bodySpan, rec) {
+        var parts = rec && Array.isArray(rec.parts) && rec.parts.length ? rec.parts : null;
+        if (parts) {
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                if (p.t === 'img' && p.src && /^https:\/\//i.test(p.src)) {
+                    var img = document.createElement('img');
+                    img.src = p.src;
+                    img.alt = p.alt || '';
+                    bodySpan.appendChild(img);
+                } else if (p.v) {
+                    bodySpan.appendChild(document.createTextNode(p.v));
+                }
+            }
+            return;
+        }
+        var raw = (rec && rec.bodyText) || '';
+        if (!raw) return;
+        if (bttvEmoteMap && bttvEmoteMap.size > 0) {
+            var tokens = raw.split(/(\s+)/);
+            for (var t = 0; t < tokens.length; t++) {
+                var tok = tokens[t];
+                var em = bttvEmoteMap.get(tok);
+                if (em && em.url1x && /^https:\/\//i.test(em.url1x)) {
+                    var eImg = document.createElement('img');
+                    eImg.src = resolveEmoteDisplayUrl(em, false);
+                    eImg.alt = em.code;
+                    bodySpan.appendChild(eImg);
+                } else if (tok) {
+                    bodySpan.appendChild(document.createTextNode(tok));
+                }
+            }
+        } else {
+            bodySpan.appendChild(document.createTextNode(raw));
+        }
+    }
+
+    function positionReplyThreadCardNear(anchorEl) {
+        if (!bttvReplyThreadCard || !anchorEl || typeof anchorEl.getBoundingClientRect !== 'function') return;
+        var ar = anchorEl.getBoundingClientRect();
+        var chatCol = anchorEl.closest(
+            '.stream-chat, [data-a-target="stream-chat"], .chat-room, .channel-root__right-column, [data-a-target="right-column-chat-bar"]'
+        ) || bttvObservedChatNode || anchorEl;
+        var cr = chatCol && typeof chatCol.getBoundingClientRect === 'function' ? chatCol.getBoundingClientRect() : ar;
+        var cw = bttvReplyThreadCard.offsetWidth || 325;
+        var ch = bttvReplyThreadCard.offsetHeight || 120;
+        var vw = window.innerWidth || 1280;
+        var vh = window.innerHeight || 720;
+
+        var left;
+        var top;
+        if (!pageConfig.chatOnLeft && cr.left >= cw + 16) {
+            left = cr.left - cw - 10;
+            top = Math.max(8, Math.min(ar.top - 8, vh - ch - 8));
+        } else if (pageConfig.chatOnLeft && (vw - cr.right) >= cw + 16) {
+            left = cr.right + 10;
+            top = Math.max(8, Math.min(ar.top - 8, vh - ch - 8));
+        } else if (cr.left >= cw + 16) {
+            left = cr.left - cw - 10;
+            top = Math.max(8, Math.min(ar.top - 8, vh - ch - 8));
+        } else if ((vw - cr.right) >= cw + 16) {
+            left = cr.right + 10;
+            top = Math.max(8, Math.min(ar.top - 8, vh - ch - 8));
+        } else {
+            left = Math.max(8, Math.min(cr.left + 8, vw - cw - 8));
+            top = ar.top >= ch + 14 ? (ar.top - ch - 8) : Math.min(vh - ch - 8, ar.bottom + 8);
+        }
+        bttvReplyThreadCard.style.left = Math.round(left) + 'px';
+        bttvReplyThreadCard.style.top = Math.round(Math.max(8, top)) + 'px';
+    }
+
+    function renderReplyThreadPreviewCard(titleText, hintText, items, currentRec, parentRec, footerText, anchorEl) {
+        var card = ensureReplyThreadCard();
+        var titleEl = card.querySelector('.tp9-rtc-title');
+        var hintEl = card.querySelector('.tp9-rtc-hint');
+        var listEl = card.querySelector('.tp9-rtc-list');
+        var footEl = card.querySelector('.tp9-rtc-foot');
+
+        if (titleEl) titleEl.textContent = titleText || '';
+        if (hintEl) {
+            hintEl.textContent = hintText || '';
+            hintEl.style.display = hintText ? 'inline-block' : 'none';
+        }
+        if (listEl) {
+            listEl.textContent = '';
+            var me = getCurrentTwitchUserLogins();
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                if (!it) continue;
+                var row = document.createElement('div');
+                row.className = 'tp9-rtc-item';
+                var itLogin = (it.authorLogin || '').toLowerCase();
+                var isMe = Boolean(
+                    (me.login && itLogin === me.login) ||
+                    (me.displayLower && (itLogin === me.displayLower || (it.authorDisplay || '').toLowerCase() === me.displayLower))
+                );
+                if (parentRec && it === parentRec) {
+                    row.classList.add('tp9-rtc-item--parent');
+                } else if (currentRec && it === currentRec) {
+                    row.classList.add('tp9-rtc-item--current');
+                } else if (isMe) {
+                    row.classList.add('tp9-rtc-item--me');
+                }
+
+                if (it.tsText) {
+                    var ts = document.createElement('span');
+                    ts.className = 'tp9-rtc-ts';
+                    ts.textContent = it.tsText;
+                    row.appendChild(ts);
+                }
+                var au = document.createElement('span');
+                au.className = 'tp9-rtc-author';
+                au.textContent = (it.authorDisplay || it.authorLogin || '?') + ':';
+                au.style.color = it.authorColor || '#bf94ff';
+                row.appendChild(au);
+
+                var bd = document.createElement('span');
+                bd.className = 'tp9-rtc-body';
+                appendSafePreviewPartsToNode(bd, it);
+                row.appendChild(bd);
+
+                listEl.appendChild(row);
+            }
+        }
+        if (footEl) {
+            if (footerText) {
+                footEl.textContent = footerText;
+                footEl.style.display = 'block';
+            } else {
+                footEl.textContent = '';
+                footEl.style.display = 'none';
+            }
+        }
+        card.style.display = 'block';
+        positionReplyThreadCardNear(anchorEl);
+    }
+
+    function findPrecedingDomMessageMatching(refMsgEl, userLower, snippetText) {
+        if (!refMsgEl || !userLower) return null;
+        var cleanSnip = (snippetText || '')
+            .replace(/(?:\.\.\.|…)+\s*$/, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        var cleanNoLead = '';
+        if (cleanSnip.charAt(0) === '@') {
+            var sp = cleanSnip.indexOf(' ');
+            if (sp > 1) cleanNoLead = cleanSnip.slice(sp + 1).trim();
+        }
+
+        var fallbackUserMatch = null;
+        var prev = refMsgEl.previousElementSibling;
+        var steps = 0;
+        while (prev && steps < 250) {
+            steps++;
+            if (prev.matches && prev.matches('.chat-line__message, [data-a-target="chat-line-message"]')) {
+                var pMeta = ensureChatMessageMeta(prev);
+                var pUser = (pMeta && pMeta.authorLogin) || (prev.getAttribute('data-tp9-author') || '').toLowerCase();
+                var pDisp = (pMeta && pMeta.authorLower) || '';
+                if (pUser === userLower || pDisp === userLower) {
+                    if (!fallbackUserMatch) fallbackUserMatch = prev;
+                    if (!cleanSnip) return prev;
+                    var pBody = extractChatMessagePlainText(prev).replace(/\s+/g, ' ').trim().toLowerCase();
+                    if (
+                        pBody.indexOf(cleanSnip) === 0 ||
+                        cleanSnip.indexOf(pBody) === 0 ||
+                        (cleanNoLead && pBody.indexOf(cleanNoLead) === 0)
+                    ) {
+                        return prev;
+                    }
+                }
+            }
+            prev = prev.previousElementSibling;
+        }
+        return fallbackUserMatch;
+    }
+
+    function resolveParentRecordAndElementForReply(msgEl) {
+        if (!msgEl) return { parentRec: null, parentEl: null, meta: null };
+        var meta = ensureChatMessageMeta(msgEl);
+        if (!meta) return { parentRec: null, parentEl: null, meta: null };
+
+        var curRec = msgEl.__tp9HistoryRec || (meta.id && bttvChatMsgById.get(meta.id)) || null;
+        var parentRec = meta.parentMsgId ? bttvChatMsgById.get(meta.parentMsgId) : null;
+        var parentEl = (parentRec && parentRec.msgEl && parentRec.msgEl.isConnected) ? parentRec.msgEl : null;
+
+        if (!parentEl && meta.parentMsgId) {
+            var container = msgEl.closest('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]') || bttvObservedChatNode;
+            if (container && container.querySelectorAll) {
+                var allMsgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+                for (var i = 0; i < allMsgs.length; i++) {
+                    var m = allMsgs[i];
+                    if (
+                        m.getAttribute('data-tp9-msg-id') === meta.parentMsgId ||
+                        m.getAttribute('data-id') === meta.parentMsgId
+                    ) {
+                        parentEl = m;
+                        if (!m.__tp9HistoryRec) finalizeChatMessageHistoryRecord(m);
+                        parentRec = m.__tp9HistoryRec || parentRec;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!parentRec && meta.parentUserLogin) {
+            parentRec = findParentRecordInHistory(
+                meta.parentUserLogin,
+                meta.parentMsgBody,
+                curRec ? curRec.seq : 0
+            );
+            if (parentRec && parentRec.msgEl && parentRec.msgEl.isConnected) {
+                parentEl = parentRec.msgEl;
+            }
+        }
+
+        if (!parentEl && meta.parentUserLogin) {
+            var domMatch = findPrecedingDomMessageMatching(msgEl, meta.parentUserLogin, meta.parentMsgBody);
+            if (domMatch) {
+                parentEl = domMatch;
+                if (!domMatch.__tp9HistoryRec) finalizeChatMessageHistoryRecord(domMatch);
+                if (!parentRec) parentRec = domMatch.__tp9HistoryRec || null;
+            }
+        }
+
+        if (!parentRec && (meta.parentUserLogin || meta.parentDisplayName || meta.parentMsgBody)) {
+            parentRec = {
+                id: meta.parentMsgId || 'synthetic-parent',
+                authorLogin: meta.parentUserLogin || '',
+                authorDisplay: meta.parentDisplayName || meta.parentUserLogin || '?',
+                authorColor: '#ff9f0a',
+                bodyText: meta.parentMsgBody || '',
+                parts: null,
+                tsText: '',
+                seq: 0,
+                msgEl: parentEl
+            };
+        }
+
+        return { parentRec: parentRec, parentEl: parentEl, meta: meta, curRec: curRec };
+    }
+
+    function showReplyThreadHoverForHeader(msgEl, replyHdrEl) {
+        if (!msgEl || !replyHdrEl) return;
+        if (bttvCurrentHoverTarget === replyHdrEl && bttvReplyThreadCard && bttvReplyThreadCard.style.display === 'block') {
+            return;
+        }
+        clearReplyThreadPeers();
+        bttvCurrentHoverTarget = replyHdrEl;
+
+        if (!msgEl.__tp9HistoryRec) {
+            finalizeChatMessageHistoryRecord(msgEl);
+        }
+        var resolved = resolveParentRecordAndElementForReply(msgEl);
+        var parentRec = resolved.parentRec;
+        var parentEl = resolved.parentEl;
+        var meta = resolved.meta;
+        var curRec = resolved.curRec || msgEl.__tp9HistoryRec;
+
+        var threadItems = [];
+        var tId = (meta && (meta.threadId || meta.parentMsgId)) || '';
+        if (tId && bttvChatThreadIndex.has(tId)) {
+            var rawThread = bttvChatThreadIndex.get(tId);
+            for (var i = 0; i < rawThread.length; i++) {
+                var tr = rawThread[i];
+                if (tr.msgEl && tr.msgEl.isConnected) {
+                    addReplyThreadPeerHighlight(tr.msgEl, tr === parentRec || tr.msgEl === parentEl);
+                }
+                threadItems.push(tr);
+            }
+        }
+        if (parentEl) {
+            addReplyThreadPeerHighlight(parentEl, true);
+        }
+        addReplyThreadPeerHighlight(msgEl, false);
+
+        if (parentRec && threadItems.indexOf(parentRec) === -1) {
+            threadItems.unshift(parentRec);
+        }
+        if (curRec && threadItems.indexOf(curRec) === -1) {
+            threadItems.push(curRec);
+        }
+
+        if (threadItems.length > 6) {
+            var curIdx = curRec ? threadItems.indexOf(curRec) : (threadItems.length - 1);
+            var sliced = [];
+            if (parentRec) sliced.push(parentRec);
+            var start = Math.max(0, curIdx - 3);
+            var end = Math.min(threadItems.length, start + 5);
+            for (var s = start; s < end; s++) {
+                if (sliced.indexOf(threadItems[s]) === -1) {
+                    sliced.push(threadItems[s]);
+                }
+            }
+            threadItems = sliced;
+        }
+
+        if (!threadItems.length) {
+            clearReplyThreadHover();
+            return;
+        }
+
+        var pLabel = (meta && (meta.parentDisplayName || meta.parentUserLogin)) || (parentRec && parentRec.authorDisplay) || '';
+        var title = tt('\u21a9 Fil de r\u00e9ponse', '\u21a9 Reply thread') + (pLabel ? ' \u00b7 @' + pLabel : '');
+        var canJump = Boolean(parentEl && parentEl.isConnected);
+        var hint = canJump ? tt('Clic : remonter', 'Click: jump up') : tt('Hors \u00e9cran', 'Scrolled off');
+        var foot = (!canJump && parentRec)
+            ? tt('Le message parent a quitt\u00e9 le tchat actif (conserv\u00e9 ci-dessus).', 'Parent message scrolled out of live DOM (preserved above).')
+            : '';
+
+        renderReplyThreadPreviewCard(title, hint, threadItems, curRec, parentRec, foot, replyHdrEl);
+    }
+
+    function findLatestUserMessageBefore(userLower, refMsgEl) {
+        if (!userLower) return null;
+        if (refMsgEl) {
+            var prec = findPrecedingDomMessageMatching(refMsgEl, userLower, '');
+            if (prec && prec.isConnected) return prec;
+        }
+        var uList = bttvChatMsgsByAuthor.get(userLower);
+        if (uList && uList.length) {
+            var refSeq = (refMsgEl && refMsgEl.__tp9HistoryRec && refMsgEl.__tp9HistoryRec.seq) || 0;
+            for (var i = uList.length - 1; i >= 0; i--) {
+                var r = uList[i];
+                if (r.msgEl && r.msgEl !== refMsgEl && r.msgEl.isConnected) {
+                    if (!refSeq || !r.seq || r.seq < refSeq) {
+                        return r.msgEl;
+                    }
+                }
+            }
+            for (var j = uList.length - 1; j >= 0; j--) {
+                if (uList[j].msgEl && uList[j].msgEl !== refMsgEl && uList[j].msgEl.isConnected) {
+                    return uList[j].msgEl;
+                }
+            }
+        }
+        var container = (refMsgEl && refMsgEl.closest && refMsgEl.closest('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]')) || bttvObservedChatNode;
+        if (container && container.querySelectorAll) {
+            var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+            for (var k = msgs.length - 1; k >= 0; k--) {
+                var m = msgs[k];
+                if (m === refMsgEl) continue;
+                var mm = ensureChatMessageMeta(m);
+                if (mm && (mm.authorLogin === userLower || mm.authorLower === userLower)) {
+                    return m;
+                }
+            }
+        }
+        return null;
+    }
+
+    function showUserMentionHoverPreview(msgEl, mentionEl, mentionedUserLower) {
+        if (!mentionEl || !mentionedUserLower) return;
+        if (bttvCurrentHoverTarget === mentionEl && bttvReplyThreadCard && bttvReplyThreadCard.style.display === 'block') {
+            return;
+        }
+        clearReplyThreadPeers();
+        bttvCurrentHoverTarget = mentionEl;
+
+        var targetJumpEl = findLatestUserMessageBefore(mentionedUserLower, msgEl);
+        var container = (msgEl && msgEl.closest && msgEl.closest('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]')) || bttvObservedChatNode;
+        if (container && container.querySelectorAll) {
+            var domMsgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+            for (var d = 0; d < domMsgs.length; d++) {
+                var dm = domMsgs[d];
+                var dMeta = ensureChatMessageMeta(dm);
+                if (dMeta && (dMeta.authorLogin === mentionedUserLower || dMeta.authorLower === mentionedUserLower)) {
+                    if (!dm.__tp9HistoryRec) finalizeChatMessageHistoryRecord(dm);
+                    addReplyThreadPeerHighlight(dm, dm === targetJumpEl);
+                }
+            }
+        }
+
+        var uList = bttvChatMsgsByAuthor.get(mentionedUserLower) || [];
+        if (!uList.length) {
+            clearReplyThreadHover();
+            return;
+        }
+
+        var previewItems = uList.slice(Math.max(0, uList.length - 5));
+        var targetRec = (targetJumpEl && targetJumpEl.__tp9HistoryRec) || previewItems[previewItems.length - 1] || null;
+        var dispName = (targetRec && targetRec.authorDisplay) || (mentionEl.textContent || '').replace(/^@+/, '').trim() || mentionedUserLower;
+        var canJump = Boolean(targetJumpEl && targetJumpEl.isConnected);
+        var title = tt('Messages de @', 'Messages from @') + dispName;
+        var hint = canJump ? tt('Clic : remonter', 'Click: jump up') : tt('Historique', 'History');
+        var foot = !canJump
+            ? tt('Messages plus anciens conserv\u00e9s en m\u00e9moire.', 'Older messages preserved in memory.')
+            : '';
+
+        renderReplyThreadPreviewCard(title, hint, previewItems, null, targetRec, foot, mentionEl);
+    }
+
+    function jumpToChatMessageElement(targetMsgEl, originMsgEl) {
+        if (!targetMsgEl || targetMsgEl.isConnected === false) return false;
+        var container = (targetMsgEl.closest && targetMsgEl.closest(
+            '.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]'
+        )) || bttvObservedChatNode;
+        var scroller = resolveChatScroller(container);
+
+        if (scroller) {
+            if (bttvChatHoverPaused) {
+                markChatManualScrollWhileHovered(scroller);
+            }
+            bttvManualMovedAway = true;
+            bttvChatNotifiedTwitchPause = true;
+
+            var curSt = getRawChatScrollTop(scroller);
+            var desiredSt = curSt;
+            var scRect = typeof scroller.getBoundingClientRect === 'function' ? scroller.getBoundingClientRect() : null;
+            var tgRect = typeof targetMsgEl.getBoundingClientRect === 'function' ? targetMsgEl.getBoundingClientRect() : null;
+            if (scRect && tgRect && scRect.height > 0 && tgRect.height > 0) {
+                var deltaY = (tgRect.top - scRect.top) - Math.max(24, (scRect.height - tgRect.height) * 0.40);
+                var maxSt = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0));
+                desiredSt = Math.max(0, Math.min(maxSt, curSt + deltaY));
+            } else if (typeof targetMsgEl.offsetTop === 'number') {
+                var maxStFallback = Math.max(0, (scroller.scrollHeight || 0) - (scroller.clientHeight || 0));
+                desiredSt = Math.max(0, Math.min(maxStFallback, targetMsgEl.offsetTop - Math.max(24, ((scroller.clientHeight || 300) * 0.40))));
+            }
+            setRawChatScrollTop(scroller, desiredSt);
+            try {
+                scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+            } catch (e) {}
+        } else if (typeof targetMsgEl.scrollIntoView === 'function') {
+            try {
+                targetMsgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } catch (e2) {}
+        }
+
+        if (bttvJumpFlashTimer) {
+            clearTimeout(bttvJumpFlashTimer);
+            bttvJumpFlashTimer = null;
+        }
+        if (bttvLastJumpFlashEl && bttvLastJumpFlashEl.classList) {
+            bttvLastJumpFlashEl.classList.remove('tp9-msg-jump-flash');
+        }
+        bttvLastJumpFlashEl = targetMsgEl;
+        void targetMsgEl.offsetWidth;
+        targetMsgEl.classList.add('tp9-msg-jump-flash');
+        bttvJumpFlashTimer = setTimeout(function () {
+            bttvJumpFlashTimer = null;
+            if (bttvLastJumpFlashEl && bttvLastJumpFlashEl.classList) {
+                bttvLastJumpFlashEl.classList.remove('tp9-msg-jump-flash');
+            }
+            bttvLastJumpFlashEl = null;
+        }, 2500);
+
+        if (originMsgEl) {
+            showChatJumpBackPill(scroller, container, originMsgEl);
+        }
+        return true;
+    }
+
+    function resetBttvChatThreadHistory() {
+        clearReplyThreadHover(true);
+        if (bttvJumpFlashTimer) {
+            clearTimeout(bttvJumpFlashTimer);
+            bttvJumpFlashTimer = null;
+        }
+        if (bttvLastJumpFlashEl && bttvLastJumpFlashEl.classList) {
+            bttvLastJumpFlashEl.classList.remove('tp9-msg-jump-flash');
+            bttvLastJumpFlashEl = null;
+        }
+        bttvChatMsgById.forEach(function (r) { if (r) r.msgEl = null; });
+        bttvChatMsgById.clear();
+        bttvChatMsgsByAuthor.clear();
+        bttvChatThreadIndex.clear();
+        bttvPendingIrcQueue.length = 0;
+    }
+
+    // Aperçu géant d'émote au survol + Suivi de discussion + Aperçu live vidéo de la barre latérale
     function setupBttvHoverAndChatListeners() {
         // Sauvegarde de la position du curseur dans l'éditeur Slate du tchat
         function saveChatRangeIfInside() {
@@ -45257,11 +47914,50 @@ dashboardButton.style.visibility = 'hidden';
                     if (bttvSidebarHoverLogin) {
                         hideSidebarLivePreview();
                     }
+                    if (bttvCurrentHoverTarget) {
+                        clearReplyThreadHover();
+                    }
                     return;
                 }
             }
             if (bttvHoverCard && bttvHoverCard.style.display !== 'none') {
                 bttvHoverCard.style.display = 'none';
+            }
+
+            // 1b. Suivi de discussion (aperçu au survol des bannières « Répond à @… » et des @mentions dans le tchat)
+            if (pageConfig.replyThreadNav !== false) {
+                var inChatMsg = t.closest('.chat-line__message, [data-a-target="chat-line-message"]');
+                if (inChatMsg) {
+                    var replyHdr = t.closest('.tp9-reply-header-nav');
+                    if (!replyHdr) {
+                        var candHdr = findReplyHeaderElement(inChatMsg);
+                        if (candHdr && candHdr.contains(t)) {
+                            candHdr.classList.add('tp9-reply-header-nav');
+                            replyHdr = candHdr;
+                        }
+                    }
+                    if (replyHdr) {
+                        if (bttvSidebarHoverLogin) hideSidebarLivePreview();
+                        showReplyThreadHoverForHeader(inChatMsg, replyHdr);
+                        return;
+                    }
+                    var mentionTok = t.closest(CHAT_MENTION_TOKEN_SEL);
+                    if (mentionTok && inChatMsg.contains(mentionTok)) {
+                        var mentionedUser = (mentionTok.textContent || '')
+                            .replace(/^@+/, '')
+                            .replace(/[,.:;!?)]+$/, '')
+                            .trim()
+                            .toLowerCase();
+                        if (mentionedUser && mentionedUser.length >= 2) {
+                            if (bttvSidebarHoverLogin) hideSidebarLivePreview();
+                            showUserMentionHoverPreview(inChatMsg, mentionTok, mentionedUser);
+                            return;
+                        }
+                    }
+                }
+            }
+            if (bttvCurrentHoverTarget) {
+                clearReplyThreadHover();
             }
 
             // 2. Aperçu live vidéo animé sans pub (via flux HLS autoplay façon VAFT) au survol de la barre latérale gauche
@@ -45323,12 +48019,64 @@ dashboardButton.style.visibility = 'hidden';
 
         var clearFloatingHoverCards = function () {
             hideSidebarLivePreview();
+            clearReplyThreadHover();
             if (bttvHoverCard && bttvHoverCard.style.display !== 'none') {
                 bttvHoverCard.style.display = 'none';
             }
         };
         window.addEventListener('blur', clearFloatingHoverCards);
         document.addEventListener('mouseleave', clearFloatingHoverCards);
+
+        // 2b. Clic sur une réponse (« Répond à @… ») ou une @mention pour remonter directement au message parent dans le tchat
+        document.addEventListener('click', function (e) {
+            if (scriptIsOff() || pageConfig.replyThreadNav === false) return;
+            if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+            var t = e.target;
+            if (!t || !t.closest) return;
+            var msgEl = t.closest('.chat-line__message, [data-a-target="chat-line-message"]');
+            if (!msgEl) return;
+
+            var replyHdr = t.closest('.tp9-reply-header-nav');
+            if (!replyHdr) {
+                var candHdr = findReplyHeaderElement(msgEl);
+                if (candHdr && candHdr.contains(t)) {
+                    candHdr.classList.add('tp9-reply-header-nav');
+                    replyHdr = candHdr;
+                }
+            }
+            if (replyHdr) {
+                var resolved = resolveParentRecordAndElementForReply(msgEl);
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                if (resolved.parentEl && resolved.parentEl.isConnected) {
+                    clearReplyThreadHover();
+                    jumpToChatMessageElement(resolved.parentEl, msgEl);
+                } else {
+                    showReplyThreadHoverForHeader(msgEl, replyHdr);
+                }
+                return;
+            }
+
+            var mentionTok = t.closest(CHAT_MENTION_TOKEN_SEL);
+            if (mentionTok && msgEl.contains(mentionTok)) {
+                var mentionedUser = (mentionTok.textContent || '')
+                    .replace(/^@+/, '')
+                    .replace(/[,.:;!?)]+$/, '')
+                    .trim()
+                    .toLowerCase();
+                if (mentionedUser && mentionedUser.length >= 2) {
+                    var targetMsgEl = findLatestUserMessageBefore(mentionedUser, msgEl);
+                    if (targetMsgEl && targetMsgEl.isConnected) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        clearReplyThreadHover();
+                        jumpToChatMessageElement(targetMsgEl, msgEl);
+                    }
+                }
+            }
+        }, true);
 
         // 3. Double-clic sur un message pour @répondre
         document.addEventListener('dblclick', function (e) {
@@ -46960,6 +49708,7 @@ dashboardButton.style.visibility = 'hidden';
         bttvSlowChatLastRefillAt = 0;
         bttvServerAvailableClaimId = null;
         bttvLastGqlPointsPollAt = 0;
+        resetBttvChatThreadHistory();
         loadBttvChannelEmotes(channel);
     }
 
