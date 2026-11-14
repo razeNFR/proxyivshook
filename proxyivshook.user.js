@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.11.9
+// @version      1.12
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
+// @noframes
 // @run-at       document-start
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js
@@ -13,6 +14,18 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.12
+// - Nouvelle option « Bloqueur de pub (Experimental) » dans l'onglet Adblock : lit automatiquement la VOD sans pub du stream au plus près du direct (~30 s) sans jamais sauter sur le flux publicitaire, synchronise le tchat à la seconde près ainsi que les raids sortants, conserve 100 % des Points de chaîne, coffres bonus, séries de visionnage et Drops Twitch, masque le direct dès l'ouverture de la chaîne et bascule automatiquement sur le VAFT classique s'il n'y a pas de VOD ou en tout début de live || New "Ad blocker (Experimental)" option in the Adblock tab: automatically plays the stream's ad-free VOD as close to live as possible (~30s) without ever jumping to the ad-bearing live feed, synchronizes chat messages to the exact second as well as outgoing raids, preserves 100% of Channel Points, bonus chests, watch streaks, and Twitch Drops, hides the live feed from channel open, and automatically falls back to classic VAFT if no VOD exists or right as a stream starts
+// - Nouvelle option « Afficher « Synchro tchat VOD » » (caché par défaut) : permet d'afficher ou de masquer à la demande l'indicateur du décalage exact du tchat en bas de la discussion tout en gardant la synchronisation active || New "Show 'VOD chat sync' badge" option (hidden by default): lets you toggle the exact chat delay indicator at the bottom of chat on demand while keeping chat synchronization active
+// 1.11.12
+// - Suppression des freezes et relances inutiles du lecteur en cours de stream (mode Adblock) : ne confond plus un rechargement temporaire de tampon d'Amazon IVS (notamment sous Firefox où le lecteur met la balise <video> en pause tout en restant à l'état Playing) avec un blocage, reprend la lecture en douceur via video.play() dès que le tampon est regarni sans détruire le lecteur par setSrc, et ignore les sous-frames (iframes) internes de Twitch || Eliminated mid-stream freezes and unnecessary player reloads (Adblock mode): no longer mistakes temporary Amazon IVS rebuffering (especially on Firefox where IVS pauses <video> while staying in Playing state) for a frozen pause, smoothly resumes via video.play() once buffered without destroying the player via setSrc, and ignores Twitch internal sub-frames (iframes)
+// 1.11.11
+// - Correctif des lignes alternées (Split Chat) : garantit désormais strictement 1 ligne colorée sur 2 sur les messages visibles même en présence de messages masqués (anti-spam, liste noire, bots, mode lent) ou de confirmation d'un message envoyé, sans aucun clignotement lors du défilement || Fixed alternating chat lines (Split Chat): now strictly enforces 1-out-of-2 coloring across visible messages even with hidden rows (anti-spam, blacklist, bots, slow mode) or self-message confirmation, with zero flicker on scroll eviction
+// - Correctif du suivi de discussion : suppression des messages en double lors de l'envoi d'une réponse, isolation des branches de conversation pour ne plus mélanger les échanges eus avec d'autres membres, et retrait de l'infobulle native redondante au survol de « Répond à @… » || Fixed reply thread tracking: eliminated duplicate entries on sent replies, isolated conversation branches so parallel chats with other members no longer mix together, and suppressed the overlapping native browser tooltip on "Replying to @…"
+// - Amélioration de « Cacher Bits & Abonnements » : masque désormais l'encart complet « Objectifs de <streamer> » (titre + carte de progression) au lieu du seul bouton interne || Improved "Hide Bits & Subscriptions": now hides the entire "Creator Goals" section (heading + progress card) instead of only its inner button
+// 1.11.10
+// - Correctif du bouton « DIRECT » restant allumé à l'arrivée sur un stream : ne confond plus le chargement initial du lecteur natif de Twitch avec un blocage et resynchronise l'état du bouton à chaque tick même sur les chaînes sans rediffusion VOD || Fixed "LIVE" button staying lit when arriving on a stream: no longer mistakes Twitch's initial player load for a stall and keeps button state synced on every tick even on channels without VODs
+// - Suppression totale des fuites d'image de pub en sortie de blocage Adblock : empêche toute fausse bascule CSAI en fin de coupure, attend au moins 3 segments live post-pub réellement chargés en tampon MSE et le décodage des premières images propres avant de retirer l'écran autoplay || Eliminated brief ad-frame leaks on Adblock exit: prevents premature CSAI teardown at the end of stitched breaks, and waits for 3 MSE-buffered post-ad live segments plus decoded clean frames before removing the autoplay overlay
 // 1.11.9
 // - Correctif des micro-coupures en cours de stream et du bouton « DIRECT » : suppression du rattrapage forcé de latence hors pub (accélération 1.06x et sauts de currentTime) qui vidait le tampon du lecteur natif de Twitch (Amazon IVS) et faisait prendre du retard sur le direct || Fixed mid-stream micro-stutters and "LIVE" button unlocking: removed forced live-edge catch-up outside ads (1.06x speed-up and currentTime jumps) that starved Twitch's native IVS player buffer and caused live drift
 // 1.11.8
@@ -56,6 +69,16 @@
 (function () {
     'use strict';
 
+    // Ignore les sous-frames (iframes internes montées par Twitch lors d'un rechargement
+    // du lecteur, analytics, extensions, etc.) pour éviter toute exécution parasite.
+    try {
+        if (typeof window !== 'undefined' && window.top && window.self && window.self !== window.top) {
+            return;
+        }
+    } catch (eFrame) {
+        return;
+    }
+
     // ============================================================
     // CONFIGURATION
     // ============================================================
@@ -74,7 +97,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.11.9';
+    var CURRENT_VERSION = '1.12';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -267,6 +290,11 @@
         'Qualité réduite pendant une pub': 'Lower quality during an ad',
         'Lecteur autoplay sans pub pendant les coupures': 'Ad-free autoplay player during ad breaks',
         'Zéro blocage ni relance · recalage direct auto': 'Zero freeze or reload · auto live resync',
+        'Bloqueur de pub (Experimental)': 'Ad blocker (Experimental)',
+        'VOD sans pub (~30 s du direct) · Tchat & Raids synchro': 'Ad-free VOD (~30s behind live) · Synced chat & raids',
+        'Lit la VOD sans pub au plus près du direct (~30 s), synchronise le tchat et les raids, garde les Points/Drops actifs et bascule sur le VAFT classique s\'il n\'y a pas de VOD.': 'Plays the ad-free VOD as close to live as possible (~30s), syncs chat and raids, keeps Channel Points/Drops active, and falls back to classic VAFT if there is no VOD.',
+        'Afficher « Synchro tchat VOD »': 'Show "VOD chat sync" badge',
+        'Affiche la mention « Synchro tchat VOD » et le décalage exact (-XX s) en bas du tchat. La synchronisation du tchat reste active même si ce bandeau est caché.': 'Displays the "VOD chat sync" badge and exact delay (-XXs) at the bottom of chat. Chat sync stays active even when this badge is hidden.',
         'Pubs de début (preroll) non comptées': 'Pre-roll ads not counted',
         'Tester': 'Test',
         'Réglages': 'Settings',
@@ -1284,6 +1312,8 @@
             hideTwitchTurbo: false,
             proxiesEnabled: true,
             proxyAdsOnly: false,
+            experimentalVodAdblock: false,
+            showVodChatSyncBadge: false,
             scriptOff: false,
             hideTwitchSubButtons: false,
             hideTwitchPromo: false,
@@ -1499,7 +1529,7 @@
 
         [
             'statsEnabled', 'customPlayer', 'hideTwitchTurbo', 'hideTwitchSubButtons',
-            'hideTwitchPromo', 'hideChatCarousel', 'proxiesEnabled', 'proxyAdsOnly', 'scriptOff',
+            'hideTwitchPromo', 'hideChatCarousel', 'proxiesEnabled', 'proxyAdsOnly', 'experimentalVodAdblock', 'showVodChatSyncBadge', 'scriptOff',
             'dvrAutoNoVod', 'audioNormalize', 'detailedLogs', 'tooltips',
             'perStreamerVolume', 'wheelVolumeLock', 'audioBoost',
             'playerTools', 'noHomeAutoplay', 'noOfflineAutoplay', 'noVodAutoplay', 'bttvEmotes', 'stvEmotes',
@@ -1826,6 +1856,10 @@
                     pageConfig.proxiesEnabled !== false,
                 proxyAdsOnly:
                     !!pageConfig.proxyAdsOnly,
+                experimentalVodAdblock:
+                    !!pageConfig.experimentalVodAdblock,
+                showVodChatSyncBadge:
+                    !!pageConfig.showVodChatSyncBadge,
                 scriptOff:
                     !!pageConfig.scriptOff,
 
@@ -1977,6 +2011,7 @@
                     if (typeof applyTwitchUIClasses === 'function') applyTwitchUIClasses();
                     if (typeof scheduleTwitchUIScan === 'function') scheduleTwitchUIScan();
                     if (typeof applyCustomPlayerState === 'function') applyCustomPlayerState();
+                    if (typeof syncExpVodAdblockState === 'function') syncExpVodAdblockState();
                     if (typeof audioNormRefresh === 'function') audioNormRefresh();
                     if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
                     if (typeof updateBackupUI === 'function') updateBackupUI();
@@ -2801,6 +2836,7 @@
                 if (typeof applyTwitchUIClasses === 'function') applyTwitchUIClasses();
                 if (typeof scheduleTwitchUIScan === 'function') scheduleTwitchUIScan();
                 if (typeof applyCustomPlayerState === 'function') applyCustomPlayerState();
+                if (typeof syncExpVodAdblockState === 'function') syncExpVodAdblockState();
                 if (typeof syncBttvFeatures === 'function') syncBttvFeatures();
                 if (dashboard && dashboardVisible) {
                     renderDashboard();
@@ -4158,7 +4194,10 @@
         try {
             return !!(
                 video === spAutoplayVideo ||
-                (video && video.classList && video.classList.contains('tp9-sp-autoplay-video')) ||
+                (video && video.classList && (
+                    video.classList.contains('tp9-sp-autoplay-video') ||
+                    video.classList.contains('tp9dvr-video')
+                )) ||
                 (video && video.closest && video.closest('.tp9dvr, #tp9-sidebar-preview-card, #tp9-sp-autoplay-overlay'))
             );
         } catch (e) {
@@ -4566,7 +4605,7 @@
 
     function isAutoplayProtectedPause(video) {
         if (!video) return false;
-        if (video.__tp9AutoplayPaused) return true;
+        if (video.__tp9AutoplayPaused || video.__tp9ExpVodPaused) return true;
         if (shouldBlockAutoplayForVideo(video)) return true;
         if (video.paused && (isHomeCarouselVideo(video) || isOfflineChannelAutoplayVideo(video))) {
             return true;
@@ -5051,6 +5090,20 @@
     // Renvoie { video, channel } si cet onglet lit bien un live à
     // comptabiliser, sinon null.
     function getActivePlayback() {
+        var urlChannel = getTestChannel();
+
+        if (
+            urlChannel &&
+            typeof expVodIsPlayingVod === 'function' &&
+            expVodIsPlayingVod() &&
+            dvrVideo &&
+            !dvrVideo.paused &&
+            !dvrVideo.ended &&
+            dvrVideo.readyState >= 2
+        ) {
+            return { video: dvrVideo, channel: urlChannel };
+        }
+
         var video = findPlaybackVideo();
 
         if (!video || video.paused || video.ended || video.readyState < 2) {
@@ -5060,8 +5113,6 @@
         if (!isLivePlayback(video)) {
             return null;
         }
-
-        var urlChannel = getTestChannel();
 
         // Page d'une chaîne : c'est elle qu'on crédite. Twitch
         // referme le mini-player en arrivant sur une chaîne, il n'y
@@ -6609,8 +6660,9 @@
                 var cardHasRow = false;
                 rows.forEach(function (r) {
                     if (
-                        dashboard.classList.contains('tp9-no-proxy') &&
-                        (r.classList.contains('tp9-proxy-only') || r.classList.contains('tp9-proxy-ads-row'))
+                        r.style.display === 'none' ||
+                        (dashboard.classList.contains('tp9-no-proxy') &&
+                        (r.classList.contains('tp9-proxy-only') || r.classList.contains('tp9-proxy-ads-row')))
                     ) {
                         r.classList.add('tp9-search-hidden');
                         return;
@@ -6870,6 +6922,33 @@
                                     </span>
                                     <span class="tp9-switch">
                                         <input type="checkbox" class="tp9-proxy-ads-only">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+
+                                <label class="tp9-toggle-row tp9-exp-vod-row"
+                                    data-tp9-tip="Bloqueur de pub (Experimental)"
+                                    data-tp9-tip-sub="Lit la VOD sans pub au plus près du direct (~30 s), synchronise le tchat et les raids, garde les Points/Drops actifs et bascule sur le VAFT classique s'il n'y a pas de VOD.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.flask)}
+                                        <span class="tp9-exp-vod-text">Bloqueur de pub (Experimental)</span>
+                                        <span class="tp9-toggle-sub tp9-exp-vod-sub">VOD sans pub (~30 s du direct) · Tchat &amp; Raids synchro</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-exp-vod-adblock">
+                                        <span class="tp9-switch-track"></span>
+                                    </span>
+                                </label>
+
+                                <label class="tp9-toggle-row tp9-exp-vod-chat-badge-row"
+                                    data-tp9-tip="Afficher « Synchro tchat VOD »"
+                                    data-tp9-tip-sub="Affiche la mention « Synchro tchat VOD » et le décalage exact (-XX s) en bas du tchat. La synchronisation du tchat reste active même si ce bandeau est caché.">
+                                    <span class="tp9-toggle-label">
+                                        ${tp9OptIcon(TP9_ICON_PATHS.navChat)}
+                                        <span class="tp9-exp-vod-chat-badge-text">Afficher « Synchro tchat VOD »</span>
+                                    </span>
+                                    <span class="tp9-switch">
+                                        <input type="checkbox" class="tp9-exp-vod-chat-badge">
                                         <span class="tp9-switch-track"></span>
                                     </span>
                                 </label>
@@ -8195,6 +8274,20 @@
                 setProxyAdsOnly(event.target.checked);
             });
 
+        var expVodToggle = dashboard.querySelector('.tp9-exp-vod-adblock');
+        if (expVodToggle) {
+            expVodToggle.addEventListener('change', function (event) {
+                setExperimentalVodAdblock(event.target.checked);
+            });
+        }
+
+        var expVodChatBadgeToggle = dashboard.querySelector('.tp9-exp-vod-chat-badge');
+        if (expVodChatBadgeToggle) {
+            expVodChatBadgeToggle.addEventListener('change', function (event) {
+                setShowVodChatSyncBadge(event.target.checked);
+            });
+        }
+
         dashboard
             .querySelector('.tp9-fallback')
             .addEventListener(
@@ -9254,7 +9347,58 @@
             );
         }
 
-        dashboard.querySelector('.tp9-custom-player').checked = isCustomPlayerOn();
+        var expVodBox = dashboard.querySelector('.tp9-exp-vod-adblock');
+        if (expVodBox) {
+            expVodBox.checked = !!pageConfig.experimentalVodAdblock;
+        }
+        var expVodRow = dashboard.querySelector('.tp9-exp-vod-row');
+        if (expVodRow) {
+            var expVodTitle = tt('Bloqueur de pub (Experimental)', 'Ad blocker (Experimental)');
+            var expVodTextEl = expVodRow.querySelector('.tp9-exp-vod-text');
+            if (expVodTextEl) expVodTextEl.textContent = expVodTitle;
+            var expVodSubEl = expVodRow.querySelector('.tp9-exp-vod-sub');
+            if (expVodSubEl) {
+                expVodSubEl.textContent = tt('VOD sans pub (~30 s du direct) · Tchat & Raids synchro', 'Ad-free VOD (~30s behind live) · Synced chat & raids');
+            }
+            expVodRow.setAttribute('data-tp9-tip', expVodTitle);
+            expVodRow.setAttribute(
+                'data-tp9-tip-sub',
+                tt(
+                    'Lit la VOD sans pub au plus près du direct (~30 s), synchronise le tchat et les raids, garde les Points/Drops actifs et bascule sur le VAFT classique s\'il n\'y a pas de VOD.',
+                    'Plays the ad-free VOD as close to live as possible (~30s), syncs chat and raids, keeps Channel Points/Drops active, and falls back to classic VAFT if there is no VOD.'
+                )
+            );
+            expVodRow.style.display = (proxiesOn() || scriptIsOff()) ? 'none' : '';
+        }
+
+        var expVodChatBadgeBox = dashboard.querySelector('.tp9-exp-vod-chat-badge');
+        if (expVodChatBadgeBox) {
+            expVodChatBadgeBox.checked = !!pageConfig.showVodChatSyncBadge;
+        }
+        var expVodChatBadgeRow = dashboard.querySelector('.tp9-exp-vod-chat-badge-row');
+        if (expVodChatBadgeRow) {
+            var expVodChatBadgeTitle = tt('Afficher « Synchro tchat VOD »', 'Show "VOD chat sync" badge');
+            var expVodChatBadgeTextEl = expVodChatBadgeRow.querySelector('.tp9-exp-vod-chat-badge-text');
+            if (expVodChatBadgeTextEl) expVodChatBadgeTextEl.textContent = expVodChatBadgeTitle;
+            expVodChatBadgeRow.setAttribute('data-tp9-tip', expVodChatBadgeTitle);
+            expVodChatBadgeRow.setAttribute(
+                'data-tp9-tip-sub',
+                tt(
+                    'Affiche la mention « Synchro tchat VOD » et le décalage exact (-XX s) en bas du tchat. La synchronisation du tchat reste active même si ce bandeau est caché.',
+                    'Displays the "VOD chat sync" badge and exact delay (-XXs) at the bottom of chat. Chat sync stays active even when this badge is hidden.'
+                )
+            );
+            expVodChatBadgeRow.style.display = (proxiesOn() || scriptIsOff() || !pageConfig.experimentalVodAdblock) ? 'none' : '';
+        }
+
+        var customPlayerBox = dashboard.querySelector('.tp9-custom-player');
+        var customPlayerForced = typeof expVodAdblockOn === 'function' && expVodAdblockOn();
+        customPlayerBox.checked = customPlayerForced || isCustomPlayerOn();
+        customPlayerBox.disabled = customPlayerForced;
+        var customPlayerRow = customPlayerBox.closest('.tp9-toggle-row');
+        if (customPlayerRow) {
+            customPlayerRow.classList.toggle('tp9-toggle-locked', customPlayerForced);
+        }
         var modeSwitch = dashboard.querySelector('.tp9-mode-switch');
         var currentMode = scriptIsOff() ? 'off' : (proxiesOn() ? 'proxy' : 'adblock');
         modeSwitch.classList.toggle('tp9-mode-adblock', currentMode === 'adblock');
@@ -9501,6 +9645,17 @@
         // carte — un haut de menu qui apparaît et disparaît ferait
         // sauter tout le reste sous le curseur.
         if (!activeProxyInfo || !channel || activeProxyInfo.channel !== channel) {
+            if (channel && typeof expVodIsPlayingVod === 'function' && expVodIsPlayingVod()) {
+                hero.classList.add('tp9-hero-live');
+                valueEl.textContent = tt('Adblock VOD actif', 'VOD Adblock on');
+                var expOff0 = Math.max(1, Math.round(dvrCurrentOffset()));
+                subEl.textContent = tt(
+                    'VOD sans pub (~' + expOff0 + ' s du direct) · Tchat synchronisé',
+                    'Ad-free VOD (~' + expOff0 + 's behind live) · Synced chat'
+                );
+                metaEl.textContent = formatThroughput(getLiveThroughputBps()) || '';
+                return;
+            }
             hero.classList.add('tp9-hero-idle');
 
             valueEl.textContent = tt('En attente du flux…', 'Waiting for the stream…');
@@ -9512,6 +9667,24 @@
 
         if (activeProxyInfo.sansProxy) {
             hero.classList.add('tp9-hero-live');
+            if (typeof expVodAdblockOn === 'function' && expVodAdblockOn()) {
+                if (typeof expVodIsPlayingVod === 'function' && expVodIsPlayingVod()) {
+                    var expOff = Math.max(1, Math.round(dvrCurrentOffset()));
+                    valueEl.textContent = tt('Adblock VOD actif', 'VOD Adblock on');
+                    subEl.textContent = tt(
+                        'VOD sans pub (~' + expOff + ' s du direct) · Tchat synchronisé',
+                        'Ad-free VOD (~' + expOff + 's behind live) · Synced chat'
+                    );
+                } else {
+                    valueEl.textContent = tt('Adblock (Experimental)', 'Adblock (Experimental)');
+                    subEl.textContent = tt(
+                        'Pas de VOD prête · Repli VAFT classique actif',
+                        'No VOD ready · Classic VAFT fallback active'
+                    );
+                }
+                metaEl.textContent = formatThroughput(getLiveThroughputBps()) || '';
+                return;
+            }
             // En mode Adblock, seul VAFT est actif ("Adblock actif").
             // En mode Proxy avec l'option dédiée, le titre indique "Proxy pendant les pubs".
             valueEl.textContent = proxyAdsOnlyOn()
@@ -11124,8 +11297,29 @@ function showAddProxyForm() {
         }
         .tp9dvr-native-bar .tp9dvr-menu { z-index: 10; max-height: 55vh; }
         .tp9dvr-native-bar .tp9dvr-seek:focus-visible { outline: 2px solid white; outline-offset: 2px; }
-        .video-player__overlay:has(.tp9dvr-native-bar:hover, .tp9dvr-native-bar:focus-within, .tp9dvr-native-info:hover, .tp9dvr-native-info:focus-within, .tp9dvr-fallback-left:hover, .tp9dvr-fallback-left:focus-within, .tp9dvr-menu-on) > .tw-transition {
+        .video-player:not(.tp9-exp-hud-idle) .video-player__overlay:has(.tp9dvr-native-bar:hover, .tp9dvr-native-bar:focus-within, .tp9dvr-native-info:hover, .tp9dvr-native-info:focus-within, .tp9dvr-fallback-left:hover, .tp9dvr-fallback-left:focus-within, .tp9dvr-menu-on) > .tw-transition {
             opacity: 1 !important;
+        }
+        .video-player.tp9-exp-hud-idle,
+        .video-player.tp9-exp-hud-idle * {
+            cursor: none !important;
+        }
+        .video-player.tp9-exp-hud-idle .video-player__overlay > .tw-transition,
+        .video-player.tp9-exp-hud-idle [data-a-target="player-controls"],
+        .video-player.tp9-exp-hud-idle .player-controls,
+        .video-player.tp9-exp-hud-idle .top-bar,
+        .video-player.tp9-exp-hud-idle .player-controls__background,
+        .video-player.tp9-exp-hud-idle .extension-container,
+        .video-player.tp9-exp-hud-idle [data-a-target="player-overlay-ChannelHeader"],
+        .video-player.tp9-exp-hud-idle .tp9dvr-native-bar,
+        .video-player.tp9-exp-hud-idle .tp9dvr-native-info,
+        .video-player.tp9-exp-hud-idle .tp9dvr-fallback {
+            opacity: 0 !important;
+            pointer-events: none !important;
+            transition: opacity .18s ease !important;
+        }
+        .video-player.tp9-exp-hud-idle .player-overlay-background--theme-dark {
+            background: transparent !important;
         }
         .tp9dvr-native-bar .tp9dvr-zone-vod { background: #9147ff; }
         .tp9dvr-native-bar .tp9dvr-head { width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; }
@@ -11260,6 +11454,9 @@ function showAddProxyForm() {
     // comprise, même sur une chaîne restée armée. Les chaînes armées
     // sont gardées pour le jour où on le rallume.
     function isCustomPlayerOn() {
+        if (typeof expVodAdblockOn === 'function' && expVodAdblockOn()) {
+            return true;
+        }
         return pageConfig.customPlayer !== false;
     }
 
@@ -11693,6 +11890,7 @@ function showAddProxyForm() {
 
     var dvrVodAccess = {};
     var dvrVodAccessPending = {};
+    var dvrVodBlockedRetries = {};
 
     // Renditions tentées pour un accès direct, de la meilleure à la
     // plus modeste. 'chunked' est la source : elle existe toujours,
@@ -11795,18 +11993,31 @@ function showAddProxyForm() {
     }
 
     var DVR_CF_DEFAULT_HOSTS = [
+        'https://d1ndex63qxojbr.cloudfront.net',
+        'https://d2vi6trrdongqn.cloudfront.net',
         'https://d3stzm2eumvgb4.cloudfront.net',
-        'https://d2nvs31859zcd8.cloudfront.net',
-        'https://dgeft87wbj63p.cloudfront.net',
-        'https://d1m7jfoe9zdc1j.cloudfront.net',
-        'https://d3vd9lfkzbru3h.cloudfront.net',
-        'https://d2vjef5jvl6bfs.cloudfront.net',
+        'https://d3fi1amfgojobc.cloudfront.net',
+        'https://d3aqoihi2n8ty8.cloudfront.net',
+        'https://ddacn6pr5v0tl.cloudfront.net',
+        'https://d1mhjrowxxagfy.cloudfront.net',
         'https://d1ymi26ma8va5x.cloudfront.net',
-        'https://d1xhnb4ptk05mw.cloudfront.net',
+        'https://d2vjef5jvl6bfs.cloudfront.net',
+        'https://d3vd9lfkzbru3h.cloudfront.net',
+        'https://d1m7jfoe9zdc1j.cloudfront.net',
+        'https://dgeft87wbj63p.cloudfront.net',
         'https://d3c27h4odz752x.cloudfront.net',
+        'https://d2aba1wr3818hz.cloudfront.net',
+        'https://d2nvs31859zcd8.cloudfront.net',
+        'https://ds0h3roq6wcgc.cloudfront.net',
+        'https://dqrpb9wgowsf5.cloudfront.net',
+        'https://d2e2de1etea730.cloudfront.net',
+        'https://d1xhnb4ptk05mw.cloudfront.net',
+        'https://vod-pop-secure.twitch.tv',
         'https://vod-secure.twitch.tv',
         'https://vod-metro.twitch.tv'
     ];
+
+    var dvrCfBaseCache = {};
 
     function dvrSha1Hex20(str) {
         if (!window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
@@ -11829,9 +12040,58 @@ function showAddProxyForm() {
         var entry = channel && dvrVodCache[channel];
         var meta = entry && entry.cfMeta;
         if (!meta || !meta.streamId || !isFinite(meta.startWall)) {
-            dvrMarkVodBlocked(id);
+            dvrMarkVodBlocked(id, false);
             return;
         }
+        var cacheKey = channel + '_' + meta.streamId;
+        var resolved = false;
+        function finishWithBase(baseUrl) {
+            if (resolved) return;
+            resolved = true;
+            if (cacheKey) {
+                var ckKeys = Object.keys(dvrCfBaseCache);
+                if (ckKeys.length >= 40) {
+                    delete dvrCfBaseCache[ckKeys[0]];
+                }
+                dvrCfBaseCache[cacheKey] = baseUrl;
+            }
+            var url = baseUrl + '/chunked/index-dvr.m3u8';
+            dvrVodAccess[id] = {
+                state: 'bypass',
+                url: url,
+                base: baseUrl,
+                index: 0
+            };
+            delete dvrVodBlockedRetries[id];
+            delete dvrVodAccessPending[id];
+            syncDvrMemorySuppression();
+            dvrNotifyBypass(id, true);
+            if (dvrOverlay) {
+                dvrRefreshControls();
+            }
+            if (typeof expVodOnVodResolutionChanged === 'function') {
+                expVodOnVodResolutionChanged(channel);
+            }
+        }
+
+        if (cacheKey && dvrCfBaseCache[cacheKey]) {
+            var rememberedBase = dvrCfBaseCache[cacheKey];
+            dvrFetchWithTimeout(rememberedBase + '/chunked/index-dvr.m3u8', { method: 'GET' }, 5000)
+                .then(function (r) {
+                    if (r && r.ok) {
+                        finishWithBase(rememberedBase);
+                        return;
+                    }
+                    delete dvrCfBaseCache[cacheKey];
+                    dvrResolveHiddenCloudfrontVod(id, channel);
+                })
+                .catch(function () {
+                    delete dvrCfBaseCache[cacheKey];
+                    dvrResolveHiddenCloudfrontVod(id, channel);
+                });
+            return;
+        }
+
         var baseSec = Math.floor(meta.startWall / 1000);
         var deltas = [0, -1, 1, -2, 2, -3, -5, -7, -8, -9, -10];
         var hosts = [];
@@ -11853,31 +12113,13 @@ function showAddProxyForm() {
         })).then(function (dirNames) {
             var validDirs = dirNames.filter(Boolean);
             if (!validDirs.length) {
-                dvrMarkVodBlocked(id);
+                dvrMarkVodBlocked(id, false);
                 return;
-            }
-            var resolved = false;
-            function finishWithBase(baseUrl) {
-                if (resolved) return;
-                resolved = true;
-                var url = baseUrl + '/chunked/index-dvr.m3u8';
-                dvrVodAccess[id] = {
-                    state: 'bypass',
-                    url: url,
-                    base: baseUrl,
-                    index: 0
-                };
-                delete dvrVodAccessPending[id];
-                syncDvrMemorySuppression();
-                dvrNotifyBypass(id, true);
-                if (dvrOverlay) {
-                    dvrRefreshControls();
-                }
             }
 
             // Passe 1 : teste d'abord delta=0 sur l'hôte CloudFront habituel du streamer (réponse immédiate dans 95 % des cas)
             var fastBase = hosts[0] + '/' + validDirs[0];
-            fetch(fastBase + '/chunked/index-dvr.m3u8', { method: 'GET' })
+            dvrFetchWithTimeout(fastBase + '/chunked/index-dvr.m3u8', { method: 'GET' }, 5000)
                 .then(function (r) {
                     if (r && r.ok) {
                         finishWithBase(fastBase);
@@ -11892,35 +12134,77 @@ function showAddProxyForm() {
             function runFallbackProbes() {
                 if (resolved) return;
                 var candidates = [];
-                // Autres deltas sur l'hôte préféré
+                var seen = {};
+                function addCandidate(cand) {
+                    if (!seen[cand] && cand !== fastBase) {
+                        seen[cand] = true;
+                        candidates.push(cand);
+                    }
+                }
+                // Tous les deltas sur l'hôte préféré en priorité
                 for (var di = 1; di < validDirs.length; di++) {
-                    candidates.push(hosts[0] + '/' + validDirs[di]);
+                    addCandidate(hosts[0] + '/' + validDirs[di]);
                 }
-                // Delta=0 et -1 sur les autres hôtes CDN Twitch
-                for (var hi = 1; hi < hosts.length; hi++) {
-                    candidates.push(hosts[hi] + '/' + validDirs[0]);
-                    if (validDirs[1]) candidates.push(hosts[hi] + '/' + validDirs[1]);
+                // Deltas principaux (0, -1, 1, -2, 2) sur l'ensemble des hôtes CDN Twitch
+                var perHostCount = Math.min(validDirs.length, 5);
+                for (var dIdx = 0; dIdx < perHostCount; dIdx++) {
+                    for (var hi = 1; hi < hosts.length; hi++) {
+                        addCandidate(hosts[hi] + '/' + validDirs[dIdx]);
+                    }
                 }
-                var pending = candidates.length;
-                if (!pending) {
-                    dvrMarkVodBlocked(id);
+                if (!candidates.length) {
+                    dvrMarkVodBlocked(id, false);
                     return;
                 }
-                candidates.forEach(function (candBase) {
-                    fetch(candBase + '/chunked/index-dvr.m3u8', { method: 'GET' })
-                        .then(function (r) {
-                            if (r && r.ok) {
-                                finishWithBase(candBase);
+                // Pool limité à 6 requêtes parallèles max pour ne jamais saturer le navigateur
+                var cursor = 0;
+                var inFlight = 0;
+                var activeCtrls = [];
+                function abortAll() {
+                    for (var k = 0; k < activeCtrls.length; k++) {
+                        try { activeCtrls[k].abort(); } catch (eAb) {}
+                    }
+                    activeCtrls.length = 0;
+                }
+                function pump() {
+                    if (resolved) return;
+                    if (cursor >= candidates.length && inFlight <= 0) {
+                        dvrMarkVodBlocked(id, false);
+                        return;
+                    }
+                    while (!resolved && inFlight < 6 && cursor < candidates.length) {
+                        (function (candBase) {
+                            inFlight++;
+                            var opts = { method: 'GET' };
+                            var ctrl = null;
+                            var tid = null;
+                            if (typeof AbortController === 'function') {
+                                ctrl = new AbortController();
+                                opts.signal = ctrl.signal;
+                                activeCtrls.push(ctrl);
+                                tid = setTimeout(function () {
+                                    try { ctrl.abort(); } catch (eTo) {}
+                                }, 6500);
                             }
-                        })
-                        .catch(function () {})
-                        .finally(function () {
-                            pending--;
-                            if (pending <= 0 && !resolved) {
-                                dvrMarkVodBlocked(id);
-                            }
-                        });
-                });
+                            fetch(candBase + '/chunked/index-dvr.m3u8', opts)
+                                .then(function (r) {
+                                    if (!resolved && r && r.ok) {
+                                        abortAll();
+                                        finishWithBase(candBase);
+                                    }
+                                })
+                                .catch(function () {})
+                                .finally(function () {
+                                    if (tid) clearTimeout(tid);
+                                    inFlight--;
+                                    if (!resolved) {
+                                        pump();
+                                    }
+                                });
+                        })(candidates[cursor++]);
+                    }
+                }
+                pump();
             }
         });
     }
@@ -11929,7 +12213,7 @@ function showAddProxyForm() {
         dvrVodInFlight[channel] = true;
 
         dvrGql(
-            'query($login:String!){user(login:$login){stream{id createdAt archiveVideo{id}} videos(first:2,type:ARCHIVE,sort:TIME){edges{node{id createdAt seekPreviewsURL}}}}}',
+            'query($login:String!){user(login:$login){id stream{id createdAt archiveVideo{id}} videos(first:2,type:ARCHIVE,sort:TIME){edges{node{id createdAt seekPreviewsURL}}}}}',
             { login: channel },
             function (json) {
                 var user =
@@ -11967,11 +12251,20 @@ function showAddProxyForm() {
                 }
 
                 // Si archiveVideo est null mais que la dernière vidéo ARCHIVE correspond au début de ce stream
-                var resolvedVodId = (archive && archive.id && !isNaN(startWall)) ? archive.id : null;
-                if (!resolvedVodId && !isNaN(startWall) && edges.length > 0 && edges[0] && edges[0].node) {
-                    var vCreated = Date.parse(edges[0].node.createdAt || '');
-                    if (!isNaN(vCreated) && Math.abs(vCreated - startWall) < 600000 && edges[0].node.id) {
-                        resolvedVodId = edges[0].node.id;
+                var resolvedVodId = (archive && archive.id && !isNaN(startWall)) ? String(archive.id) : null;
+                var matchedSeekPreviewsUrl = null;
+                if (!isNaN(startWall) && edges.length > 0 && edges[0] && edges[0].node) {
+                    var firstNode = edges[0].node;
+                    var vCreated = Date.parse(firstNode.createdAt || '');
+                    var matchesStream = (!isNaN(vCreated) && Math.abs(vCreated - startWall) < 600000) ||
+                        (resolvedVodId && firstNode.id && String(firstNode.id) === resolvedVodId);
+                    if (matchesStream) {
+                        if (!resolvedVodId && firstNode.id) {
+                            resolvedVodId = String(firstNode.id);
+                        }
+                        if (firstNode.seekPreviewsURL) {
+                            matchedSeekPreviewsUrl = firstNode.seekPreviewsURL;
+                        }
                     }
                 }
 
@@ -11993,7 +12286,9 @@ function showAddProxyForm() {
                     at: Date.now(),
                     id: resolvedVodId,
                     startWall: startWall,
+                    channelId: user && user.id ? String(user.id) : (previousVod && previousVod.channelId ? previousVod.channelId : null),
                     streamId: stream && stream.id ? String(stream.id) : null,
+                    seekPreviewsURL: matchedSeekPreviewsUrl || null,
                     cfMeta: cfMeta
                 };
 
@@ -12003,6 +12298,7 @@ function showAddProxyForm() {
                 if (!stream && previousVod && previousVod.id && !previousVod.failed) {
                     dvrVodCache[channel].id = previousVod.id;
                     dvrVodCache[channel].startWall = previousVod.startWall;
+                    dvrVodCache[channel].seekPreviewsURL = previousVod.seekPreviewsURL || null;
                     dvrVodCache[channel].cfMeta = previousVod.cfMeta || null;
                     dvrVodCache[channel].ended = true;
                 }
@@ -12021,6 +12317,8 @@ function showAddProxyForm() {
 
                 if (id && !dvrVodAccess[id] && !dvrVodAccessPending[id]) {
                     resolveDvrVodAccess(id, channel);
+                } else if (typeof expVodOnVodResolutionChanged === 'function') {
+                    expVodOnVodResolutionChanged(channel);
                 }
 
                 syncDvrMemorySuppression();
@@ -12037,6 +12335,10 @@ function showAddProxyForm() {
                 };
 
                 delete dvrVodInFlight[channel];
+
+                if (typeof expVodOnVodResolutionChanged === 'function') {
+                    expVodOnVodResolutionChanged(channel);
+                }
             }
         );
     }
@@ -12072,9 +12374,14 @@ function showAddProxyForm() {
                             encodeURIComponent(token.signature)
                     };
 
+                    delete dvrVodBlockedRetries[id];
                     delete dvrVodAccessPending[id];
 
                     syncDvrMemorySuppression();
+
+                    if (typeof expVodOnVodResolutionChanged === 'function') {
+                        expVodOnVodResolutionChanged(channel);
+                    }
 
                     return;
                 }
@@ -12115,6 +12422,18 @@ function showAddProxyForm() {
     // préfixe contient une empreinte aléatoire, impossible à
     // deviner autrement.
     function dvrResolveBypass(id, channel) {
+        var cachedEntry = channel && dvrVodCache[channel];
+        var cachedPreviews = (cachedEntry && String(cachedEntry.id) === String(id) && cachedEntry.seekPreviewsURL)
+            ? cachedEntry.seekPreviewsURL
+            : null;
+        if (cachedPreviews) {
+            var cachedCut = cachedPreviews.indexOf('/storyboards/');
+            if (cachedCut > 0) {
+                dvrProbeRenditions(cachedPreviews.substring(0, cachedCut), 0, id, channel);
+                return;
+            }
+        }
+
         dvrGql(
             'query($id:ID!){video(id:$id){seekPreviewsURL}}',
             { id: id },
@@ -12131,15 +12450,15 @@ function showAddProxyForm() {
                         : -1;
 
                 if (cut < 0) {
-                    dvrMarkVodBlocked(id);
+                    dvrMarkVodBlocked(id, false);
 
                     return;
                 }
 
-                dvrProbeRenditions(previews.substring(0, cut), 0, id);
+                dvrProbeRenditions(previews.substring(0, cut), 0, id, channel);
             },
             function () {
-                dvrMarkVodBlocked(id);
+                dvrMarkVodBlocked(id, false);
             }
         );
     }
@@ -12159,9 +12478,9 @@ function showAddProxyForm() {
         return fetch(url, opts);
     }
 
-    function dvrProbeRenditions(base, index, id) {
+    function dvrProbeRenditions(base, index, id, channel) {
         if (index >= DVR_VOD_RENDITIONS.length) {
-            dvrMarkVodBlocked(id);
+            dvrMarkVodBlocked(id, false);
 
             return;
         }
@@ -12171,7 +12490,7 @@ function showAddProxyForm() {
         dvrFetchWithTimeout(url, { method: 'GET' }, 8000)
             .then(function (response) {
                 if (!response.ok) {
-                    dvrProbeRenditions(base, index + 1, id);
+                    dvrProbeRenditions(base, index + 1, id, channel);
 
                     return;
                 }
@@ -12183,27 +12502,44 @@ function showAddProxyForm() {
                     index: index
                 };
 
+                delete dvrVodBlockedRetries[id];
                 delete dvrVodAccessPending[id];
 
                 syncDvrMemorySuppression();
 
                 dvrNotifyBypass(id, true);
+
+                if (typeof expVodOnVodResolutionChanged === 'function') {
+                    expVodOnVodResolutionChanged(channel);
+                }
             })
             .catch(function () {
-                dvrProbeRenditions(base, index + 1, id);
+                dvrProbeRenditions(base, index + 1, id, channel);
             });
     }
 
-    function dvrMarkVodBlocked(id) {
+    function dvrMarkVodBlocked(id, fromPlaybackError) {
         if (!id) {
             return;
         }
 
-        dvrVodAccess[id] = { state: 'blocked', url: null };
+        var retries = dvrVodBlockedRetries[id] || 0;
+
+        dvrVodAccess[id] = {
+            state: 'blocked',
+            url: null,
+            at: Date.now(),
+            retries: retries,
+            fromPlaybackError: Boolean(fromPlaybackError)
+        };
 
         delete dvrVodAccessPending[id];
 
         syncDvrMemorySuppression();
+
+        if (typeof expVodOnVodResolutionChanged === 'function') {
+            expVodOnVodResolutionChanged();
+        }
 
         dvrNotifyBypass(id, false);
     }
@@ -12339,7 +12675,7 @@ function showAddProxyForm() {
             }
             dvrHandleSourceFailure(offset);
         };
-        dvrProbeRenditions(access.base, access.index + 1, id);
+        dvrProbeRenditions(access.base, access.index + 1, id, channel);
         return true;
     }
 
@@ -12349,7 +12685,7 @@ function showAddProxyForm() {
         var entry = channel ? dvrVodCache[channel] : null;
 
         if (entry && entry.id) {
-            dvrMarkVodBlocked(entry.id);
+            dvrMarkVodBlocked(entry.id, true);
         }
     }
 
@@ -12535,7 +12871,9 @@ function showAddProxyForm() {
             return streamEnd.liveNow;
         }
 
-        var reference = dvrSegmentsEndWall;
+        var reference = (typeof expVodIsPlayingVod === 'function' && expVodIsPlayingVod())
+            ? Date.now()
+            : dvrSegmentsEndWall;
 
         // Une mémoire figée (lecteur arrêté) ne dit plus où en est le
         // direct : au-delà d'une demi-minute on repasse sur l'horloge,
@@ -12673,7 +13011,20 @@ function showAddProxyForm() {
         // Hors direct, l'échelle ne bouge plus : c'est elle qui
         // donne sa place à chaque repère, et la voir changer
         // sous la pastille se lit comme un saut de lecture.
+        // Exception : en mode Bloqueur de pub (Experimental), tant qu'on
+        // suit le bord de la VOD (~30 s) sans recul manuel ni pause,
+        // l'échelle suit la durée croissante de la VOD.
         if (dvrFrozenTimelineMax !== null && channel === dvrChannelInUse && !dvrIsLive()) {
+            if (
+                typeof expVodIsPlayingVod === 'function' &&
+                expVodIsPlayingVod() &&
+                !(typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge())
+            ) {
+                var liveVodMax = dvrMaxOffsetFor(channel);
+                if (liveVodMax > 0) {
+                    dvrFrozenTimelineMax = liveVodMax;
+                }
+            }
             return dvrFrozenTimelineMax;
         }
 
@@ -13011,12 +13362,21 @@ function showAddProxyForm() {
     // Ouverture / fermeture
     // ------------------------------------------------------------
 
+    var dvrOpenedAt = 0;
+
     function openDvr(startOffset) {
         if (dvrOverlay) {
             return;
         }
 
+        var livePageCh =
+            typeof expVodAdblockOn === 'function' &&
+            expVodAdblockOn() &&
+            typeof expVodGetLivePageChannel === 'function'
+                ? expVodGetLivePageChannel()
+                : null;
         var channel =
+            livePageCh ||
             getWatchedChannel() ||
             getTestChannel();
 
@@ -13033,6 +13393,7 @@ function showAddProxyForm() {
         }
 
         dvrChannelInUse = channel;
+        dvrOpenedAt = Date.now();
 
         injectDvrCSS();
 
@@ -13048,7 +13409,7 @@ function showAddProxyForm() {
         // On n'ouvre plus dans le passé : la barre se pose sur le
         // direct, qui continue de jouer sur le lecteur Twitch avec
         // son son. Rien n'est remplacé tant qu'on n'a pas reculé.
-        dvrEnterLiveMode();
+        dvrEnterLiveMode(true);
 
         // Sauf quand on vient rattraper une pause faite sur le
         // lecteur de Twitch lui-même : voir watchNativeTwitchPause.
@@ -13103,6 +13464,7 @@ function showAddProxyForm() {
         dvrVideo = null;
         dvrSourceKind = null;
         dvrChannelInUse = null;
+        dvrOpenedAt = 0;
         dvrLivePauseAt = 0;
         dvrPendingPause = false;
 
@@ -13142,7 +13504,7 @@ function showAddProxyForm() {
 
     function dvrRestoreLiveSound() {
         dvrPauseReplay();
-        if (spAutoplayMutingMain) {
+        if (spAutoplayMutingMain || (typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())) {
             dvrSyncVolumeFromPlayer();
         } else {
             dvrReleaseAudioBridge();
@@ -13153,6 +13515,7 @@ function showAddProxyForm() {
         }
 
         try {
+            dvrLiveVideo.__tp9ExpVodPaused = false;
             if (dvrLiveVideo.paused) {
                 var resumed = dvrLiveVideo.play();
 
@@ -13228,11 +13591,60 @@ function showAddProxyForm() {
         return Boolean(userExplicitLivePaused && ch && userExplicitPauseChannel === ch);
     }
 
+    function dvrHasLivePlaybackStarted(video) {
+        var v = video || ((dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo());
+        if (!v) return false;
+        if ((v.currentTime || 0) >= 0.15) return true;
+        var ch = getTestChannel();
+        return Boolean(ch && twitchSpy.channel === ch && twitchSpy.played);
+    }
+
+    var ivsRebufferPauseSince = 0;
+    var ivsRebufferPauseVideo = null;
+
+    function isIvsTransientRebufferPause(video) {
+        var v = video || ((dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo());
+        if (!v || !v.paused || v.error || v.ended) {
+            ivsRebufferPauseSince = 0;
+            ivsRebufferPauseVideo = null;
+            return false;
+        }
+        var pState = '';
+        var bufDur = 0;
+        try {
+            var parts = spPlayerParts(false);
+            var player = parts && parts.player;
+            if (player) {
+                if (typeof player.getState === 'function') pState = player.getState() || '';
+                if (typeof player.getBufferDuration === 'function') bufDur = Number(player.getBufferDuration()) || 0;
+            }
+        } catch (e) {}
+        if (!pState && twitchSpy.channel === getTestChannel()) {
+            pState = twitchSpy.state || '';
+        }
+        if (pState !== 'Playing' && pState !== 'Buffering') {
+            ivsRebufferPauseSince = 0;
+            ivsRebufferPauseVideo = null;
+            return false;
+        }
+        var ahead = Math.max(typeof spAheadOf === 'function' ? spAheadOf(v) : 0, bufDur);
+        if (v.readyState >= 4 || ahead >= 1.2) {
+            ivsRebufferPauseSince = 0;
+            ivsRebufferPauseVideo = null;
+            return false;
+        }
+        var now = Date.now();
+        if (ivsRebufferPauseVideo !== v || !ivsRebufferPauseSince) {
+            ivsRebufferPauseVideo = v;
+            ivsRebufferPauseSince = now;
+        }
+        return (now - ivsRebufferPauseSince) < 12000;
+    }
+
     function isLivePlayerBrokenOrStuck(video) {
         var v = video || ((dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo());
         if (!v || !v.isConnected) return Boolean(getTestChannel());
         if (v.error || v.ended) return true;
-        if (v.readyState < 2 && v.networkState === 3) return true;
         var ch = getTestChannel();
         if (
             ch &&
@@ -13241,6 +13653,11 @@ function showAddProxyForm() {
             (twitchSpy.state === 'Ended' || twitchSpy.state === 'Idle')
         ) {
             return true;
+        }
+        if (v.readyState < 2 && v.networkState === 3) {
+            if (dvrHasLivePlaybackStarted(v)) return true;
+            if (dvrOpenedAt > 0 && (Date.now() - dvrOpenedAt) > 6000) return true;
+            return false;
         }
         return false;
     }
@@ -13292,7 +13709,7 @@ function showAddProxyForm() {
         return true;
     }
 
-    function dvrEnterLiveMode() {
+    function dvrEnterLiveMode(isInitialMount) {
         if (!dvrOverlay) {
             return;
         }
@@ -13325,12 +13742,16 @@ function showAddProxyForm() {
         dvrSendHold(false);
 
         dvrRestoreLiveSound();
+        if (typeof expVodResumeBackgroundLive === 'function') {
+            expVodResumeBackgroundLive();
+        }
 
-        if (!dvrStreamEnded()) {
+        if (!isInitialMount && !dvrStreamEnded()) {
             if (!dvrLiveVideo || isLivePlayerBrokenOrStuck(dvrLiveVideo)) {
                 reloadTwitchPlayer();
             } else if (dvrLiveVideo.paused) {
                 try {
+                    dvrLiveVideo.__tp9ExpVodPaused = false;
                     var resumedLive = dvrLiveVideo.play();
                     if (resumedLive && resumedLive.catch) resumedLive.catch(function () {});
                 } catch (e) {}
@@ -13371,7 +13792,13 @@ function showAddProxyForm() {
                 // direct : on le relance, sinon la mémoire cesse de
                 // se remplir et le retour au direct devient lent.
                 // Stream terminé : il n'a plus rien à lire.
-                if (dvrLiveVideo.paused && !dvrStreamEnded()) {
+                // En mode Bloqueur de pub (Experimental) sur VOD, on
+                // garde le direct coupé (0 Ko/s) sans le relancer.
+                if (
+                    dvrLiveVideo.paused &&
+                    !dvrStreamEnded() &&
+                    !(typeof expVodAdblockOn === 'function' && expVodAdblockOn() && dvrVodInfoFor(dvrChannelInUse))
+                ) {
                     var restarted = dvrLiveVideo.play();
 
                     if (restarted && restarted.catch) {
@@ -13555,15 +13982,16 @@ function showAddProxyForm() {
         dvrAllowDirectVolumeWrite = false;
     }
 
-    function dvrSyncVolumeFromPlayer() {
+    function dvrSyncVolumeFromPlayer(fallbackVideo) {
         var needDvrBridge = Boolean(dvrOverlay && dvrVideo && !dvrIsLive());
         var needSpBridge = Boolean(spAutoplayMutingMain);
-        if (!needDvrBridge && !needSpBridge) {
+        var needExpGateBridge = typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive();
+        if (!needDvrBridge && !needSpBridge && !needExpGateBridge) {
             dvrReleaseAudioBridge();
             return;
         }
         if (!dvrLiveVideo || !dvrLiveVideo.isConnected) dvrFindLivePlayer();
-        var video = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+        var video = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : (fallbackVideo || findPlaybackVideo());
         if (dvrAudioBridge && dvrAudioBridge.video === video) {
             if (nativeMediaMutedDesc && nativeMediaMutedDesc.set) {
                 try { nativeMediaMutedDesc.set.call(video, true); } catch (e) {}
@@ -13778,6 +14206,9 @@ function showAddProxyForm() {
             return false;
         }
         if (dvrOverlay && dvrVideo && !dvrIsLive()) {
+            return true;
+        }
+        if (typeof expVodIsStartupGateMutingVideo === 'function' && expVodIsStartupGateMutingVideo(video)) {
             return true;
         }
         if (spAutoplayMutingMain) {
@@ -14173,6 +14604,13 @@ function showAddProxyForm() {
                         !isOwnPlayerVideo(this)
                     ) {
                         var selfVid = this;
+                        if (
+                            selfVid.__tp9ExpVodPaused &&
+                            typeof expVodShouldHoldBackgroundLive === 'function' &&
+                            expVodShouldHoldBackgroundLive()
+                        ) {
+                            return Promise.resolve();
+                        }
                         if (typeof shouldBlockAutoplayForVideo === 'function' && shouldBlockAutoplayForVideo(selfVid)) {
                             pauseAutoplayVideo(selfVid);
                             return createAutoplayBlockedPromise();
@@ -14192,6 +14630,21 @@ function showAddProxyForm() {
                             setVideoVolumeRaw(selfVid, 0, true);
                         } else {
                             enforceSavedVolumeOnVideoSync(selfVid);
+                            if (!selfVid.__tp9InPlayHook && typeof expVodOnNativeVideoPlay === 'function') {
+                                selfVid.__tp9InPlayHook = true;
+                                try {
+                                    expVodOnNativeVideoPlay(selfVid);
+                                } finally {
+                                    selfVid.__tp9InPlayHook = false;
+                                }
+                            }
+                            if (
+                                selfVid.__tp9ExpVodPaused &&
+                                typeof expVodShouldHoldBackgroundLive === 'function' &&
+                                expVodShouldHoldBackgroundLive()
+                            ) {
+                                return Promise.resolve();
+                            }
                         }
                     }
                     return nativePlay.apply(this, arguments);
@@ -14900,6 +15353,11 @@ function showAddProxyForm() {
             return;
         }
         var live = dvrIsLive();
+        var atExpVodEdge = !live &&
+            !dvrStreamEnded() &&
+            typeof expVodLockLiveReturn === 'function' &&
+            expVodLockLiveReturn() &&
+            !(typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge());
         var playable = !!(dvrSourceWindow('buffer') || dvrSourceWindow('vod'));
         var back = dvrQuery('.tp9dvr-back');
         var fwd = dvrQuery('.tp9dvr-fwd');
@@ -14907,7 +15365,7 @@ function showAddProxyForm() {
         if (back && back.disabled !== !playable) {
             back.disabled = !playable;
         }
-        var fwdOff = !playable || live;
+        var fwdOff = !playable || live || atExpVodEdge;
         if (fwd && fwd.disabled !== fwdOff) {
             fwd.disabled = fwdOff;
         }
@@ -14916,7 +15374,7 @@ function showAddProxyForm() {
             dvrCloseSpeedMenu();
         }
         if (speed) {
-            var display = live ? 'none' : '';
+            var display = (live || (atExpVodEdge && dvrPlaybackRate === 1)) ? 'none' : '';
             if (speed.style.display !== display) {
                 speed.style.display = display;
             }
@@ -15137,6 +15595,9 @@ function showAddProxyForm() {
             if (typeof syncUncensoredChatDomState === 'function') {
                 syncUncensoredChatDomState();
             }
+            if (typeof syncAllReplyHeaderNativeTitles === 'function') {
+                syncAllReplyHeaderNativeTitles();
+            }
             if (typeof restoreAllReadableUsernameColors === 'function') {
                 restoreAllReadableUsernameColors();
             }
@@ -15183,8 +15644,14 @@ function showAddProxyForm() {
         if (typeof syncUncensoredChatDomState === 'function') {
             syncUncensoredChatDomState();
         }
+        if (typeof syncAllReplyHeaderNativeTitles === 'function') {
+            syncAllReplyHeaderNativeTitles();
+        }
         if (pageConfig.replyThreadNav === false && typeof clearReplyThreadHover === 'function') {
             clearReplyThreadHover(true);
+        }
+        if (typeof reapplySplitChatOnExisting === 'function') {
+            reapplySplitChatOnExisting();
         }
         document.body.style.setProperty('--tp9-split-color', pageConfig.splitChatColor || '#9147ff');
         document.body.style.setProperty('--tp9-hl-color', pageConfig.highlightColor || '#9147ff');
@@ -15416,6 +15883,14 @@ function showAddProxyForm() {
         el.removeAttribute('data-tp9-len');
     }
 
+    var TWITCH_GOALS_HEADING_RE =
+        /^(?:objectifs?\s+de\s+\S[^\r\n]{0,50}|creator\s+goals?|streamer\s+goals?|\S[^\r\n]{0,40}['\u2019]s\s+goals?)$/i;
+
+    var TWITCH_GOALS_STOP_GUARD =
+        '.about-section, [data-a-target*="about" i], [data-test-selector*="about" i], ' +
+        '.default-panel, [data-test-selector*="panel" i], [data-a-target="stream-title"], ' +
+        '[data-a-target="stream-game-link"]';
+
     // Twitch charge la page par morceaux : une zone masquée peut
     // recevoir APRÈS coup le cœur, la cloche ou une section entière
     // (c'était le cas des boutons qui disparaissaient « parfois »).
@@ -15427,15 +15902,128 @@ function showAddProxyForm() {
             document.querySelectorAll('[data-tp9-hide]'),
             function (el) {
                 var kind = el.getAttribute('data-tp9-hide');
-                var guard = kind === 'promo' ? TWITCH_PROTECTED_PROMO : TWITCH_PROTECTED;
+                var guard = (kind === 'promo' || kind === 'subs-goal') ? TWITCH_PROTECTED_PROMO : TWITCH_PROTECTED;
                 var count = parseInt(el.getAttribute('data-tp9-count'), 10);
+                var maxLen = parseInt(el.getAttribute('data-tp9-len'), 10);
                 if (
                     el.querySelector(guard) ||
+                    (kind === 'subs-goal' && el.querySelector(TWITCH_GOALS_STOP_GUARD)) ||
                     (twitchFollowAnchor && el.contains(twitchFollowAnchor)) ||
-                    (!isNaN(count) && el.querySelectorAll('button').length > count)
+                    (!isNaN(count) && el.querySelectorAll('button').length > count) ||
+                    (!isNaN(maxLen) && (el.textContent || '').length > maxLen + 160)
                 ) {
                     untagTwitchHidden(el);
                 }
+            }
+        );
+    }
+
+    function tagTwitchGoalRoot(node) {
+        if (!node || !twitchSafeToHide(node, 380, TWITCH_PROTECTED_PROMO)) {
+            return false;
+        }
+        if (node.matches(TWITCH_GOALS_STOP_GUARD) || node.querySelector(TWITCH_GOALS_STOP_GUARD)) {
+            return false;
+        }
+        Array.prototype.forEach.call(node.querySelectorAll('[data-tp9-hide="subs"]'), untagTwitchHidden);
+        tagTwitchHidden(node, 'subs-goal');
+        node.setAttribute('data-tp9-len', String((node.textContent || '').length));
+        return true;
+    }
+
+    function scanTwitchCreatorGoals(scope) {
+        if (!scope) {
+            return;
+        }
+        var chanLower = (getTestChannel() || '').toLowerCase();
+        var h1El = d_query('h1');
+        var h1Name = h1El ? (h1El.textContent || '').trim().toLowerCase() : '';
+
+        var promoteGoalContainer = function (startEl) {
+            var hdrWrap = twitchHideRoot(startEl, scope);
+            if (!twitchSafeToHide(hdrWrap, 380, TWITCH_PROTECTED_PROMO)) {
+                hdrWrap = startEl;
+            }
+            var node = hdrWrap;
+            while (
+                node.parentElement &&
+                node.parentElement !== scope &&
+                node.parentElement !== document.body &&
+                (node.parentElement.textContent || '').length < 650 &&
+                !node.parentElement.querySelector(TWITCH_GOALS_STOP_GUARD) &&
+                !twitchHasEmptySlot(node.parentElement, node) &&
+                twitchSafeToHide(node.parentElement, 380, TWITCH_PROTECTED_PROMO)
+            ) {
+                node = node.parentElement;
+            }
+            if (node !== hdrWrap) {
+                tagTwitchGoalRoot(node);
+            } else {
+                var nextSib = hdrWrap.nextElementSibling;
+                if (
+                    nextSib &&
+                    !nextSib.matches(TWITCH_GOALS_STOP_GUARD) &&
+                    !nextSib.querySelector(TWITCH_GOALS_STOP_GUARD) &&
+                    (nextSib.textContent || '').length < 550 &&
+                    twitchSafeToHide(nextSib, 340, TWITCH_PROTECTED_PROMO) &&
+                    twitchSafeToHide(hdrWrap, 90, TWITCH_PROTECTED_PROMO)
+                ) {
+                    tagTwitchGoalRoot(hdrWrap);
+                    tagTwitchGoalRoot(nextSib);
+                } else if (
+                    hdrWrap.querySelector('[role="progressbar"], progress, svg, img') &&
+                    twitchSafeToHide(hdrWrap, 340, TWITCH_PROTECTED_PROMO)
+                ) {
+                    tagTwitchGoalRoot(hdrWrap);
+                }
+            }
+        };
+
+        Array.prototype.forEach.call(
+            scope.querySelectorAll(
+                '[data-a-target*="creator-goal" i], [data-test-selector*="creator-goal" i], ' +
+                '[data-a-target*="community-goal" i], [data-test-selector*="community-goal" i], ' +
+                '[class*="creator-goal" i]'
+            ),
+            function (el) {
+                if (el.closest('[data-tp9-hide="subs-goal"]') || el.closest(TWITCH_SUB_EXCLUDED) || el.closest(TWITCH_GOALS_STOP_GUARD)) {
+                    return;
+                }
+                promoteGoalContainer(el);
+            }
+        );
+
+        Array.prototype.forEach.call(
+            scope.querySelectorAll('h2, h3, h4, p, span, div'),
+            function (el) {
+                if (el.closest('[data-tp9-hide="subs-goal"]') || el.closest(TWITCH_SUB_EXCLUDED) || el.closest(TWITCH_GOALS_STOP_GUARD)) {
+                    return;
+                }
+                if (el.children && el.children.length > 2) {
+                    return;
+                }
+                var txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!txt || txt.length > 80 || !TWITCH_GOALS_HEADING_RE.test(txt)) {
+                    return;
+                }
+                for (var c = 0; c < el.children.length; c++) {
+                    var cTxt = (el.children[c].textContent || '').replace(/\s+/g, ' ').trim();
+                    if (cTxt === txt) {
+                        return;
+                    }
+                }
+                var lowerTxt = txt.toLowerCase();
+                var matchesChannel =
+                    (chanLower && lowerTxt.indexOf(chanLower) !== -1) ||
+                    (h1Name && lowerTxt.indexOf(h1Name) !== -1) ||
+                    /^(?:creator|streamer)\s+goals?$/i.test(txt);
+                if (!matchesChannel) {
+                    var probe = el.parentElement;
+                    if (!probe || !probe.querySelector('[role="progressbar"], progress, svg, img')) {
+                        return;
+                    }
+                }
+                promoteGoalContainer(el);
             }
         );
     }
@@ -15466,15 +16054,12 @@ function showAddProxyForm() {
         }
 
         if (pageConfig.hideTwitchSubButtons) {
-            // Tous les boutons d'achat de la page, hors tchat, barres
-            // de navigation et lecteur. Pas de « zone » déduite du
-            // bouton Suivre : sur la vraie page elle était introuvable
-            // (trop d'étages) ou trop large (tout le bloc disparaissait).
-            // Ce sont les garde-fous de twitchSafeToHide qui bornent ce
-            // qu'on masque : jamais le cœur, la cloche, le nom, et
-            // jamais plus grand qu'un bouton.
+            // Tous les boutons d'achat de la page + encart complet « Objectifs de <streamer> »,
+            // hors tchat, barres de navigation et lecteur.
             twitchFollowButton();
             var area = document.querySelector('main') || document.body;
+            var goalsScope = document.querySelector('.channel-root__info') || area;
+            scanTwitchCreatorGoals(goalsScope);
             Array.prototype.forEach.call(
                 area.querySelectorAll('button'),
                 function (el) {
@@ -16557,7 +17142,7 @@ function showAddProxyForm() {
             return 'aucun appel à pause() : le navigateur l\'a décidée';
         }
         var stack = call.stack;
-        var ours = stack.match(/\b(spPlayerTask|dvrPauseLive|dvrTwitchNativePlayPause|spResumeAfterAd|pauseAutoplayVideo)\b/);
+        var ours = stack.match(/\b(spPlayerTask|dvrPauseLive|dvrTwitchNativePlayPause|spResumeAfterAd|pauseAutoplayVideo|expVodPauseBackgroundLive)\b/);
         if (ours) {
             return 'ce script (' + ours[1] + ')';
         }
@@ -17155,6 +17740,7 @@ function showAddProxyForm() {
         spBuffer.lastFix = Date.now();
         spBuffer.same = 0;
         spBuffer.deadTicks = 0;
+        spBuffer.rebufferTicks = 0;
         try {
             state.setSrc({ isNewMediaPlayerInstance: true, refreshAccessToken: true });
             scheduleVolumeRestore(ch, 2500);
@@ -17254,6 +17840,13 @@ function showAddProxyForm() {
 
         var vod = dvrSourceWindow('vod');
 
+        // En mode Bloqueur de pub (Experimental), dès qu'un VOD est
+        // disponible, on lit exclusivement le VOD (sans jamais dépendre
+        // de la mémoire alimentée par le direct).
+        if (typeof expVodAdblockOn === 'function' && expVodAdblockOn() && vod) {
+            return 'vod';
+        }
+
         // La mémoire d'abord tant qu'elle couvre VRAIMENT le moment
         // demandé : elle est instantanée, et elle seule a les toutes
         // dernières secondes. Les deux secondes retirées de sa borne
@@ -17286,11 +17879,13 @@ function showAddProxyForm() {
             return;
         }
 
+        var lockVodEdge = typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn() && !dvrStreamEnded();
+
         // Le retard DEMANDÉ, avant tout recadrage : c'est lui qui dit
         // si l'utilisateur veut revenir au direct. Le recadrer d'abord
         // ferait passer pour « je veux le direct » un « -5 s » qu'aucune
         // source ne sait servir.
-        if (offset <= DVR_LIVE_EDGE_SECONDS) {
+        if (offset <= DVR_LIVE_EDGE_SECONDS && !lockVodEdge) {
             dvrEnterLiveMode();
 
             return;
@@ -17322,6 +17917,24 @@ function showAddProxyForm() {
         // en attendant qu'il existe. On donne le plus proche du direct
         // qui soit réellement jouable.
         var floor = dvrMinOffsetFor(dvrChannelInUse) + 2;
+        if (lockVodEdge) {
+            var expEdge = typeof expVodCurrentEdgeOffset === 'function'
+                ? expVodCurrentEdgeOffset()
+                : (typeof expVodTargetEdgeOffset === 'function' ? expVodTargetEdgeOffset() : floor);
+            if (
+                !dvrIsLive() &&
+                dvrSourceKind === 'vod' &&
+                dvrHls &&
+                typeof expVodSnapToVodEdge === 'function' &&
+                offset <= expEdge + 3
+            ) {
+                expVodSnapToVodEdge(false);
+                return;
+            }
+            if (expEdge > floor) {
+                floor = expEdge;
+            }
+        }
 
         if (reach > 0 && offset < floor) {
             offset = floor > reach ? reach : floor;
@@ -17332,9 +17945,17 @@ function showAddProxyForm() {
         }
 
         if (offset <= DVR_LIVE_EDGE_SECONDS) {
-            dvrEnterLiveMode();
+            if (lockVodEdge) {
+                offset = Math.max(DVR_LIVE_EDGE_SECONDS + 1, floor);
+            } else {
+                dvrEnterLiveMode();
 
-            return;
+                return;
+            }
+        }
+
+        if (typeof expVodNoteTargetOffset === 'function') {
+            expVodNoteTargetOffset(offset);
         }
 
         // Noté AVANT toute tentative de chargement : dvrLoadSource
@@ -17486,6 +18107,8 @@ function showAddProxyForm() {
             return;
         }
 
+        var isExpVodMode = kind === 'vod' && typeof expVodAdblockOn === 'function' && expVodAdblockOn();
+
         if (kind === 'vod') {
             dvrDestroyPlayback();
         }
@@ -17515,7 +18138,14 @@ function showAddProxyForm() {
         // le manifeste lu : sur un playlist vivant, il place sinon
         // la lecture au bord du direct de lui-même, et notre calage
         // n'arrivait qu'après.
-        var startAt = dvrMediaTimeForOffset(offset);
+        var hasExactExpVodEdge = Boolean(
+            isExpVodMode &&
+            expVodInitialSnapPending &&
+            expVodLastVodEndSec > 0
+        );
+        var startAt = hasExactExpVodEdge
+            ? Math.max(0.5, expVodLastVodEndSec - expVodLastCushionSec)
+            : dvrMediaTimeForOffset(offset);
 
         if (isFinite(startAt) && startAt > 0) {
             options.startPosition = startAt;
@@ -17527,9 +18157,18 @@ function showAddProxyForm() {
 
         // Un fragment bien reçu : la source vit, un futur accroc aura
         // droit à son propre nouvel essai.
-        dvrHls.on(lib.Events.FRAG_BUFFERED, function () {
+        dvrHls.on(lib.Events.FRAG_BUFFERED, function (event, fragData) {
             dvrRecoverTries = 0;
+            if (kind === 'vod' && typeof expVodOnVodFragBuffered === 'function') {
+                expVodOnVodFragBuffered(fragData);
+            }
         });
+
+        if (kind === 'vod' && typeof expVodOnVodLevelLoaded === 'function') {
+            dvrHls.on(lib.Events.LEVEL_LOADED, function (event, lvData) {
+                expVodOnVodLevelLoaded(lvData);
+            });
+        }
 
         dvrHls.on(lib.Events.FRAG_LOADED, function (event, data) {
             var bytes = data && data.payload && data.payload.byteLength;
@@ -17615,7 +18254,15 @@ function showAddProxyForm() {
                 var played = dvrVideo.play();
 
                 if (played && played.then) {
-                    played.then(dvrRefreshControls, dvrRefreshControls);
+                    played.then(dvrRefreshControls, function (err) {
+                        if (
+                            typeof expVodHandleAutoplayBlocked === 'function' &&
+                            expVodHandleAutoplayBlocked(err)
+                        ) {
+                            return;
+                        }
+                        dvrRefreshControls();
+                    });
                 }
 
                 dvrRefreshControls();
@@ -17637,9 +18284,13 @@ function showAddProxyForm() {
                     return;
                 }
 
+                var isVodCodecErr = (dvrSourceKind === 'vod' && /codec/i.test(data.details || ''));
+
                 // Un accroc passager (réseau, décodeur) se rattrape : on
-                // retente une fois avant de déclarer la source morte.
-                if (dvrRecoverTries < 1 && dvrHls) {
+                // retente une fois avant de déclarer la source morte, sauf
+                // refus explicite de codec VOD où l'on bascule tout de suite
+                // sur le filtre H.264 / rendu suivant sans boucler.
+                if (!isVodCodecErr && dvrRecoverTries < 1 && dvrHls) {
                     dvrRecoverTries++;
 
                     console.warn('[TwitchProxy][DVR] Erreur fatale, nouvel essai :', data.details);
@@ -18829,6 +19480,36 @@ function showAddProxyForm() {
         } catch (e) {}
     }
 
+    function dvrBindVideoEvents(video) {
+        if (!video || video.__tp9DvrEventsBound) {
+            return;
+        }
+        video.__tp9DvrEventsBound = true;
+        video.addEventListener('ended', function () {
+            if (typeof expVodHandleVodEnded === 'function' && expVodHandleVodEnded()) {
+                return;
+            }
+            dvrEnterLiveMode();
+        });
+        video.addEventListener('play', dvrRefreshControls);
+        video.addEventListener('pause', dvrRefreshControls);
+        video.addEventListener('pause', dvrOnReplayPause);
+        ['seeked', 'canplay', 'playing'].forEach(function (type) {
+            video.addEventListener(type, dvrCheckJumpDone);
+        });
+        ['loadeddata', 'canplay', 'playing', 'seeked'].forEach(function (type) {
+            video.addEventListener(type, function () {
+                if (typeof expVodCheckCurtainReady === 'function') {
+                    expVodCheckCurtainReady();
+                }
+            });
+        });
+        video.tabIndex = -1;
+        video.addEventListener('pointerdown', function () {
+            video.focus({ preventScroll: true });
+        });
+    }
+
     function dvrWireControls() {
         var seek = dvrQuery('.tp9dvr-seek');
         var wrap = dvrQuery('.tp9dvr-seek-wrap');
@@ -18844,6 +19525,10 @@ function showAddProxyForm() {
                 dvrRefreshControls();
                 return;
             }
+            if (!dvrStreamEnded() && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn()) {
+                expVodSnapToVodEdge(true);
+                return;
+            }
             dvrEnterLiveMode();
             if (wasAlreadyLive && !dvrStreamEnded()) {
                 rescueLivePlayerIfStuck(true);
@@ -18857,6 +19542,14 @@ function showAddProxyForm() {
         dvrQuery('.tp9dvr-speed').addEventListener('click', dvrToggleSpeedMenu);
         dvrQuery('.tp9dvr-fwd').addEventListener('click', function () {
             if (dvrIsLive()) return;
+            if (
+                !dvrStreamEnded() &&
+                typeof expVodLockLiveReturn === 'function' &&
+                expVodLockLiveReturn() &&
+                !(typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge())
+            ) {
+                return;
+            }
             dvrShowSkipHint(false);
             dvrGoToOffset(Math.max(1, dvrAimOffset() - DVR_SKIP_SECONDS));
         });
@@ -18869,7 +19562,15 @@ function showAddProxyForm() {
         });
         seek.addEventListener('change', function () {
             dvrScrubbing = false;
-            dvrGoToOffset(Math.max(1, dvrTimelineMax(dvrChannelInUse) * (1 - Number(seek.value) / 1000)));
+            var tMax = dvrTimelineMax(dvrChannelInUse);
+            var fracLeft = 1 - Number(seek.value) / 1000;
+            if (!dvrStreamEnded() && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn()) {
+                var eOff = typeof expVodCurrentEdgeOffset === 'function' ? expVodCurrentEdgeOffset() : 30;
+                var relSpan = Math.max(1, tMax - eOff);
+                dvrGoToOffset(eOff + relSpan * fracLeft);
+                return;
+            }
+            dvrGoToOffset(Math.max(1, tMax * fracLeft));
         });
         seek.addEventListener('blur', function () { dvrScrubbing = false; });
         wrap.addEventListener('mousemove', function (event) {
@@ -18877,17 +19578,7 @@ function showAddProxyForm() {
             dvrKeepSeekTooltip(wrap);
         });
         wrap.addEventListener('mouseleave', function () { dvrHoverOffset = null; });
-        dvrVideo.addEventListener('ended', dvrEnterLiveMode);
-        dvrVideo.addEventListener('play', dvrRefreshControls);
-        dvrVideo.addEventListener('pause', dvrRefreshControls);
-        dvrVideo.addEventListener('pause', dvrOnReplayPause);
-        ['seeked', 'canplay', 'playing'].forEach(function (type) {
-            dvrVideo.addEventListener(type, dvrCheckJumpDone);
-        });
-        dvrVideo.tabIndex = -1;
-        dvrVideo.addEventListener('pointerdown', function () {
-            dvrVideo.focus({ preventScroll: true });
-        });
+        dvrBindVideoEvents(dvrVideo);
 
         function stop(event) {
             event.preventDefault();
@@ -18924,6 +19615,16 @@ function showAddProxyForm() {
             if (key === 'k' || key === ' ') {
                 stop(event); dvrTogglePlayback();
             } else if (key === 'arrowleft' || key === 'arrowright') {
+                if (
+                    key === 'arrowright' &&
+                    !dvrStreamEnded() &&
+                    typeof expVodLockLiveReturn === 'function' &&
+                    expVodLockLiveReturn() &&
+                    !(typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge())
+                ) {
+                    stop(event);
+                    return;
+                }
                 stop(event);
                 dvrGoToOffset(Math.max(1, dvrAimOffset() + (key === 'arrowleft' ? 10 : -10)));
             }
@@ -18988,6 +19689,14 @@ function showAddProxyForm() {
     function dvrUseTwitchQuality(label) {
         dvrRequestedQuality = (label || 'Auto').trim();
         if (!dvrHls) return;
+        if (
+            typeof expVodAdblockOn === 'function' &&
+            expVodAdblockOn() &&
+            typeof expVodSwitchDirectRendition === 'function' &&
+            expVodSwitchDirectRendition(dvrRequestedQuality)
+        ) {
+            return;
+        }
         var requested = dvrRequestedQuality.replace(/\(Source\)/i, '').trim();
         if (/^auto$/i.test(requested)) {
             dvrManualLevel = -1;
@@ -19151,6 +19860,7 @@ function showAddProxyForm() {
             'body.tp9dvr-menu-open .video-player__overlay > .tw-transition{opacity:1!important}' +
             'body.tp9-hide-turbo [data-tp9-hide="turbo"],' +
             'body.tp9-hide-subs [data-tp9-hide="subs"],' +
+            'body.tp9-hide-subs [data-tp9-hide="subs-goal"],' +
             'body.tp9-hide-promo [data-tp9-hide="promo"]{display:none!important}' +
             '.tp9-stats-ask{margin:2px 0 6px;padding:10px 12px;border-radius:10px;' +
             'background:rgba(145,71,255,.10);border:1px solid rgba(145,71,255,.28)}' +
@@ -19250,7 +19960,9 @@ function showAddProxyForm() {
         }
         update('[data-a-target="player-play-pause-button"]', paused ? tt('Reprendre (K)', 'Play (K)') : 'Pause (K)');
         dvrInjectIconCSS();
-        document.body.classList.add('tp9-own-icons');
+        if (!document.body.classList.contains('tp9-own-icons')) {
+            document.body.classList.add('tp9-own-icons');
+        }
         var pausedFlag = paused ? '1' : '0';
         if (document.body.dataset.tp9Paused !== pausedFlag) document.body.dataset.tp9Paused = pausedFlag;
         dvrSyncVolumeIcon();
@@ -19258,7 +19970,25 @@ function showAddProxyForm() {
         dvrSyncReplayControls();
         dvrSyncFallbackControls();
         var seek = dvrQuery('.tp9dvr-seek');
-        if (seek) seek.setAttribute('aria-valuetext', dvrIsLive() && !paused ? tt('Direct', 'Live') : dvrFormatOffset(dvrCurrentOffset()) + tt(' du direct', ' from live'));
+        if (seek) {
+            var lockAria = !dvrIsLive() && !dvrStreamEnded() && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn();
+            var ariaValText = dvrIsLive() && !paused
+                ? tt('Direct', 'Live')
+                : (lockAria
+                    ? ((typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge())
+                        ? dvrFormatOffset(typeof expVodRelativeOffset === 'function' ? expVodRelativeOffset(dvrCurrentOffset()) : dvrCurrentOffset()) + tt(' du bord VOD', ' from VOD edge')
+                        : tt('Bord VOD sans pub', 'Ad-free VOD edge'))
+                    : dvrFormatOffset(dvrCurrentOffset()) + tt(' du direct', ' from live'));
+            if (seek.getAttribute('aria-valuetext') !== ariaValText) {
+                seek.setAttribute('aria-valuetext', ariaValText);
+            }
+        }
+        if (typeof expVodSyncHudIdle === 'function') {
+            expVodSyncHudIdle();
+        }
+        if (typeof expVodSyncChatLatencyBadge === 'function') {
+            expVodSyncChatLatencyBadge();
+        }
     }
 
     // Ce que la mémoire a déjà, ce qu'elle vise, ce qu'elle
@@ -19332,18 +20062,47 @@ function showAddProxyForm() {
 
     function dvrRefreshControls() {
         if (!dvrOverlay || !dvrVideo) return;
+        if (!dvrLiveVideo || !dvrLiveVideo.isConnected) {
+            dvrFindLivePlayer();
+        }
         var liveButton = dvrQuery('.tp9dvr-live');
         if (liveButton) {
             var ended = dvrStreamEnded();
-            var liveNeedsRescue = dvrIsLive() && !dvrIsLivePaused() && !ended &&
-                (isLivePlayerBrokenOrStuck(dvrLiveVideo) || !!(dvrLiveVideo && dvrLiveVideo.paused && !isUserExplicitlyPausedLive()));
-            liveButton.disabled = dvrIsLive() && !dvrIsLivePaused() && !liveNeedsRescue;
+            var liveStarted = dvrHasLivePlaybackStarted(dvrLiveVideo);
+            var liveNeedsRescue = dvrIsLive() && !dvrIsLivePaused() && !ended && !spAutoplayActive && (
+                isLivePlayerBrokenOrStuck(dvrLiveVideo) ||
+                Boolean(
+                    dvrLiveVideo &&
+                    liveStarted &&
+                    dvrLiveVideo.paused &&
+                    !isUserExplicitlyPausedLive() &&
+                    !isIvsTransientRebufferPause(dvrLiveVideo)
+                )
+            );
+            var shouldDisableLive = dvrIsLive() && !dvrIsLivePaused() && !liveNeedsRescue;
+            if (!dvrIsLive() && !ended && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn()) {
+                shouldDisableLive = !(typeof expVodIsRewoundFromVodEdge === 'function' && expVodIsRewoundFromVodEdge());
+            }
+            if (liveButton.disabled !== shouldDisableLive) {
+                liveButton.disabled = shouldDisableLive;
+            }
             // Stream terminé : le bouton ramène à la fin, plus au direct.
             var html = '<span class="tp9dvr-live-dot"></span>' + (ended ? tt('FIN', 'END') : tt('DIRECT', 'LIVE'));
+            var liveAria = ended
+                ? tt('Revenir à la fin du stream', 'Back to the end of the stream')
+                : (typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn()
+                    ? tt('Revenir au bord de la VOD sans pub (~30 s)', 'Jump back to ad-free VOD edge (~30s)')
+                    : tt('Revenir au direct', 'Back to live'));
             if (liveButton.innerHTML !== html) {
                 liveButton.innerHTML = html;
                 liveButton.classList.toggle('tp9dvr-live-ended', ended);
-                liveButton.setAttribute('aria-label', ended ? tt('Revenir à la fin du stream', 'Back to the end of the stream') : tt('Revenir au direct', 'Back to live'));
+            }
+            if (
+                typeof liveButton.getAttribute === 'function' &&
+                typeof liveButton.setAttribute === 'function' &&
+                liveButton.getAttribute('aria-label') !== liveAria
+            ) {
+                liveButton.setAttribute('aria-label', liveAria);
             }
         }
         dvrRefreshNativeControls();
@@ -19554,7 +20313,7 @@ function showAddProxyForm() {
             (spAutoplayOverlay && spAutoplayOverlay.contains(el)) ||
             el.closest(
                 '.tp9dvr-native-bar, .tp9dvr-native-info, .tp9dvr-menu, .tp9dvr-vol-hint,' +
-                '#tp9-sp-autoplay-overlay, .tp9-sp-badge,' +
+                '#tp9-sp-autoplay-overlay, #tp9-exp-vod-curtain, .tp9-sp-badge,' +
                 '#tp9-dashboard, #tp9-toast, #tp9-tip, [data-a-target="player-controls"]'
             ) ||
             el.querySelector('[data-a-target="player-controls"], .tp9dvr-native-bar')
@@ -19797,6 +20556,19 @@ function showAddProxyForm() {
             return;
         }
 
+        if (!dvrLiveVideo || !dvrLiveVideo.isConnected) {
+            dvrFindLivePlayer();
+        } else {
+            var latestLive = findPlaybackVideo();
+            if (
+                latestLive &&
+                latestLive !== dvrLiveVideo &&
+                (dvrLiveVideo.readyState === 0 || (dvrLiveVideo.paused && !latestLive.paused))
+            ) {
+                dvrLiveVideo = latestLive;
+            }
+        }
+
         dvrSyncVolumeFromPlayer();
 
         dvrSyncBarWithTwitch();
@@ -19809,9 +20581,9 @@ function showAddProxyForm() {
 
         if (pauseKind !== dvrLastPauseKind) {
             dvrLastPauseKind = pauseKind;
-
-            dvrRefreshControls();
         }
+
+        dvrRefreshControls();
 
         var offset = dvrCurrentOffset();
 
@@ -19823,7 +20595,10 @@ function showAddProxyForm() {
         // dépend d'une horloge qui peut bouger, et il suffisait
         // d'une avance de buffer qui gonfle pour qu'un « -30 s »
         // tranquille reparte au direct sans rien demander.
+        var lockVodEdgeTick = typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn() && !dvrStreamEnded();
+
         if (
+            !lockVodEdgeTick &&
             !dvrIsLive() &&
             !dvrSwitching &&
             !dvrVideo.paused &&
@@ -19844,6 +20619,11 @@ function showAddProxyForm() {
             dvrAtEndOfSource() &&
             dvrAtVodEdge()
         ) {
+            if (lockVodEdgeTick) {
+                dvrSetPlaybackRate(1);
+                dvrShowHint('<span>' + tt('Bord du VOD sans pub atteint (×1)', 'Ad-free VOD edge reached (1×)') + '</span>');
+                return;
+            }
             dvrEnterLiveMode();
             dvrShowHint('<span>' + tt('Fin du VOD : retour au direct', 'End of VOD: back to live') + '</span>');
             return;
@@ -19853,6 +20633,13 @@ function showAddProxyForm() {
         // occupe pendant une bascule : voir dvrDisplayOffset.
         // Le retour au direct, lui, se décide sur le vrai.
         var shown = dvrDisplayOffset(offset);
+        var expRewound = lockVodEdgeTick &&
+            !dvrIsLive() &&
+            typeof expVodIsRewoundFromVodEdge === 'function' &&
+            expVodIsRewoundFromVodEdge();
+        var expRelShown = (lockVodEdgeTick && !dvrIsLive())
+            ? (expRewound && typeof expVodRelativeOffset === 'function' ? expVodRelativeOffset(shown) : 0)
+            : shown;
 
         var label = dvrQuery('.tp9dvr-time');
 
@@ -19860,9 +20647,12 @@ function showAddProxyForm() {
 
             // Gelé sur le direct, l'horloge compte le retard qu'on
             // prend : c'est exactement de là qu'on repartira.
-            label.textContent = (dvrIsLive() && !dvrIsLivePaused())
+            // En mode Bloqueur de pub (Experimental), au bord VOD (~30 s),
+            // aucun retard n'est affiché ; en cas de recul/pause, on compte
+            // le retard relatif au bord de la VOD.
+            label.textContent = (dvrIsLive() && !dvrIsLivePaused()) || (lockVodEdgeTick && !dvrIsLive() && !expRewound)
                 ? ''
-                : dvrFormatOffset(shown);
+                : dvrFormatOffset(expRelShown);
         }
 
         var timelineMax = dvrTimelineMax(dvrChannelInUse);
@@ -19871,7 +20661,12 @@ function showAddProxyForm() {
             var seek = dvrQuery('.tp9dvr-seek');
 
             if (seek && timelineMax > 0) {
-                var ratio = 1 - (shown / timelineMax);
+                var effectiveMax = (lockVodEdgeTick && !dvrIsLive())
+                    ? Math.max(1, timelineMax - (typeof expVodCurrentEdgeOffset === 'function' ? expVodCurrentEdgeOffset() : 30))
+                    : timelineMax;
+                var ratio = (lockVodEdgeTick && !dvrIsLive() && !expRewound)
+                    ? 1
+                    : (1 - (expRelShown / effectiveMax));
 
                 if (ratio < 0) {
                     ratio = 0;
@@ -19896,6 +20691,10 @@ function showAddProxyForm() {
         dvrWatchReplay();
 
         dvrCoverScan();
+
+        if (typeof expVodSyncHudIdle === 'function') {
+            expVodSyncHudIdle();
+        }
     }
 
     // ------------------------------------------------------------
@@ -19921,6 +20720,13 @@ function showAddProxyForm() {
         var buffer = dvrSourceWindow('buffer');
 
         var vod = dvrSourceWindow('vod');
+        var lockPaint = !dvrStreamEnded() && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn();
+        var paintEdgeOff = lockPaint && typeof expVodCurrentEdgeOffset === 'function' ? expVodCurrentEdgeOffset() : 0;
+        var paintMax = lockPaint ? Math.max(1, max - paintEdgeOff) : max;
+        var vodPaintWin = (lockPaint && vod)
+            ? { min: 0, max: Math.max(1, vod.max - paintEdgeOff) }
+            : vod;
+        var bufPaintWin = lockPaint ? null : buffer;
 
         // Aucune des deux sources n'a quoi que ce soit : mémoire
         // tout juste armée (moins de DVR_MIN_BUFFER_SECONDS
@@ -19944,14 +20750,14 @@ function showAddProxyForm() {
                 return;
             }
 
-            if (!window || !(max > 0) || !width) {
+            if (!window || !(paintMax > 0) || !width) {
                 zone.style.display = 'none';
 
                 return;
             }
 
-            var left = (1 - window.max / max) * width;
-            var right = (1 - window.min / max) * width;
+            var left = (1 - window.max / paintMax) * width;
+            var right = (1 - window.min / paintMax) * width;
 
             if (left < 0) {
                 left = 0;
@@ -19971,9 +20777,9 @@ function showAddProxyForm() {
             zone.style.width = Math.max(2, right - left) + 'px';
         }
 
-        place(dvrQuery('.tp9dvr-zone-buf'), buffer);
+        place(dvrQuery('.tp9dvr-zone-buf'), bufPaintWin);
 
-        place(dvrQuery('.tp9dvr-zone-vod'), vod);
+        place(dvrQuery('.tp9dvr-zone-vod'), vodPaintWin);
 
         var head = dvrQuery('.tp9dvr-head');
 
@@ -19990,15 +20796,15 @@ function showAddProxyForm() {
         // l'input, qui ne reçoit plus le survol une fois inerte.
         var parts = [];
 
-        if (buffer) {
+        if (bufPaintWin) {
             parts.push(
                 tt('Violet : mémoire, ', 'Purple: memory, ') +
-                dvrFormatReach(buffer.max - buffer.min)
+                dvrFormatReach(bufPaintWin.max - bufPaintWin.min)
             );
         }
 
         if (vod) {
-            parts.push(tt('Disponible : ', 'Available: ') + dvrFormatReach(vod.max - vod.min));
+            parts.push(tt('Disponible : ', 'Available: ') + dvrFormatReach(Math.max(1, vod.max - (lockPaint ? paintEdgeOff : vod.min))));
         }
 
         wrap.dataset.tp9Tip = playable
@@ -20009,7 +20815,9 @@ function showAddProxyForm() {
         wrap.dataset.tp9TipSub = !playable
             ? ''
             : parts.length
-                ? parts.join(' · ') + tt('. Tout à droite : le direct.', '. Far right: live.')
+                ? parts.join(' · ') + (lockPaint
+                    ? tt('. Tout à droite : bord VOD sans pub.', '. Far right: ad-free VOD edge.')
+                    : tt('. Tout à droite : le direct.', '. Far right: live.'))
                 : dvrTimelineIdleTip();
 
         // Une bulle n'est écrite qu'à l'arrivée de la souris :
@@ -20147,9 +20955,12 @@ function showAddProxyForm() {
             ratio = 1;
         }
 
-        // Le bord droit, c'est le direct : le retard croît vers la
-        // gauche.
-        dvrHoverOffset = max * (1 - ratio);
+        // Le bord droit, c'est le direct (ou le bord VOD sans pub en mode Experimental) :
+        // le retard croît vers la gauche.
+        var hoverMax = (!dvrStreamEnded() && typeof expVodLockLiveReturn === 'function' && expVodLockLiveReturn())
+            ? Math.max(1, max - (typeof expVodCurrentEdgeOffset === 'function' ? expVodCurrentEdgeOffset() : 30))
+            : max;
+        dvrHoverOffset = hoverMax * (1 - ratio);
 
         wrap.dataset.tp9Tip = dvrTimelineTitle();
 
@@ -20219,7 +21030,9 @@ function showAddProxyForm() {
         var video = dvrLiveVideo;
         var host = video && video.parentElement;
         if (!host || !controls) {
-            dvrDiagControls('none');
+            if (!(typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())) {
+                dvrDiagControls('none');
+            }
             return;
         }
         // Same stacking context as the video, after spAutoplayOverlay so DVR rewind sits on top of ads too.
@@ -20404,7 +21217,10 @@ function showAddProxyForm() {
                 vol = savedBase;
             }
         }
-        if (vol <= 0.001) {
+        if (
+            vol <= 0.001 ||
+            (typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive() && (!dvrOverlay || dvrIsLive()))
+        ) {
             audioNormPreGain.gain.value = 1;
             audioNormPostGain.gain.value = 0;
             return;
@@ -36353,10 +37169,22 @@ dashboardButton.style.visibility = 'hidden';
             var __sp_streams = {};
             var __sp_byUrl = {};
             var __sp_adSegs = {};
+            var __sp_doneSegs = {};
             var __sp_gqlWait = {};
             var __sp_gqlSeq = 0;
             var __sp_reloaded = false;
             var __sp_lastEndAt = 0;
+            function __sp_trackingExitSegs(){
+                var now = Date.now();
+                var keys = Object.keys(__sp_streams);
+                for (var i = 0; i < keys.length; i++) {
+                    var st = __sp_streams[keys[i]];
+                    if (st && (st.inAd || (st.lastEndAt && (now - st.lastEndAt) < 20000))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
             // Lecture directe sur Twitch avec ce bloqueur : mode
             // Adblock, ou mode Proxy réglé sur « proxys pendant les pubs ».
             function __sp_on(){
@@ -36963,6 +37791,7 @@ dashboardButton.style.visibility = 'hidden';
                 var lastPreAdLiveEndPdt = 0;
                 var postAdLiveCount = 0;
                 var postAdLiveDurSec = 0;
+                var confirmedPostAdLiveDurSec = 0;
                 var postAdLiveStartPdt = 0;
                 var mainEndPdt = 0;
                 for (var i = 0; i < lines.length; i++) {
@@ -36977,6 +37806,17 @@ dashboardButton.style.visibility = 'hidden';
                     }
                     if (line.indexOf("EXT-X-CUE-IN") >= 0) {
                         inCue = false;
+                        continue;
+                    }
+                    if (line.indexOf("#EXT-X-DATERANGE") === 0 && __sp_hasAdTags(line)) {
+                        if (info) {
+                            var drAttrs = __sp_attrs(line);
+                            var drStart = Date.parse(drAttrs["START-DATE"] || "");
+                            var drDur = parseFloat(drAttrs.DURATION);
+                            if (!isNaN(drStart) && drDur > 0) {
+                                info.lastAdDeclaredEndPdt = Math.max(info.lastAdDeclaredEndPdt || 0, drStart + drDur * 1000);
+                            }
+                        }
                         continue;
                     }
                     if (line.indexOf("#EXT-X-PART:") === 0 || line.indexOf("#EXT-X-PRELOAD-HINT:") === 0) {
@@ -37012,20 +37852,43 @@ dashboardButton.style.visibility = 'hidden';
                             seenAnyAdSeg = true;
                             postAdLiveCount = 0;
                             postAdLiveDurSec = 0;
+                            confirmedPostAdLiveDurSec = 0;
                             postAdLiveStartPdt = 0;
+                            if (info && segEnd > 0) {
+                                info.lastAdSegEndPdt = Math.max(info.lastAdSegEndPdt || 0, segEnd);
+                            }
                             __sp_markAdSegUrl(segRaw, baseUrl, now);
-                        } else if (!seenAnyAdSeg) {
-                            preAdLiveCount++;
-                            preAdLiveDurSec += dur;
-                            if (segEnd > 0) {
-                                lastPreAdLiveEndPdt = segEnd;
-                            }
                         } else {
-                            if (postAdLiveCount === 0 && segStart > 0) {
-                                postAdLiveStartPdt = segStart;
+                            var rolledOffPostAd = Boolean(
+                                !seenAnyAdSeg &&
+                                info &&
+                                info.inAd &&
+                                info.sawStitchedAdSegments &&
+                                (segStart === 0 || !(info.lastAdSegEndPdt > 0) || segStart >= info.lastAdSegEndPdt - 500)
+                            );
+                            if (!seenAnyAdSeg && !rolledOffPostAd) {
+                                preAdLiveCount++;
+                                preAdLiveDurSec += dur;
+                                if (segEnd > 0) {
+                                    lastPreAdLiveEndPdt = segEnd;
+                                }
+                            } else {
+                                if (postAdLiveCount === 0 && segStart > 0) {
+                                    postAdLiveStartPdt = segStart;
+                                }
+                                postAdLiveCount++;
+                                postAdLiveDurSec += dur;
+                                var absCleanSeg = "";
+                                if (baseUrl) {
+                                    try {
+                                        absCleanSeg = new URL(segRaw, baseUrl).href;
+                                    } catch(eCleanUrl) {}
+                                }
+                                var doneAt = __sp_doneSegs[segRaw] || (absCleanSeg && __sp_doneSegs[absCleanSeg]) || 0;
+                                if (doneAt > 0 && (now - doneAt) >= 120) {
+                                    confirmedPostAdLiveDurSec += dur;
+                                }
                             }
-                            postAdLiveCount++;
-                            postAdLiveDurSec += dur;
                         }
                     }
                 }
@@ -37036,6 +37899,11 @@ dashboardButton.style.visibility = 'hidden';
                             delete __sp_adSegs[key];
                         }
                     });
+                    Object.keys(__sp_doneSegs).forEach(function(key){
+                        if (__sp_doneSegs[key] < now - 180000) {
+                            delete __sp_doneSegs[key];
+                        }
+                    });
                 }
                 return {
                     hasAdSegments: hasAdSegments,
@@ -37044,6 +37912,7 @@ dashboardButton.style.visibility = 'hidden';
                     lastPreAdLiveEndPdt: lastPreAdLiveEndPdt,
                     postAdLiveCount: postAdLiveCount,
                     postAdLiveDurSec: postAdLiveDurSec,
+                    confirmedPostAdLiveDurSec: confirmedPostAdLiveDurSec,
                     postAdLiveStartPdt: postAdLiveStartPdt,
                     mainEndPdt: mainEndPdt
                 };
@@ -37377,23 +38246,28 @@ dashboardButton.style.visibility = 'hidden';
                 return out.join(__sp_NL);
             }
             // Coupure vraiment finie : les derniers morceaux de la liste
-            // sont du direct, datés après la fin annoncée de chaque pub,
+            // sont du direct, datés après la fin réelle de la pub,
             // et le repère de pub le plus récent est bien le dernier du bloc
-            // (X-TV-TWITCH-AD-POD-POSITION / LENGTH). Dès que 2 segments
-            // ,live consécutifs apparaissent après la fin de la dernière pub,
-            // on rebascule sur le flux principal nettoyé sans attendre les
-            // ~30 s que Twitch met à évacuer ses repères de la liste.
-            var __sp_LIVE_TAIL_MIN = 2;
-            function __sp_adOver(text){
+            // (X-TV-TWITCH-AD-POD-POSITION / LENGTH). Dès que 3 segments
+            // ,live consécutifs (~6 s) apparaissent après la dernière pub,
+            // le lecteur principal a suffisamment de vrai direct à charger
+            // pour rebasculer sans aucune fuite d'image publicitaire.
+            var __sp_LIVE_TAIL_MIN = 3;
+            function __sp_adOver(text, info){
                 var lines = __sp_lines(text);
                 var pendingPdt = 0;
+                var runningPdt = 0;
                 var adEnd = 0;
+                var latestAdStart = 0;
                 var adUnknown = false;
                 var inCue = false;
+                var sawCueIn = false;
                 var latestPodStart = -1;
                 var podNotLast = false;
                 var tail = 0;
                 var tailStart = 0;
+                var tailDurMs = 0;
+                var lastNonLiveEndPdt = 0;
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
                     if (line.indexOf("#EXT-X-PROGRAM-DATE-TIME:") === 0) {
@@ -37402,14 +38276,19 @@ dashboardButton.style.visibility = 'hidden';
                         inCue = true;
                         tail = 0;
                         tailStart = 0;
+                        tailDurMs = 0;
                     } else if (line.indexOf("EXT-X-CUE-IN") >= 0) {
                         inCue = false;
+                        sawCueIn = true;
                     } else if (line.indexOf("#EXT-X-DATERANGE") === 0 && __sp_hasAdTags(line)) {
                         var a = __sp_attrs(line);
                         var start = Date.parse(a["START-DATE"] || "");
                         var dur = parseFloat(a.DURATION);
                         var pos = parseInt(a["X-TV-TWITCH-AD-POD-POSITION"], 10);
                         var len = parseInt(a["X-TV-TWITCH-AD-POD-LENGTH"], 10);
+                        if (!isNaN(start)) {
+                            latestAdStart = Math.max(latestAdStart, start);
+                        }
                         if (!isNaN(start) && start >= latestPodStart) {
                             latestPodStart = start;
                             if (!isNaN(pos) && len > 0) {
@@ -37424,25 +38303,45 @@ dashboardButton.style.visibility = 'hidden';
                             adEnd = Math.max(adEnd, start + dur * 1000);
                         }
                     } else if (line.indexOf("#EXTINF") === 0) {
-                        if (line.indexOf(",live") >= 0 && !inCue) {
+                        var segDurMs = (parseFloat(line.substring(8)) || 2) * 1000;
+                        var segStart = pendingPdt > 0 ? pendingPdt : runningPdt;
+                        var segEnd = segStart > 0 ? (segStart + segDurMs) : 0;
+                        if (segEnd > 0) {
+                            runningPdt = segEnd;
+                        }
+                        var nextUri = (i + 1 < lines.length) ? lines[i + 1].trim() : "";
+                        if (line.indexOf(",live") >= 0 && !inCue && !__sp_hasAdUrlPattern(nextUri)) {
                             if (!tail) {
-                                tailStart = pendingPdt;
+                                tailStart = segStart;
                             }
                             tail++;
+                            tailDurMs += segDurMs;
                         } else {
                             tail = 0;
                             tailStart = 0;
+                            tailDurMs = 0;
+                            if (segEnd > 0) {
+                                lastNonLiveEndPdt = Math.max(lastNonLiveEndPdt, segEnd);
+                            }
                         }
                         pendingPdt = 0;
                     }
                 }
-                return !inCue &&
-                    !adUnknown &&
-                    !podNotLast &&
-                    adEnd > 0 &&
-                    tail >= __sp_LIVE_TAIL_MIN &&
-                    tailStart > 0 &&
-                    tailStart >= adEnd - 500;
+                if (inCue || podNotLast || tail < __sp_LIVE_TAIL_MIN) {
+                    return false;
+                }
+                var actualAdSegEnd = Math.max(lastNonLiveEndPdt, (info && info.lastAdSegEndPdt) || 0);
+                if (actualAdSegEnd > 0 && tailStart > 0 && tailStart < actualAdSegEnd - 250) {
+                    return false;
+                }
+                if (!adUnknown && adEnd > 0) {
+                    return tailStart > 0 &&
+                        tailStart >= adEnd - 2200 &&
+                        (tailStart + tailDurMs) >= adEnd + 1500;
+                }
+                return tail >= 4 &&
+                    (sawCueIn || Boolean(info && info.sawStitchedAdSegments)) &&
+                    (latestAdStart <= 0 || (tailStart + tailDurMs) > latestAdStart + 4000);
             }
             // Heure (d'après Twitch) de la fin du dernier morceau d'une
             // liste : comparée entre flux de secours et flux normal, elle
@@ -37483,6 +38382,10 @@ dashboardButton.style.visibility = 'hidden';
                 info.postAdReloadLocked = false;
                 info.adBackupMinPdt = 0;
                 info.inAd = false;
+                info.sawStitchedAdSegments = false;
+                info.lastAdSegEndPdt = 0;
+                info.lastAdDeclaredEndPdt = 0;
+                info.adTagGoneSince = 0;
                 info.usedProxyInBreak = false;
                 info.autoplayLogged = false;
                 info.backupType = null;
@@ -37496,6 +38399,7 @@ dashboardButton.style.visibility = 'hidden';
                     usedProxyInBreak: usedProxy,
                     postAdLiveCount: tl ? tl.postAdLiveCount : 0,
                     postAdLiveDurSec: tl ? tl.postAdLiveDurSec : 0,
+                    confirmedPostAdLiveDurSec: tl ? (tl.confirmedPostAdLiveDurSec || 0) : 0,
                     postAdLiveStartPdt: tl ? tl.postAdLiveStartPdt : 0,
                     mainEndPdt: tl ? tl.mainEndPdt : 0
                 });
@@ -37537,7 +38441,7 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 }
                 var marked = __sp_hasAdTags(text);
-                if (marked && __sp_adOver(text)) {
+                if (marked && __sp_adOver(text, info)) {
                     var overTl = __sp_inspectTimeline(url, text, info);
                     var wasUsingProxy = !!info.usedProxyInBreak;
                     if (info.inAd) {
@@ -37563,6 +38467,10 @@ dashboardButton.style.visibility = 'hidden';
                         info.backupLabel = "";
                         info.usedProxyInBreak = false;
                         info.autoplayLogged = false;
+                        info.sawStitchedAdSegments = false;
+                        info.lastAdSegEndPdt = 0;
+                        info.lastAdDeclaredEndPdt = 0;
+                        info.adTagGoneSince = 0;
                         info.adIdsSeen = {};
                         info.adTimes = {};
                         info.edgeGaps = [];
@@ -37571,11 +38479,17 @@ dashboardButton.style.visibility = 'hidden';
                             "🛡️ Pub " + (info.midroll ? "en cours de stream" : "de début de stream") +
                             " sur " + info.channel + " : bascule sans relance sur le lecteur autoplay sans pub");
                     }
+                    if (tl.hasAdSegments) {
+                        info.sawStitchedAdSegments = true;
+                    }
+                    info.adTagGoneSince = 0;
                     __sp_logAdInfo(info, text);
                     var pod = __sp_podInfo(info, text);
-                    // Pub CSAI pure (aucun segment publicitaire dans le .m3u8) :
-                    // on retire uniquement les repères sans toucher au lecteur.
-                    if (!tl.hasAdSegments && !__sp_proxyAds()) {
+                    // Pub CSAI pure (aucun segment publicitaire vu depuis le début de la coupure) :
+                    // on retire uniquement les repères sans toucher au lecteur. Une fois que de vrais
+                    // segments de pub ont été cousus (sawStitchedAdSegments), on ne retombe jamais
+                    // en CSAI quand ces segments sortent de la fenêtre .m3u8 en fin de coupure.
+                    if (!tl.hasAdSegments && !info.sawStitchedAdSegments && !__sp_proxyAds()) {
                         __sp_post({
                             type: "spAd",
                             channel: info.channel,
@@ -37658,6 +38572,7 @@ dashboardButton.style.visibility = 'hidden';
                         lastPreAdLiveEndPdt: tl.lastPreAdLiveEndPdt,
                         postAdLiveCount: tl.postAdLiveCount,
                         postAdLiveDurSec: tl.postAdLiveDurSec,
+                        confirmedPostAdLiveDurSec: tl.confirmedPostAdLiveDurSec || 0,
                         postAdLiveStartPdt: tl.postAdLiveStartPdt,
                         mainEndPdt: tl.mainEndPdt
                     });
@@ -37665,6 +38580,43 @@ dashboardButton.style.visibility = 'hidden';
                 } else {
                     if (info.inAd) {
                         var endTl = __sp_inspectTimeline(url, text, info);
+                        if (endTl.hasAdSegments) {
+                            info.sawStitchedAdSegments = true;
+                        }
+                        var waitMoreLiveAfterRollOff = Boolean(
+                            !info.usedProxyInBreak &&
+                            (endTl.hasAdSegments || (
+                                info.sawStitchedAdSegments &&
+                                endTl.postAdLiveCount > 0 &&
+                                endTl.postAdLiveCount < __sp_LIVE_TAIL_MIN &&
+                                (!info.adTagGoneSince || (Date.now() - info.adTagGoneSince) < 6000)
+                            ))
+                        );
+                        if (waitMoreLiveAfterRollOff) {
+                            if (!info.adTagGoneSince) {
+                                info.adTagGoneSince = Date.now();
+                            }
+                            __sp_post({
+                                type: "spAd",
+                                channel: info.channel,
+                                active: true,
+                                midroll: info.midroll,
+                                useAutoplayOverlay: true,
+                                stripping: false,
+                                searching: false,
+                                backupType: "autoplay",
+                                quality: "",
+                                preAdLiveCount: endTl.preAdLiveCount,
+                                preAdLiveDurSec: endTl.preAdLiveDurSec,
+                                lastPreAdLiveEndPdt: endTl.lastPreAdLiveEndPdt,
+                                postAdLiveCount: endTl.postAdLiveCount,
+                                postAdLiveDurSec: endTl.postAdLiveDurSec,
+                                confirmedPostAdLiveDurSec: endTl.confirmedPostAdLiveDurSec || 0,
+                                postAdLiveStartPdt: endTl.postAdLiveStartPdt,
+                                mainEndPdt: endTl.mainEndPdt
+                            });
+                            return __sp_stripAdMetaKeepStream(text);
+                        }
                         var hadProxy = !!info.usedProxyInBreak;
                         __sp_endAd(info, false, endTl);
                         if (hadProxy) {
@@ -37764,6 +38716,22 @@ dashboardButton.style.visibility = 'hidden';
                         return __tp_measureResponse(
                             __tp_passthrough
                         ).then(function(response){
+                            if (
+                                response &&
+                                response.status === 200 &&
+                                __sp_on() &&
+                                __sp_trackingExitSegs()
+                            ) {
+                                try {
+                                    response
+                                        .clone()
+                                        .arrayBuffer()
+                                        .then(function(){
+                                            __sp_doneSegs[trimmedOriginalURL] = Date.now();
+                                        })
+                                        .catch(function(){});
+                                } catch(eDoneSeg) {}
+                            }
                             __tp_dvrCapture(
                                 originalURL,
                                 response
@@ -38451,6 +39419,7 @@ dashboardButton.style.visibility = 'hidden';
         time: null,
         same: 0,
         deadTicks: 0,
+        rebufferTicks: 0,
         lastFix: 0
     };
 
@@ -38617,6 +39586,7 @@ dashboardButton.style.visibility = 'hidden';
             var nativeXhrSend = XMLHttpRequest.prototype.send;
             XMLHttpRequest.prototype.open = function (method, url) {
                 var uStr = typeof url === 'string' ? url : (url ? String(url) : '');
+                this.__tp9ReqUrl = uStr;
                 this.__tp9BlockedAdUrl = (!scriptIsOff() && isBlockedAdNetworkUrl(uStr)) ? uStr : '';
                 if (this.__tp9BlockedAdUrl) {
                     return nativeXhrOpen.call(this, method || 'GET', 'data:text/plain,', true);
@@ -38632,8 +39602,25 @@ dashboardButton.style.visibility = 'hidden';
                     }, 0);
                     return;
                 }
+                if (!scriptIsOff() && this.__tp9ReqUrl && typeof expVodInspectSpadeRequest === 'function') {
+                    try { expVodInspectSpadeRequest(this.__tp9ReqUrl, arguments[0]); } catch (eSp) {}
+                }
                 return nativeXhrSend.apply(this, arguments);
             };
+        } catch (e) {}
+
+        try {
+            if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function' && !navigator.sendBeacon.__tp9SpadeHooked) {
+                var nativeSendBeacon = navigator.sendBeacon;
+                var hookedSendBeacon = function (url, data) {
+                    if (!scriptIsOff() && url && typeof expVodInspectSpadeRequest === 'function') {
+                        try { expVodInspectSpadeRequest(String(url), data); } catch (eSb) {}
+                    }
+                    return nativeSendBeacon.apply(this, arguments);
+                };
+                hookedSendBeacon.__tp9SpadeHooked = true;
+                navigator.sendBeacon = hookedSendBeacon;
+            }
         } catch (e) {}
 
         // 2. Balises <script> (apstag.js, ima3.js, gpt.js) et <iframe> publicitaires
@@ -38737,6 +39724,9 @@ dashboardButton.style.visibility = 'hidden';
                 }
                 if (isBlockedAdNetworkUrl(url)) {
                     return Promise.reject(new TypeError('Failed to fetch'));
+                }
+                if (init && init.body && typeof expVodInspectSpadeRequest === 'function') {
+                    expVodInspectSpadeRequest(url, init.body);
                 }
             }
             if (url.indexOf('gql.twitch.tv') >= 0) {
@@ -38899,6 +39889,7 @@ dashboardButton.style.visibility = 'hidden';
         spBuffer.lastFix = Date.now();
         spBuffer.same = 0;
         spBuffer.deadTicks = 0;
+        spBuffer.rebufferTicks = 0;
         if (action === 'pausePlay' || (typeof document !== 'undefined' && document.pictureInPictureElement)) {
             try {
                 player.pause();
@@ -39338,6 +40329,7 @@ dashboardButton.style.visibility = 'hidden';
     var spAutoplayLastEndPdt = 0;
     var spMainAdBoundaryTime = null;
     var spMainBoundaryEndPdt = 0;
+    var spLastPureAdBufEnd = 0;
     var spSwapTimer = null;
     var spReturnTimer = null;
     var spReturnInProgress = false;
@@ -39741,6 +40733,7 @@ dashboardButton.style.visibility = 'hidden';
         spAutoplayLastEndPdt = 0;
         spMainAdBoundaryTime = null;
         spMainBoundaryEndPdt = 0;
+        spLastPureAdBufEnd = 0;
         spAutoplayAlignedOnce = false;
         spAutoplayRetriedFresh = false;
         spAutoplayVisible = false;
@@ -39920,6 +40913,16 @@ dashboardButton.style.visibility = 'hidden';
         spStopSmoothRateCatchUp();
         if (spAutoplayActive && spAutoplayChannel === ch && spAutoplayOverlay && spAutoplayVideo) {
             spPositionAutoplayOverlay();
+            if (!data.postAdLiveCount) {
+                var curMainForWatermark = adCleanPlaybackVideo();
+                if (curMainForWatermark) {
+                    spLastPureAdBufEnd = Math.max(spLastPureAdBufEnd, spBufferedEndAt(curMainForWatermark));
+                }
+            }
+            if (!spSwapTimer && !spAutoplayVisible) {
+                spSetMainMutedForAd(true);
+                spShowAutoplayVisual(true);
+            }
             if (spAutoplayQuality && !data.quality) {
                 data.quality = spAutoplayQuality;
             }
@@ -39953,6 +40956,9 @@ dashboardButton.style.visibility = 'hidden';
 
         var mainVideo = adCleanPlaybackVideo();
         spPositionAutoplayOverlay(mainVideo);
+        if (mainVideo && !data.postAdLiveCount) {
+            spLastPureAdBufEnd = spBufferedEndAt(mainVideo);
+        }
 
         var ahead = mainVideo ? spAheadOf(mainVideo) : 0;
         var canSeamlessMidrollHandoff = Boolean(
@@ -39995,7 +41001,7 @@ dashboardButton.style.visibility = 'hidden';
                         var estPdt = spEstimateMainCurrentPdt(mv);
                         if (spAlignAutoplayToPdt(estPdt)) {
                             spAutoplayAlignedOnce = true;
-                            if (spAutoplayVideo.seeking && distToAd > 0.22) {
+                            if (spAutoplayVideo.seeking && distToAd > 0.25) {
                                 return;
                             }
                         }
@@ -40005,9 +41011,9 @@ dashboardButton.style.visibility = 'hidden';
                     spClearSwapTimer();
                     return;
                 }
-                // Garde-fou absolu : 140 ms avant la première image de pub en tampon,
+                // Garde-fou absolu : 220 ms avant la première image de pub en tampon,
                 // on coupe le son du lecteur principal et on bascule sur l'écran autoplay.
-                if (distToAd <= 0.14) {
+                if (distToAd <= 0.22) {
                     spSetMainMutedForAd(true);
                     spShowAutoplayVisual(true);
                     spClearSwapTimer();
@@ -40058,11 +41064,19 @@ dashboardButton.style.visibility = 'hidden';
         spReturnInProgress = true;
         var startedAt = Date.now();
         var bufEndAtEndMsg = spBufferedEndAt(mainVideo);
-        var cleanDurSec = (data && data.postAdLiveDurSec > 0) ? data.postAdLiveDurSec : 4.0;
+        var pureAdWatermark = (spLastPureAdBufEnd > 0 && spLastPureAdBufEnd <= bufEndAtEndMsg + 0.5)
+            ? spLastPureAdBufEnd
+            : 0;
+        var cleanDurSec = (data && data.postAdLiveDurSec > 0) ? data.postAdLiveDurSec : 6.0;
+        var confirmedDurSec = (data && data.confirmedPostAdLiveDurSec > 0) ? data.confirmedPostAdLiveDurSec : 0;
         var postAdStartPdt = (data && data.postAdLiveStartPdt > 0) ? data.postAdLiveStartPdt : 0;
         var initialMainEndPdt = (data && data.mainEndPdt > 0) ? data.mainEndPdt : 0;
         var soughtMain = false;
         var seekAt = 0;
+        var readySince = 0;
+        var postSeekFloorTime = 0;
+        var postSeekBaseTime = 0;
+        var retriedPostSeek = false;
         var appliedSeekDelta = 0;
         var channel = (data && data.channel) || spAutoplayChannel || getTestChannel();
 
@@ -40081,19 +41095,84 @@ dashboardButton.style.visibility = 'hidden';
             var mv = adCleanPlaybackVideo();
             var now = Date.now();
             var elapsed = now - startedAt;
-            if (!mv || elapsed > 2600) {
+            if (!mv) {
+                spFinishReturnToMainVideo(null, channel, appliedSeekDelta);
+                return;
+            }
+            if (mv.paused && !isUserExplicitlyPausedLive()) {
+                try {
+                    var pResume = mv.play();
+                    if (pResume && typeof pResume.catch === 'function') pResume.catch(function () {});
+                } catch (eResume) {}
+            }
+            if (elapsed > 12000) {
+                var timeoutBufEnd = spBufferedEndAt(mv);
+                var timeoutSafe = Math.max(postSeekFloorTime, timeoutBufEnd - 2.0);
+                if (timeoutBufEnd > 0 && (mv.currentTime || 0) < timeoutSafe - 0.1) {
+                    try {
+                        appliedSeekDelta = timeoutSafe - (mv.currentTime || 0);
+                        mv.currentTime = timeoutSafe;
+                    } catch (eTimeoutSeek) {}
+                }
                 spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
                 return;
             }
             if (soughtMain) {
-                if ((!mv.seeking && mv.readyState >= 3) || (now - seekAt) >= 550) {
+                if (mv.seeking || mv.readyState < 3) {
+                    readySince = 0;
+                    if (!retriedPostSeek && (now - seekAt) >= 2400) {
+                        retriedPostSeek = true;
+                        var rescueTarget = Math.max(postSeekFloorTime, spBufferedEndAt(mv) - 1.8);
+                        try {
+                            mv.currentTime = rescueTarget;
+                            postSeekBaseTime = rescueTarget;
+                            seekAt = now;
+                        } catch (eRescueSeek) {}
+                    }
+                    return;
+                }
+                var curMainT = mv.currentTime || 0;
+                // Protection anti-recul sur image clé (IDR) pré-discontinuité sous Firefox :
+                // si le décodeur a arrondi le saut vers la fin du dernier segment de pub,
+                // on repousse immédiatement vers l'image clé live suivante avant d'afficher.
+                if (!retriedPostSeek && curMainT < postSeekFloorTime - 0.15) {
+                    retriedPostSeek = true;
+                    readySince = 0;
+                    var forwardClean = Math.max(postSeekFloorTime + 0.9, spBufferedEndAt(mv) - 1.8);
+                    try {
+                        mv.currentTime = forwardClean;
+                        postSeekBaseTime = forwardClean;
+                        seekAt = now;
+                    } catch (eSnapSeek) {}
+                    return;
+                }
+                if (!readySince) {
+                    readySince = now;
+                }
+                if (
+                    curMainT >= postSeekBaseTime + 0.06 ||
+                    isUserExplicitlyPausedLive() ||
+                    (now - readySince) >= 180
+                ) {
                     spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
                 }
                 return;
             }
             var curBufEnd = spBufferedEndAt(mv);
-            var postAdBuffered = (curBufEnd >= bufEndAtEndMsg + 0.45) || (elapsed >= 420 && spAheadOf(mv) >= 1.1);
-            if (!postAdBuffered && elapsed < 1500) {
+            // Si le lecteur principal avait accumulé trop de tampon pendant la pub et
+            // suspendu le téléchargement des nouveaux segments live, on avance sa tête
+            // de lecture (toujours muet et masqué sous l'overlay) pour débloquer IVS.
+            if (spAheadOf(mv) > 6.5 && (mv.currentTime || 0) < curBufEnd - 3.0) {
+                try {
+                    mv.currentTime = curBufEnd - 2.5;
+                } catch (eDrain) {}
+            }
+            var grewAfterEndMsg = curBufEnd >= bufEndAtEndMsg + 0.45;
+            var confirmedAlreadyBuffered = confirmedDurSec >= 3.8 &&
+                (pureAdWatermark === 0 || curBufEnd >= pureAdWatermark + 3.6);
+            var pastAdWatermark = pureAdWatermark === 0 || curBufEnd >= pureAdWatermark + 3.5;
+            var postAdBuffered = (grewAfterEndMsg && pastAdWatermark) || confirmedAlreadyBuffered;
+            if (!postAdBuffered && elapsed < 3800) {
                 return;
             }
             var apPdt = spGetAutoplayCurrentPdt();
@@ -40104,7 +41183,7 @@ dashboardButton.style.visibility = 'hidden';
                 apPdt > 0 &&
                 postAdStartPdt > 0 &&
                 apPdt < (postAdStartPdt + 250) &&
-                elapsed < 1650 &&
+                elapsed < 4200 &&
                 spAutoplayVideo &&
                 !spAutoplayVideo.paused
             ) {
@@ -40112,9 +41191,19 @@ dashboardButton.style.visibility = 'hidden';
             }
             var bufStart = spBufferedStartAt(mv, curBufEnd);
             var addedBufSec = Math.max(0, curBufEnd - bufEndAtEndMsg);
-            var effectiveCleanDur = Math.max(cleanDurSec, 2.0 + addedBufSec);
-            var minCleanTime = Math.max(bufStart + 0.05, curBufEnd - effectiveCleanDur + 0.25);
-            var maxSafeTime = Math.max(minCleanTime, curBufEnd - 2.2);
+            var unbufferedSlack = cleanDurSec >= 5.5 ? 3.6 : 2.0;
+            var estimatedBufferedClean = confirmedDurSec > 0
+                ? Math.min(cleanDurSec + addedBufSec, confirmedDurSec + addedBufSec)
+                : (Math.max(0, cleanDurSec - unbufferedSlack) + addedBufSec);
+            // Plafond à 4,0 s depuis le bord du tampon + marge post-discontinuité de 0,85 s :
+            // garantit qu'on ne recule jamais à moins de +0,85 s après la toute fin de la pub.
+            var safeLookbackSec = Math.min(4.0, Math.max(2.0, estimatedBufferedClean));
+            var minCleanTime = Math.max(bufStart + 0.1, curBufEnd - safeLookbackSec + 0.85);
+            if (pureAdWatermark > 0 && curBufEnd >= pureAdWatermark + 2.4) {
+                minCleanTime = Math.max(minCleanTime, pureAdWatermark + 0.85);
+            }
+            minCleanTime = Math.min(minCleanTime, Math.max(bufStart + 0.1, curBufEnd - 1.5));
+            var maxSafeTime = Math.max(minCleanTime, curBufEnd - 2.0);
             var seekTarget = maxSafeTime;
 
             if (apPdt > 0 && initialMainEndPdt > 0) {
@@ -40124,7 +41213,7 @@ dashboardButton.style.visibility = 'hidden';
             }
 
             var prevMainTime = mv.currentTime || 0;
-            if (seekTarget > prevMainTime + 0.18 || prevMainTime < minCleanTime - 0.05) {
+            if (prevMainTime < minCleanTime || Math.abs(seekTarget - prevMainTime) > 0.18) {
                 try {
                     mv.currentTime = seekTarget;
                     appliedSeekDelta = seekTarget - prevMainTime;
@@ -40132,17 +41221,26 @@ dashboardButton.style.visibility = 'hidden';
             }
             soughtMain = true;
             seekAt = now;
-            if (!mv.seeking && mv.readyState >= 3) {
-                spFinishReturnToMainVideo(mv, channel, appliedSeekDelta);
-            }
-        }, 55);
+            readySince = 0;
+            postSeekFloorTime = minCleanTime;
+            postSeekBaseTime = mv.currentTime || seekTarget;
+        }, 45);
+    }
+
+    function isWatchingAdFreeDvrVod() {
+        return Boolean(dvrOverlay && !dvrIsLive() && dvrSourceKind === 'vod');
     }
 
     function spHandleMessage(data) {
         if (data.type === 'spProxy403') {
             if (data.channel) {
                 spChannelProxy403[String(data.channel).toLowerCase()] = Date.now();
-                spWarmAutoplayForChannel(data.channel);
+                if (
+                    !isWatchingAdFreeDvrVod() &&
+                    !(typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())
+                ) {
+                    spWarmAutoplayForChannel(data.channel);
+                }
                 updateActiveProxyDisplay();
                 if (dashboardVisible) {
                     renderDashboard();
@@ -40157,7 +41255,11 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         if (data.type === 'spPlayer') {
-            if (!scriptIsOff()) {
+            if (
+                !scriptIsOff() &&
+                !(typeof expVodIsPlayingVod === 'function' && expVodIsPlayingVod()) &&
+                !(typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())
+            ) {
                 if (data.action === 'resume') {
                     spResumeAfterAd();
                 } else {
@@ -40168,15 +41270,24 @@ dashboardButton.style.visibility = 'hidden';
         }
         if (data.type === 'spAd') {
             var wasSpAdActive = spAd.active;
-            if (data.active && data.useAutoplayOverlay) {
+            var onVodReplay = isWatchingAdFreeDvrVod();
+            var onExpVodStartupGate = typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive();
+            if (onVodReplay || onExpVodStartupGate) {
+                if (spAutoplayActive) {
+                    spStopAutoplayOverlay(true);
+                }
+                spHideBadge();
+            } else if (data.active && data.useAutoplayOverlay) {
                 spStartOrUpdateAutoplayOverlay(data);
                 if (spAutoplayQuality && !data.quality) {
                     data.quality = spAutoplayQuality;
                 }
-            } else if (data.active && spAutoplayActive && !data.useAutoplayOverlay) {
+            } else if (data.active && spAutoplayActive && !data.useAutoplayOverlay && data.backupType === 'proxy') {
                 spStopAutoplayOverlay(true);
             }
-            spCountAd(data);
+            if (!onVodReplay && !onExpVodStartupGate) {
+                spCountAd(data);
+            }
             spAd.active = !!data.active;
             spAd.stripping = !!data.stripping;
             spAd.searching = !!data.searching;
@@ -40185,7 +41296,9 @@ dashboardButton.style.visibility = 'hidden';
             if (wasSpAdActive && !spAd.active) {
                 spLastAdEndedAt = Date.now();
             }
-            if (!data.active && spAutoplayActive && !data.usedProxyInBreak) {
+            if (onVodReplay || onExpVodStartupGate) {
+                spHideBadge();
+            } else if (!data.active && spAutoplayActive && !data.usedProxyInBreak) {
                 spScheduleReturnToMainVideo(data);
                 if (!spReturnInProgress) {
                     spUpdateBadge(data);
@@ -40575,11 +41688,27 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
         var current = spStreamStats.channel && spStreamStats.channel === getTestChannel();
-        var live = !!(spAd.active && spAd.channel && spAd.channel === getTestChannel());
+        var onExpVod = typeof expVodAdblockOn === 'function' && expVodAdblockOn();
+        var playingExpVod = onExpVod && typeof expVodIsPlayingVod === 'function' && expVodIsPlayingVod();
+        var live = !playingExpVod && !!(spAd.active && spAd.channel && spAd.channel === getTestChannel());
         card.classList.toggle('tp9-ab-live', live);
-        card.querySelector('.tp9-sans-proxy-title').textContent = live
-            ? tt('Pub en cours de blocage…', 'Blocking an ad…')
-            : tt('Bloqueur de pub actif', 'Ad blocker active');
+        card.querySelector('.tp9-sans-proxy-title').textContent = playingExpVod
+            ? tt('VOD sans pub active (~' + Math.max(1, Math.round(dvrCurrentOffset())) + ' s)', 'Ad-free VOD active (~' + Math.max(1, Math.round(dvrCurrentOffset())) + 's)')
+            : (live
+                ? tt('Pub en cours de blocage…', 'Blocking an ad…')
+                : tt('Bloqueur de pub actif', 'Ad blocker active'));
+        var notesWrap = card.querySelectorAll('.tp9-sans-proxy-note');
+        if (notesWrap && notesWrap.length >= 2) {
+            if (onExpVod) {
+                notesWrap[0].textContent = playingExpVod
+                    ? tt('Lecture sur la VOD sans pub · Direct coupé en arrière-plan (0 Ko/s)', 'Playing ad-free VOD · Background live paused (0 KB/s)')
+                    : tt('En attente d\'une VOD lisible (≥ 35 s) · Repli auto sur VAFT actif', 'Waiting for readable VOD (≥ 35s) · Auto VAFT fallback active');
+                notesWrap[1].textContent = tt('Tchat & Raids synchronisés · Points de chaîne & Drops conservés', 'Chat & Raids synced · Channel Points & Drops preserved');
+            } else {
+                notesWrap[0].textContent = tt('Lecteur autoplay sans pub pendant les coupures', 'Ad-free autoplay player during ad breaks');
+                notesWrap[1].textContent = tt('Zéro blocage ni relance · recalage direct auto', 'Zero freeze or reload · auto live resync');
+            }
+        }
         card.querySelector('.tp9-ab-count').textContent =
             current ? (spStreamStats.pubs || 0) : 0;
         card.querySelector('.tp9-ab-count-sub').textContent =
@@ -40717,7 +41846,14 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function spUpdateBadge(data) {
-        if (!data.active || scriptIsOff() || !data.channel || data.channel !== getTestChannel()) {
+        if (
+            isWatchingAdFreeDvrVod() ||
+            (typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive()) ||
+            !data.active ||
+            scriptIsOff() ||
+            !data.channel ||
+            data.channel !== getTestChannel()
+        ) {
             spHideBadge();
             return;
         }
@@ -40856,15 +41992,17 @@ dashboardButton.style.visibility = 'hidden';
             }
             spBuffer.same = 0;
             spBuffer.deadTicks = 0;
+            spBuffer.rebufferTicks = 0;
             return;
         }
         if (dvrStreamEnded() || (dvrOverlay && !dvrIsLive())) {
             spBuffer.same = 0;
             spBuffer.deadTicks = 0;
+            spBuffer.rebufferTicks = 0;
             return;
         }
         var curCh = getTestChannel();
-        if (curCh && !spAd.active) {
+        if (curCh && !spAd.active && !(typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())) {
             spWarmAutoplayForChannel(curCh);
         }
         var parts = spPlayerParts(false);
@@ -40886,6 +42024,7 @@ dashboardButton.style.visibility = 'hidden';
             if (video && isAutoplayProtectedPause(video)) {
                 spBuffer.same = 0;
                 spBuffer.deadTicks = 0;
+                spBuffer.rebufferTicks = 0;
                 return;
             }
             // Pendant toute la durée d'une pub couverte par le lecteur autoplay
@@ -40893,6 +42032,7 @@ dashboardButton.style.visibility = 'hidden';
             if (spAutoplayActive || (spAd.active && !proxyAdsOnlyOn())) {
                 spBuffer.same = 0;
                 spBuffer.deadTicks = 0;
+                spBuffer.rebufferTicks = 0;
                 if (video) {
                     spPositionAutoplayOverlay(video);
                     if (video.paused) {
@@ -40940,6 +42080,7 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.started = false;
                 spBuffer.same = 0;
                 spBuffer.deadTicks = 0;
+                spBuffer.rebufferTicks = 0;
             }
             var pState = '';
             try {
@@ -40950,6 +42091,7 @@ dashboardButton.style.visibility = 'hidden';
             }
             if (!spAd.active) {
                 if ((video && (video.error || video.ended)) || pState === 'Ended' || (spBuffer.started && !video)) {
+                    spBuffer.rebufferTicks = 0;
                     spBuffer.deadTicks = (spBuffer.deadTicks || 0) + 1;
                     if (spBuffer.deadTicks >= 5) {
                         spBuffer.deadTicks = 0;
@@ -40959,12 +42101,84 @@ dashboardButton.style.visibility = 'hidden';
                     return;
                 }
                 if (video && video.paused) {
+                    // Chargement initial avant le tout premier démarrage : ne pas perturber IVS.
+                    if (!spBuffer.started) {
+                        spBuffer.rebufferTicks = 0;
+                        if (pState === 'Idle') {
+                            spBuffer.deadTicks = (spBuffer.deadTicks || 0) + 1;
+                            if (spBuffer.deadTicks === 4) {
+                                try { player.play(); } catch (eInitPlay) {}
+                            } else if (spBuffer.deadTicks >= 25) {
+                                spBuffer.deadTicks = 0;
+                                spPlayerTask('reload', { force: true });
+                            }
+                        } else {
+                            spBuffer.deadTicks = 0;
+                        }
+                        return;
+                    }
+                    var videoAhead = spAheadOf(video);
+                    var ivsBufDur = 0;
+                    try {
+                        ivsBufDur = typeof player.getBufferDuration === 'function'
+                            ? (Number(player.getBufferDuration()) || 0)
+                            : 0;
+                    } catch (eBufDur) {}
+                    var maxAhead = Math.max(videoAhead, ivsBufDur);
+                    var ivsWantsPlay = (pState === 'Playing' || pState === 'Buffering');
+                    var hasReadyCushion = (video.readyState >= 4 || maxAhead >= 0.9);
+
+                    // Cas 1 : Rechargement temporaire de tampon d'Amazon IVS (notamment sous Firefox,
+                    // où IVS appelle video.pause() quand la réserve tombe à ~0 s tout en gardant
+                    // player.getState() sur 'Playing' ou 'Buffering'). On laisse IVS regarnir son
+                    // tampon sans jamais détruire le lecteur par setSrc au bout de 5 s.
+                    if (ivsWantsPlay && !hasReadyCushion) {
+                        spBuffer.deadTicks = 0;
+                        if (
+                            typeof spBuffer.rebufferTime === 'number' &&
+                            Math.abs((video.currentTime || 0) - spBuffer.rebufferTime) > 0.05
+                        ) {
+                            spBuffer.rebufferTicks = 0;
+                        }
+                        spBuffer.rebufferTime = video.currentTime || 0;
+                        spBuffer.rebufferTicks = (spBuffer.rebufferTicks || 0) + 1;
+                        if (
+                            video.readyState >= 3 &&
+                            maxAhead >= 0.45 &&
+                            (spBuffer.rebufferTicks === 5 || spBuffer.rebufferTicks === 12)
+                        ) {
+                            try {
+                                var pNudge = video.play();
+                                if (pNudge && typeof pNudge.catch === 'function') pNudge.catch(function () {});
+                            } catch (eNudge) {}
+                        } else if (spBuffer.rebufferTicks >= 30) {
+                            spBuffer.rebufferTicks = 0;
+                            logEvent('info', '🔄 Tampon du lecteur Twitch tari depuis plus de 18 s : relance automatique du lecteur');
+                            spPlayerTask('reload', { force: true });
+                        }
+                        return;
+                    }
+
+                    // Cas 2 : Le tampon est regarni (>= 0,9 s ou readyState 4) mais la balise <video>
+                    // est restée en pause, ou l'état IVS a décroché hors Playing/Buffering :
+                    // reprise douce directe via video.play() (car player.play() seul est ignoré par IVS
+                    // quand son état interne vaut déjà 'Playing'), sans aucun setSrc destructif.
+                    spBuffer.rebufferTicks = 0;
                     spBuffer.deadTicks = (spBuffer.deadTicks || 0) + 1;
-                    if (spBuffer.deadTicks === 2) {
+                    if (
+                        spBuffer.deadTicks === 2 ||
+                        spBuffer.deadTicks === 5 ||
+                        spBuffer.deadTicks === 10 ||
+                        spBuffer.deadTicks === 18
+                    ) {
+                        if (!ivsWantsPlay) {
+                            try { player.play(); } catch (ePlayP) {}
+                        }
                         try {
-                            player.play();
-                        } catch (e3) {}
-                    } else if (spBuffer.deadTicks >= 10) {
+                            var pSoft = video.play();
+                            if (pSoft && typeof pSoft.catch === 'function') pSoft.catch(function () {});
+                        } catch (ePlayV) {}
+                    } else if (spBuffer.deadTicks >= 30) {
                         spBuffer.deadTicks = 0;
                         logEvent('info', '🔄 Lecteur Twitch figé en pause involontaire : relance automatique du lecteur');
                         spPlayerTask('reload', { force: true });
@@ -40972,6 +42186,7 @@ dashboardButton.style.visibility = 'hidden';
                     return;
                 }
                 spBuffer.deadTicks = 0;
+                spBuffer.rebufferTicks = 0;
             }
             var position = coreState.position;
             var buffered = coreState.bufferedPosition;
@@ -40982,7 +42197,7 @@ dashboardButton.style.visibility = 'hidden';
                 spBuffer.time = time;
                 return;
             }
-            var stallThreshold = 12;
+            var stallThreshold = spAd.active ? 14 : 25;
             if (
                 spBuffer.started &&
                 spBuffer.time !== null &&
@@ -40993,7 +42208,13 @@ dashboardButton.style.visibility = 'hidden';
                 (position !== 0 || buffered !== 0 || duration !== 0)
             ) {
                 spBuffer.same++;
-                if (spBuffer.same === stallThreshold) {
+                if (!spAd.active && spBuffer.same === 6 && video && video.readyState >= 3 && spAheadOf(video) >= 0.6) {
+                    try {
+                        var pUnstick = video.play();
+                        if (pUnstick && typeof pUnstick.catch === 'function') pUnstick.catch(function () {});
+                    } catch (eUnstick) {}
+                } else if (spBuffer.same >= stallThreshold) {
+                    spBuffer.same = 0;
                     logEvent('info', 'Lecteur Twitch bloqué en chargement : relance automatique du lecteur');
                     spPlayerTask('reload', { force: true });
                 }
@@ -41047,6 +42268,9 @@ dashboardButton.style.visibility = 'hidden';
         pageConfig.proxiesEnabled = on;
         saveConfig(pageConfig);
         broadcastConfig();
+        if (typeof syncExpVodAdblockState === 'function') {
+            syncExpVodAdblockState();
+        }
         watchdogReset();
         adCleanWatch = null;
         spStopAutoplayOverlay(true);
@@ -41133,6 +42357,2007 @@ dashboardButton.style.visibility = 'hidden';
         setTimeout(function () {
             reloadTwitchPlayer();
         }, 300);
+    }
+
+    // ============================================================
+    // BLOQUEUR DE PUB (EXPERIMENTAL) — VOD SANS PUB (~30 S DU DIRECT)
+    // ============================================================
+    // Actif UNIQUEMENT en mode Adblock lorsque l'utilisateur coche
+    // « Bloqueur de pub (Experimental) » :
+    // 1. Se cale au plus près du bord lisible de la VOD du live (~30 s)
+    //    sans jamais basculer dans le DIRECT contenant des pubs.
+    // 2. Coupe le téléchargement du flux live en arrière-plan (0 Ko/s)
+    //    dès que la VOD tourne, tout en envoyant le signal Spade
+    //    « minute-watched » chaque minute (Points de chaîne, Coffres,
+    //    Drops et Séries de visionnage conservés à 100 %).
+    // 3. Synchronise le tchat IRC (tmi-sent-ts) et retarde les Raids
+    //    sortants (~30 s) sur l'horloge exacte de la VOD.
+    // 4. Bascule automatiquement sur le VAFT classique si le streamer
+    //    n'a pas de VOD accessible ou vient tout juste de lancer son live.
+    var EXP_VOD_MIN_DEPTH_SECONDS = 40;
+    var EXP_VOD_TARGET_OFFSET_SECONDS = 30;
+    var EXP_VOD_CHAT_QUEUE_MAX = 2500;
+
+    var expVodHoverListenersBound = false;
+    var expVodHoverTimer = null;
+    var expVodHoveredChannel = null;
+    var expVodPrefetchCooldowns = {};
+
+    var expVodWasActive = false;
+    var expVodActiveChannel = null;
+    var expVodAutoEnteredVod = false;
+    var expVodAnnouncedChannel = null;
+    var expVodUserRewound = false;
+    var expVodInitialSnapPending = false;
+    var expVodPlaylistHasEndlist = false;
+    var expVodPdtZeroMs = 0;
+    var expVodLastVodEndSec = 0;
+    var expVodLastCushionSec = 24;
+    var expVodMeasuredEdgeLagSec = 0;
+    var expVodPlayingSince = 0;
+    var expVodWasBgPaused = false;
+    var expVodLastReprobeAt = 0;
+    var expVodEndedVerifyInFlight = false;
+
+    var expVodHudListenersBound = false;
+    var expVodPointerInPlayer = false;
+    var expVodHoveringControls = false;
+    var expVodLastClientX = -9999;
+    var expVodLastClientY = -9999;
+    var expVodLastHudWakeAt = 0;
+    var expVodPointerLeftAt = 0;
+
+    var expVodStartupGateChannel = null;
+    var expVodStartupDeadline = 0;
+    var expVodStartupTimer = null;
+    var expVodBootCheckQueued = false;
+    var expVodCurtainEl = null;
+
+    var expVodChatQueue = [];
+    var expVodChatFlushTimer = null;
+    var expVodServerClockOffsetMs = 0;
+    var expVodHasServerClockOffset = false;
+    var expVodCachedSelfLogin = '';
+    var expVodCachedSelfLoginAt = 0;
+
+    var expVodSpadeUrl = 'https://spade.twitch.tv/track';
+    var expVodSpadeBaseProps = {};
+    var expVodCapturedMinuteProps = null;
+    var expVodLastNativeMinuteWatchedAt = 0;
+    var expVodLastSentMinuteWatchedAt = 0;
+
+    var expVodRaidHookInstalled = false;
+    var expVodBypassRaidHook = false;
+    var expVodPendingRaid = null;
+
+    function expVodAdblockOn() {
+        return !(typeof isDashboardOnlyTab !== 'undefined' && isDashboardOnlyTab) && !scriptIsOff() && !proxiesOn() && !!pageConfig.experimentalVodAdblock;
+    }
+
+    function expVodIsPlayingVod() {
+        return Boolean(
+            expVodAdblockOn() &&
+            dvrOverlay &&
+            !dvrIsLive() &&
+            dvrSourceKind === 'vod' &&
+            dvrVideo
+        );
+    }
+
+    function expVodLockLiveReturn() {
+        if (!expVodAdblockOn() || dvrStreamEnded()) {
+            return false;
+        }
+        var ch = dvrChannelInUse || getTestChannel();
+        if (!ch) {
+            return false;
+        }
+        var info = dvrVodInfoFor(ch);
+        return Boolean(info && dvrVodDepthSeconds(info) >= EXP_VOD_MIN_DEPTH_SECONDS);
+    }
+
+    function expVodTargetEdgeOffset() {
+        var ch = dvrChannelInUse || getTestChannel();
+        var minOff = ch ? (dvrMinOffsetFor(ch) + 4) : EXP_VOD_TARGET_OFFSET_SECONDS;
+        return Math.max(EXP_VOD_TARGET_OFFSET_SECONDS, minOff);
+    }
+
+    function expVodCurrentEdgeOffset() {
+        if (expVodMeasuredEdgeLagSec > 0) {
+            return expVodMeasuredEdgeLagSec;
+        }
+        return expVodTargetEdgeOffset();
+    }
+
+    function expVodRelativeOffset(rawOffset) {
+        var raw = typeof rawOffset === 'number' ? rawOffset : dvrCurrentOffset();
+        if (!expVodLockLiveReturn()) {
+            return raw;
+        }
+        if (!expVodIsRewoundFromVodEdge()) {
+            return 0;
+        }
+        return Math.max(0, raw - expVodCurrentEdgeOffset());
+    }
+
+    function expVodNoteTargetOffset(offset) {
+        if (!expVodAdblockOn()) {
+            expVodUserRewound = false;
+            return;
+        }
+        if (expVodInitialSnapPending) {
+            return;
+        }
+        expVodUserRewound = offset > (expVodCurrentEdgeOffset() + 4);
+    }
+
+    function expVodIsRewoundFromVodEdge() {
+        if (!expVodIsPlayingVod()) {
+            return false;
+        }
+        if (dvrVideo && dvrVideo.paused) {
+            return true;
+        }
+        var aimedBusy = Boolean(
+            dvrSwitching ||
+            (typeof dvrAimedOffset === 'number' && (Date.now() - (dvrAimedAt || 0)) < 1500)
+        );
+        if (expVodLastVodEndSec > 0 && dvrVideo) {
+            var idealT = Math.max(0.5, expVodLastVodEndSec - expVodLastCushionSec);
+            var distFromIdeal = idealT - (dvrVideo.currentTime || 0);
+            if (!aimedBusy && distFromIdeal <= 3.5) {
+                expVodUserRewound = false;
+                return false;
+            }
+            return Boolean(expVodUserRewound || distFromIdeal > 8);
+        }
+        return Boolean(expVodUserRewound || dvrCurrentOffset() > (expVodCurrentEdgeOffset() + 8));
+    }
+
+    function expVodSnapToVodEdge(showHint) {
+        if (!expVodAdblockOn()) {
+            return;
+        }
+        var ch = dvrChannelInUse || getTestChannel();
+        if (!ch) {
+            return;
+        }
+        expVodUserRewound = false;
+        dvrAimedOffset = null;
+        dvrAimedAt = 0;
+        if (dvrPlaybackRate > 1) {
+            dvrSetPlaybackRate(1);
+        }
+        if (
+            dvrOverlay &&
+            !dvrIsLive() &&
+            dvrSourceKind === 'vod' &&
+            dvrHls &&
+            dvrVideo &&
+            expVodLastVodEndSec > 0
+        ) {
+            var idealT = Math.max(0.5, expVodLastVodEndSec - expVodLastCushionSec);
+            try {
+                dvrVideo.currentTime = idealT;
+            } catch (eSeek) {}
+            if (dvrVideo.paused) {
+                try {
+                    var pPlay = dvrVideo.play();
+                    if (pPlay && pPlay.catch) pPlay.catch(function () {});
+                } catch (ePlay) {}
+            }
+            dvrRefreshControls();
+        } else {
+            expVodInitialSnapPending = true;
+            dvrGoToOffset(expVodCurrentEdgeOffset());
+        }
+        if (showHint) {
+            dvrShowHint(
+                '<span>' +
+                tt('Calé au bord de la VOD sans pub (~30 s)', 'Snapped to ad-free VOD edge (~30s)') +
+                '</span>'
+            );
+        }
+    }
+
+    function expVodOnVodFragBuffered(fragData) {
+        var frag = fragData && fragData.frag;
+        if (frag && frag.programDateTime > 0 && Number.isFinite(frag.start)) {
+            expVodPdtZeroMs = frag.programDateTime - (frag.start * 1000);
+        }
+    }
+
+    function expVodOnVodLevelLoaded(lvData) {
+        var details = lvData && lvData.details;
+        if (!details) {
+            return;
+        }
+        expVodPlaylistHasEndlist = details.live === false;
+        var frags = details.fragments;
+        if (!Array.isArray(frags) || !frags.length) {
+            return;
+        }
+        for (var i = frags.length - 1; i >= 0; i--) {
+            if (frags[i] && frags[i].programDateTime > 0 && Number.isFinite(frags[i].start)) {
+                expVodPdtZeroMs = frags[i].programDateTime - (frags[i].start * 1000);
+                break;
+            }
+        }
+        var lastFrag = frags[frags.length - 1];
+        var lastEnd = (Number(lastFrag.start) || 0) + (Number(lastFrag.duration) || 0);
+        var targetDur = Number(details.targetduration) || Number(lastFrag.duration) || 10;
+        var cushion = Math.max(20, Math.min(32, targetDur * 2.4));
+        var prevVodEnd = expVodLastVodEndSec;
+        if (lastEnd > 0) {
+            expVodLastVodEndSec = lastEnd;
+            expVodLastCushionSec = cushion;
+        }
+        var idealTime = Math.max(0.5, lastEnd - cushion);
+        if (
+            lastEnd > 0 &&
+            dvrSourceStartWall > 0 &&
+            !(dvrVideo && dvrVideo.paused) &&
+            (lastEnd > prevVodEnd || !(expVodMeasuredEdgeLagSec > 0))
+        ) {
+            var rawLag = (Date.now() - (dvrSourceStartWall + idealTime * 1000)) / 1000;
+            if (isFinite(rawLag) && rawLag >= 6 && rawLag <= 120) {
+                expVodMeasuredEdgeLagSec = expVodMeasuredEdgeLagSec > 0
+                    ? (expVodMeasuredEdgeLagSec * 0.8 + rawLag * 0.2)
+                    : rawLag;
+            }
+        }
+        if (expVodInitialSnapPending && expVodIsPlayingVod() && !dvrStreamEnded() && lastEnd > 0) {
+            expVodInitialSnapPending = false;
+            if (dvrVideo && Math.abs((dvrVideo.currentTime || 0) - idealTime) > 3.5) {
+                try {
+                    dvrVideo.currentTime = idealTime;
+                } catch (eSnap) {}
+            }
+            dvrRefreshControls();
+        }
+        expVodCheckCurtainReady();
+    }
+
+    function expVodHandleVodEnded() {
+        if (!expVodLockLiveReturn()) {
+            return false;
+        }
+        var ch = dvrChannelInUse || getTestChannel();
+        if (!ch || expVodPlaylistHasEndlist || dvrStreamEnded()) {
+            if (ch && expVodPlaylistHasEndlist && !dvrStreamEnded()) {
+                var vodEntry = dvrVodCache[ch];
+                streamEndMark(ch, 'fin de la VOD du stream atteinte', vodEntry && vodEntry.streamId);
+            }
+            return false;
+        }
+        // Pas de #EXT-X-ENDLIST : vérifie si le live est toujours actif.
+        // Tant qu'il est en direct, on ne saute JAMAIS sur le flux live avec pubs.
+        if (!expVodEndedVerifyInFlight) {
+            expVodEndedVerifyInFlight = true;
+            dvrGql(
+                'query($login:String!){user(login:$login){stream{id}}}',
+                { login: ch },
+                function (json) {
+                    expVodEndedVerifyInFlight = false;
+                    if (getTestChannel() !== ch) return;
+                    var liveStream = json && json.data && json.data.user && json.data.user.stream;
+                    if (!liveStream || !liveStream.id) {
+                        var vod = dvrVodCache[ch];
+                        streamEndMark(ch, 'Twitch n\'a plus de stream en cours', vod && vod.streamId);
+                        if (dvrOverlay && !dvrIsLive()) {
+                            dvrEnterLiveMode();
+                        }
+                        return;
+                    }
+                    if (expVodAdblockOn()) {
+                        dvrDestroyPlayback();
+                        expVodInitialSnapPending = true;
+                        dvrLoadSource('vod', expVodTargetEdgeOffset());
+                    }
+                },
+                function () {
+                    expVodEndedVerifyInFlight = false;
+                    if (expVodAdblockOn() && getTestChannel() === ch) {
+                        dvrDestroyPlayback();
+                        expVodInitialSnapPending = true;
+                        dvrLoadSource('vod', expVodTargetEdgeOffset());
+                    }
+                }
+            );
+        }
+        return true;
+    }
+
+    function expVodShouldHoldBackgroundLive() {
+        return expVodIsPlayingVod();
+    }
+
+    function expVodPauseBackgroundLive() {
+        if (!expVodShouldHoldBackgroundLive()) {
+            return;
+        }
+        var liveVid = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+        if (!liveVid || isOwnPlayerVideo(liveVid)) {
+            return;
+        }
+        if (typeof dvrSyncVolumeFromPlayer === 'function') {
+            dvrSyncVolumeFromPlayer(liveVid);
+        }
+        liveVid.__tp9ExpVodPaused = true;
+        expVodWasBgPaused = true;
+        try {
+            var parts = spPlayerParts(false);
+            var player = parts && parts.player;
+            if (player && typeof player.pause === 'function') {
+                var alreadyPaused = typeof player.isPaused === 'function' ? player.isPaused() : false;
+                if (!alreadyPaused) {
+                    player.pause();
+                }
+            }
+        } catch (ePlayerPause) {}
+        if (!liveVid.paused) {
+            try {
+                liveVid.pause();
+            } catch (eVidPause) {}
+        }
+    }
+
+    function expVodResumeBackgroundLive() {
+        var clearedAny = false;
+        if (typeof dvrLiveVideo !== 'undefined' && dvrLiveVideo && dvrLiveVideo.__tp9ExpVodPaused) {
+            dvrLiveVideo.__tp9ExpVodPaused = false;
+            clearedAny = true;
+        }
+        try {
+            if (typeof document !== 'undefined' && document.querySelectorAll) {
+                var vids = document.querySelectorAll('.video-player video, .persistent-player video, [data-a-target="video-player"] video');
+                for (var i = 0; i < vids.length; i++) {
+                    if (vids[i].__tp9ExpVodPaused) {
+                        vids[i].__tp9ExpVodPaused = false;
+                        clearedAny = true;
+                    }
+                }
+            }
+        } catch (eQuery) {}
+        if (!expVodWasBgPaused && !clearedAny) {
+            return;
+        }
+        expVodWasBgPaused = false;
+        if (isUserExplicitlyPausedLive() || dvrStreamEnded() || expVodIsPlayingVod()) {
+            return;
+        }
+        try {
+            var parts = spPlayerParts(false);
+            if (parts && parts.player && typeof parts.player.play === 'function') {
+                parts.player.play();
+            }
+        } catch (ePlayP) {}
+        var liveVid = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
+        if (liveVid && !isOwnPlayerVideo(liveVid) && liveVid.paused) {
+            try {
+                var p = liveVid.play();
+                if (p && p.catch) p.catch(function () {});
+            } catch (ePlayV) {}
+        }
+    }
+
+    // ---- Changement de qualité sur accès direct CloudFront & Pré-résolution légère au survol ----
+    function expVodTrimKeyMap(mapObj, maxKeys) {
+        var keys = Object.keys(mapObj);
+        if (keys.length <= maxKeys) return;
+        var extra = keys.length - maxKeys;
+        for (var i = 0; i < extra; i++) {
+            delete mapObj[keys[i]];
+        }
+    }
+
+    function expVodSwitchDirectRendition(requestedLabel) {
+        if (!expVodAdblockOn() || !dvrOverlay || dvrIsLive() || dvrSourceKind !== 'vod' || !dvrHls) {
+            return false;
+        }
+        if (dvrHls.levels && dvrHls.levels.length > 1) {
+            return false;
+        }
+        var ch = dvrChannelInUse;
+        var found = (ch && typeof dvrVodAccessFor === 'function') ? dvrVodAccessFor(ch) : null;
+        var access = found && found.access;
+        if (!access || access.state !== 'bypass' || !access.base) {
+            return false;
+        }
+        var clean = String(requestedLabel || 'Auto').replace(/\(Source\)/i, '').trim().toLowerCase();
+        var candidates = [];
+        if (!clean || clean === 'auto' || clean === 'source' || clean === 'chunked') {
+            candidates = ['chunked'];
+        } else {
+            var m = clean.match(/^(\d{3,4}p(?:30|60)?)/);
+            var tag = m ? m[1] : '';
+            if (tag === '1080p') candidates = ['1080p60', '1080p30', 'chunked'];
+            else if (tag === '720p') candidates = ['720p60', '720p30'];
+            else if (tag === '480p') candidates = ['480p30'];
+            else if (tag === '360p') candidates = ['360p30'];
+            else if (tag === '160p') candidates = ['160p30'];
+            else if (tag) candidates = [tag];
+            if (candidates.indexOf('chunked') < 0) {
+                candidates.push('chunked');
+            }
+        }
+        var currentUrl = access.url;
+        var targetOffset = dvrCurrentOffset() || expVodCurrentEdgeOffset();
+        var rendList = typeof DVR_VOD_RENDITIONS !== 'undefined' && Array.isArray(DVR_VOD_RENDITIONS)
+            ? DVR_VOD_RENDITIONS
+            : ['chunked', '1080p60', '1080p30', '720p60', '720p30', '480p30'];
+
+        (function tryRend(idx) {
+            if (idx >= candidates.length) return;
+            var rend = candidates[idx];
+            var nextUrl = access.base + '/' + rend + '/index-dvr.m3u8';
+            if (nextUrl === currentUrl) return;
+            dvrFetchWithTimeout(nextUrl, { method: 'GET' }, 6000)
+                .then(function (resp) {
+                    if (!resp || !resp.ok) {
+                        tryRend(idx + 1);
+                        return;
+                    }
+                    if (!expVodAdblockOn() || !dvrOverlay || dvrChannelInUse !== ch || dvrIsLive()) {
+                        return;
+                    }
+                    var rIdx = rendList.indexOf(rend);
+                    access.url = nextUrl;
+                    access.index = rIdx >= 0 ? rIdx : 0;
+                    var resumeOffset = dvrCurrentOffset() || targetOffset;
+                    dvrDestroyPlayback();
+                    dvrLoadSource('vod', resumeOffset);
+                })
+                .catch(function () {
+                    tryRend(idx + 1);
+                });
+        })(0);
+        return true;
+    }
+
+    function expVodExtractChannelFromAnchor(anchor) {
+        if (!anchor || typeof anchor.getAttribute !== 'function') {
+            return null;
+        }
+        var rawHref = anchor.getAttribute('href');
+        if (!rawHref) return null;
+        try {
+            var baseOrigin = (typeof window !== 'undefined' && window.location && window.location.origin) || 'https://www.twitch.tv';
+            var parsed = new URL(rawHref, baseOrigin);
+            if (parsed.origin !== baseOrigin) return null;
+            var m = (parsed.pathname || '').match(/^\/([a-z0-9_]{2,30})\/?$/i);
+            if (!m || !m[1]) return null;
+            var ch = m[1].toLowerCase();
+            var nonCh = typeof NON_CHANNEL_PATHS !== 'undefined' && Array.isArray(NON_CHANNEL_PATHS)
+                ? NON_CHANNEL_PATHS
+                : [];
+            if (nonCh.indexOf(ch) !== -1) return null;
+            return ch;
+        } catch (eHref) {
+            return null;
+        }
+    }
+
+    function expVodInstallHoverPrefetch() {
+        if (expVodHoverListenersBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+            return;
+        }
+        expVodHoverListenersBound = true;
+
+        document.addEventListener('pointerover', function (e) {
+            if (!expVodAdblockOn()) {
+                if (expVodHoverTimer) {
+                    clearTimeout(expVodHoverTimer);
+                    expVodHoverTimer = null;
+                    expVodHoveredChannel = null;
+                }
+                return;
+            }
+            var t = e && e.target && e.target.nodeType === 1 ? e.target : (e && e.target && e.target.parentElement);
+            var anchor = t && t.closest ? t.closest('a[href]') : null;
+            var ch = expVodExtractChannelFromAnchor(anchor);
+            if (!ch || ch === getTestChannel() || ch === expVodGetLivePageChannel()) {
+                if (expVodHoverTimer) {
+                    clearTimeout(expVodHoverTimer);
+                    expVodHoverTimer = null;
+                }
+                expVodHoveredChannel = null;
+                return;
+            }
+            if (expVodHoveredChannel === ch) {
+                return;
+            }
+            expVodHoveredChannel = ch;
+            if (expVodHoverTimer) {
+                clearTimeout(expVodHoverTimer);
+                expVodHoverTimer = null;
+            }
+            var now = Date.now();
+            if (expVodPrefetchCooldowns[ch] && (now - expVodPrefetchCooldowns[ch]) < 30000) {
+                return;
+            }
+            var existing = dvrVodCache[ch];
+            if (existing && existing.id && dvrVodAccess[existing.id] && dvrVodAccess[existing.id].url && (now - existing.at) < 30000) {
+                return;
+            }
+            expVodHoverTimer = setTimeout(function () {
+                expVodHoverTimer = null;
+                if (!expVodAdblockOn() || expVodHoveredChannel !== ch || dvrVodInFlight[ch]) {
+                    return;
+                }
+                expVodTrimKeyMap(expVodPrefetchCooldowns, 60);
+                expVodPrefetchCooldowns[ch] = Date.now();
+                fetchDvrVodInfo(ch);
+            }, 150);
+        }, { capture: true, passive: true });
+
+        document.addEventListener('pointerdown', function (e) {
+            if (!expVodAdblockOn() || !e) return;
+            if (typeof e.button === 'number' && e.button !== 0) return;
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+            var t = e.target && e.target.nodeType === 1 ? e.target : (e.target && e.target.parentElement);
+            var anchor = t && t.closest ? t.closest('a[href]') : null;
+            var ch = expVodExtractChannelFromAnchor(anchor);
+            if (!ch || ch === expVodGetLivePageChannel()) return;
+            if (expVodHoverTimer) {
+                clearTimeout(expVodHoverTimer);
+                expVodHoverTimer = null;
+            }
+            var existing = dvrVodCache[ch];
+            if ((!existing || existing.failed) && !dvrVodInFlight[ch]) {
+                expVodTrimKeyMap(expVodPrefetchCooldowns, 60);
+                expVodPrefetchCooldowns[ch] = Date.now();
+                fetchDvrVodInfo(ch);
+            }
+        }, { capture: true, passive: true });
+    }
+
+    // ---- Spade « minute-watched » (Points de chaîne, Coffres, Drops, Streaks) ----
+    function expVodExtractSpadeDataParam(body) {
+        if (!body) return '';
+        var str = '';
+        if (typeof body === 'string') {
+            str = body;
+        } else if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+            return body.get('data') || '';
+        } else if (typeof FormData !== 'undefined' && body instanceof FormData) {
+            var fdVal = body.get('data');
+            return typeof fdVal === 'string' ? fdVal : '';
+        } else {
+            return '';
+        }
+        var trimmed = str.trim();
+        if (trimmed.indexOf('data=') === 0) {
+            var raw = trimmed.slice(5);
+            var amp = raw.indexOf('&');
+            if (amp !== -1) raw = raw.slice(0, amp);
+            try {
+                return decodeURIComponent(raw.replace(/\+/g, '%2B'));
+            } catch (eDec) {
+                return raw;
+            }
+        }
+        if (trimmed.indexOf('W3s') === 0 || trimmed.indexOf('eyJ') === 0) {
+            return trimmed;
+        }
+        return '';
+    }
+
+    function expVodDecodeBase64Utf8(b64) {
+        if (!b64 || typeof b64 !== 'string') return '';
+        var norm = b64.replace(/-/g, '+').replace(/_/g, '/');
+        while (norm.length % 4) norm += '=';
+        var bin = atob(norm);
+        try {
+            var esc = '';
+            for (var i = 0; i < bin.length; i++) {
+                var hex = bin.charCodeAt(i).toString(16);
+                esc += '%' + (hex.length < 2 ? '0' + hex : hex);
+            }
+            return decodeURIComponent(esc);
+        } catch (eUtf) {
+            return bin;
+        }
+    }
+
+    function expVodEncodeBase64Utf8(str) {
+        return btoa(unescape(encodeURIComponent(str)));
+    }
+
+    var EXP_VOD_SPADE_SESSION_KEYS = [
+        'app_session_id',
+        'tab_session_id',
+        'device_id',
+        'distinct_id',
+        'user_id',
+        'login',
+        'logged_in',
+        'client_build_id',
+        'benchmark_server_id',
+        'preferred_language',
+        'bornuser',
+        'medium'
+    ];
+
+    function expVodInspectSpadeRequest(url, body) {
+        if (!url || typeof url !== 'string') return;
+        if (!/spade\.twitch\.tv|\/track(?:\?|$|\/)/i.test(url)) return;
+        var b64 = expVodExtractSpadeDataParam(body);
+        if (!b64) return;
+        try {
+            if (/^https?:\/\//i.test(url)) {
+                expVodSpadeUrl = url;
+            }
+            var decoded = expVodDecodeBase64Utf8(b64);
+            if (!decoded || decoded.charAt(0) !== '[') return;
+            var arr = JSON.parse(decoded);
+            if (!Array.isArray(arr)) return;
+            for (var i = 0; i < arr.length; i++) {
+                var item = arr[i];
+                var p = item && item.properties;
+                if (!p || typeof p !== 'object') continue;
+                for (var k = 0; k < EXP_VOD_SPADE_SESSION_KEYS.length; k++) {
+                    var key = EXP_VOD_SPADE_SESSION_KEYS[k];
+                    if (p[key] !== undefined && p[key] !== null && p[key] !== '') {
+                        expVodSpadeBaseProps[key] = p[key];
+                    }
+                }
+                if (item.event === 'minute-watched') {
+                    expVodLastNativeMinuteWatchedAt = Date.now();
+                    expVodCapturedMinuteProps = Object.assign({}, p);
+                }
+            }
+        } catch (eSpade) {}
+    }
+
+    function expVodReadLocalTwitchIdentity() {
+        var out = { userId: null, login: null, deviceId: null };
+        try {
+            var twRaw = localStorage.getItem('twilight-user');
+            if (twRaw) {
+                var tw = JSON.parse(twRaw);
+                if (tw && tw.id) out.userId = Number(tw.id) || tw.id;
+                if (tw && tw.login) out.login = String(tw.login).toLowerCase();
+            }
+        } catch (eTw) {}
+        try {
+            out.deviceId = spHeaders['X-Device-Id'] || localStorage.getItem('unique_id') || null;
+            if (!out.deviceId && typeof document !== 'undefined' && document.cookie) {
+                var mUid = document.cookie.match(/(?:^|;\s*)unique_id=([^;]+)/);
+                if (mUid && mUid[1]) out.deviceId = decodeURIComponent(mUid[1]);
+            }
+            if (!out.login && typeof document !== 'undefined' && document.cookie) {
+                var mLog = document.cookie.match(/(?:^|;\s*)login=([^;]+)/);
+                if (mLog && mLog[1]) out.login = decodeURIComponent(mLog[1]).toLowerCase();
+            }
+        } catch (eCk) {}
+        return out;
+    }
+
+    function expVodSendMinuteWatchedIfDue(now) {
+        if (!expVodIsPlayingVod() || !dvrVideo || dvrVideo.paused || dvrVideo.ended || dvrVideo.readyState < 2) {
+            return;
+        }
+        if ((now - expVodLastNativeMinuteWatchedAt) < 52000 || (now - expVodLastSentMinuteWatchedAt) < 59000) {
+            return;
+        }
+        var ch = getTestChannel();
+        var vodEntry = ch && dvrVodCache[ch];
+        var broadcastId = vodEntry && vodEntry.streamId ? String(vodEntry.streamId) : null;
+        var channelId = vodEntry && vodEntry.channelId ? String(vodEntry.channelId) : null;
+        if (!ch || !broadcastId || !channelId) {
+            return;
+        }
+        var ident = expVodReadLocalTwitchIdentity();
+        var tmpl = expVodCapturedMinuteProps || {};
+        var props = Object.assign({}, expVodSpadeBaseProps, tmpl);
+        props.channel = ch;
+        props.channel_id = typeof tmpl.channel_id === 'number' ? (Number(channelId) || channelId) : channelId;
+        props.broadcast_id = typeof tmpl.broadcast_id === 'number' ? (Number(broadcastId) || broadcastId) : broadcastId;
+        if (!props.device_id && ident.deviceId) {
+            props.device_id = ident.deviceId;
+            if (!props.distinct_id) props.distinct_id = ident.deviceId;
+        }
+        if (!props.user_id && ident.userId) {
+            props.user_id = ident.userId;
+            props.logged_in = true;
+        }
+        if (!props.login && (ident.login || bttvDetectedUserLogin)) {
+            props.login = ident.login || bttvDetectedUserLogin;
+        }
+        props.live = true;
+        props.hidden = false;
+        props.player = props.player || 'site';
+        props.played_from = props.played_from || 'channel_page';
+        props.medium = props.medium || 'twitch_tv';
+        props.quality = props.quality || 'chunked';
+        props.url = window.location.href;
+        props.client_time = Math.round(now) / 1000;
+        if (dvrVideo.videoWidth > 0 && dvrVideo.videoHeight > 0) {
+            props.vid_width = dvrVideo.videoWidth;
+            props.vid_height = dvrVideo.videoHeight;
+        }
+        expVodLastSentMinuteWatchedAt = now;
+        try {
+            var payloadJson = JSON.stringify([{ event: 'minute-watched', properties: props }]);
+            var b64 = expVodEncodeBase64Utf8(payloadJson);
+            spNativeFetch.call(window, expVodSpadeUrl || 'https://spade.twitch.tv/track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'data=' + encodeURIComponent(b64),
+                mode: 'cors',
+                credentials: 'omit',
+                keepalive: true
+            }).catch(function () {});
+        } catch (eSendMw) {}
+    }
+
+    // ---- Synchronisation du tchat IRC sur l'horloge VOD (tmi-sent-ts) ----
+    function expVodShouldDelayChat() {
+        return Boolean(expVodIsPlayingVod() && !dvrStreamEnded());
+    }
+
+    function expVodGetSelfLogin() {
+        var now = Date.now();
+        if (expVodCachedSelfLogin && (now - expVodCachedSelfLoginAt) < 10000) {
+            return expVodCachedSelfLogin;
+        }
+        expVodCachedSelfLoginAt = now;
+        if (bttvDetectedUserLogin) {
+            expVodCachedSelfLogin = bttvDetectedUserLogin;
+            return expVodCachedSelfLogin;
+        }
+        if (expVodSpadeBaseProps.login) {
+            expVodCachedSelfLogin = String(expVodSpadeBaseProps.login).toLowerCase();
+            return expVodCachedSelfLogin;
+        }
+        var ident = expVodReadLocalTwitchIdentity();
+        expVodCachedSelfLogin = ident.login || '';
+        return expVodCachedSelfLogin;
+    }
+
+    function expVodCurrentPlayheadWallMs(now) {
+        if (!dvrVideo) return 0;
+        var curSec = Number(dvrVideo.currentTime) || 0;
+        var wallMs = expVodPdtZeroMs > 0
+            ? (expVodPdtZeroMs + curSec * 1000)
+            : (dvrSourceStartWall > 0 ? (dvrSourceStartWall + curSec * 1000) : 0);
+        if (!(wallMs > 0)) return 0;
+        var serverNow = expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now;
+        var lag = serverNow - wallMs;
+        if (lag < 4000 || lag > 48 * 3600 * 1000) {
+            return 0;
+        }
+        return wallMs;
+    }
+
+    function expVodStartChatFlushTimer() {
+        if (expVodChatFlushTimer) return;
+        expVodChatFlushTimer = setInterval(expVodFlushChatTick, 100);
+    }
+
+    function expVodStopChatFlushTimer() {
+        if (expVodChatFlushTimer) {
+            clearInterval(expVodChatFlushTimer);
+            expVodChatFlushTimer = null;
+        }
+    }
+
+    function expVodFilterIncomingIrc(ev, rawText) {
+        if (typeof rawText !== 'string' || !rawText) return rawText;
+        var ws = (ev && (ev.__tp9Ws || (ev.target && typeof ev.target.dispatchEvent === 'function' ? ev.target : null))) ||
+            (bttvActiveIrcSockets.length ? bttvActiveIrcSockets[bttvActiveIrcSockets.length - 1] : null);
+        if (!ws || ws.readyState !== 1) {
+            return rawText;
+        }
+        var lines = rawText.split('\r\n');
+        var immediate = [];
+        var queuedAny = false;
+        var now = Date.now();
+        var selfLogin = expVodGetSelfLogin();
+        var vodWallMs = expVodCurrentPlayheadWallMs(now);
+        var fallbackDelayMs = Math.max(1000, dvrCurrentOffset() * 1000);
+
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i];
+            if (!ln) continue;
+            var cmdMatch = ln.match(/\s(PRIVMSG|USERNOTICE|CLEARCHAT|CLEARMSG)\s+#([a-z0-9_]+)/i);
+            if (!cmdMatch) {
+                immediate.push(ln);
+                continue;
+            }
+            var cmd = cmdMatch[1].toUpperCase();
+            var msgCh = cmdMatch[2].toLowerCase();
+            if (cmd === 'PRIVMSG' && selfLogin) {
+                var senderMatch = ln.match(/(?:^|\s):([a-z0-9_]+)![a-z0-9_]+@/i);
+                if (senderMatch && senderMatch[1].toLowerCase() === selfLogin) {
+                    immediate.push(ln);
+                    continue;
+                }
+            }
+            var ts = 0;
+            var tsMatch = ln.match(/(?:^@|;)tmi-sent-ts=(\d+)/);
+            if (tsMatch && tsMatch[1]) {
+                ts = parseInt(tsMatch[1], 10) || 0;
+                if (ts > 0) {
+                    var measuredSkew = ts - now;
+                    if (!expVodHasServerClockOffset) {
+                        expVodServerClockOffsetMs = measuredSkew;
+                        expVodHasServerClockOffset = true;
+                    } else {
+                        expVodServerClockOffsetMs = expVodServerClockOffsetMs * 0.9 + measuredSkew * 0.1;
+                    }
+                    if (!(vodWallMs > 0)) {
+                        vodWallMs = expVodCurrentPlayheadWallMs(now);
+                    }
+                }
+            }
+            if (!dvrVideo.paused && ts > 0 && vodWallMs > 0 && ts <= vodWallMs + 80) {
+                immediate.push(ln);
+                continue;
+            }
+            expVodChatQueue.push({
+                ws: ws,
+                channel: msgCh,
+                line: ln,
+                tmiSentTs: ts,
+                fallbackDueAt: now + fallbackDelayMs
+            });
+            queuedAny = true;
+        }
+
+        if (expVodChatQueue.length > EXP_VOD_CHAT_QUEUE_MAX) {
+            expVodChatQueue.splice(0, expVodChatQueue.length - EXP_VOD_CHAT_QUEUE_MAX);
+        }
+        if (queuedAny) {
+            expVodStartChatFlushTimer();
+        }
+        if (!queuedAny) {
+            return rawText;
+        }
+        if (!immediate.length) {
+            return '';
+        }
+        return immediate.join('\r\n') + '\r\n';
+    }
+
+    function expVodDispatchQueuedIrcBatches(items) {
+        if (!items || !items.length) return;
+        var groups = [];
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it.ws || it.ws.readyState !== 1) continue;
+            var found = null;
+            for (var g = 0; g < groups.length; g++) {
+                if (groups[g].ws === it.ws) {
+                    found = groups[g];
+                    break;
+                }
+            }
+            if (!found) {
+                found = { ws: it.ws, lines: [] };
+                groups.push(found);
+            }
+            found.lines.push(it.line);
+        }
+        for (var b = 0; b < groups.length; b++) {
+            try {
+                var payload = groups[b].lines.join('\r\n') + '\r\n';
+                var synEv = new MessageEvent('message', { data: payload });
+                synEv.__tp9SyntheticReplay = true;
+                synEv.__tp9Ws = groups[b].ws;
+                groups[b].ws.dispatchEvent(synEv);
+            } catch (eDisp) {}
+        }
+    }
+
+    function expVodFlushChatTick() {
+        if (!expVodChatQueue.length) {
+            if (!expVodShouldDelayChat()) {
+                expVodStopChatFlushTimer();
+            }
+            return;
+        }
+        var curCh = (getTestChannel() || '').toLowerCase();
+        if (!expVodShouldDelayChat()) {
+            var sameChTail = [];
+            for (var k = 0; k < expVodChatQueue.length; k++) {
+                if (curCh && expVodChatQueue[k].channel === curCh) {
+                    sameChTail.push(expVodChatQueue[k]);
+                }
+            }
+            expVodChatQueue.length = 0;
+            expVodStopChatFlushTimer();
+            if (sameChTail.length > 25) {
+                sameChTail = sameChTail.slice(sameChTail.length - 25);
+            }
+            expVodDispatchQueuedIrcBatches(sameChTail);
+            return;
+        }
+        if (dvrVideo && dvrVideo.paused) {
+            return;
+        }
+        var now = Date.now();
+        var vodWallMs = expVodCurrentPlayheadWallMs(now);
+        var due = [];
+        var keep = [];
+        for (var i = 0; i < expVodChatQueue.length; i++) {
+            var item = expVodChatQueue[i];
+            if (!item.ws || item.ws.readyState !== 1 || (curCh && item.channel && item.channel !== curCh)) {
+                continue;
+            }
+            var isDue = (vodWallMs > 0 && item.tmiSentTs > 0)
+                ? (item.tmiSentTs <= vodWallMs)
+                : (now >= item.fallbackDueAt);
+            if (isDue) {
+                due.push(item);
+            } else {
+                keep.push(item);
+            }
+        }
+        expVodChatQueue = keep;
+        if (due.length) {
+            expVodDispatchQueuedIrcBatches(due);
+        }
+    }
+
+    // ---- Synchronisation des Raids (~30 s de délai VOD) ----
+    function expVodCancelPendingRaid() {
+        if (!expVodPendingRaid) return;
+        if (expVodPendingRaid.timer) {
+            clearInterval(expVodPendingRaid.timer);
+        }
+        if (expVodPendingRaid.bannerEl) {
+            try { expVodPendingRaid.bannerEl.remove(); } catch (eRm) {}
+        }
+        expVodPendingRaid = null;
+    }
+
+    function expVodExecuteRaidRedirect(raidObj) {
+        var targetHref = raidObj && raidObj.targetHref;
+        var originCh = raidObj && raidObj.originChannel;
+        expVodCancelPendingRaid();
+        if (!targetHref) return;
+        if (originCh && getTestChannel() && getTestChannel() !== originCh) {
+            return;
+        }
+        expVodBypassRaidHook = true;
+        try {
+            window.location.assign(targetHref);
+        } catch (eNav) {}
+        setTimeout(function () {
+            expVodBypassRaidHook = false;
+        }, 1000);
+    }
+
+    function expVodRenderRaidBanner() {
+        if (!expVodPendingRaid) return;
+        var remSec = Math.max(0, Math.ceil((expVodPendingRaid.dueAt - Date.now()) / 1000));
+        var el = expVodPendingRaid.bannerEl;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'tp9-exp-raid-banner';
+            el.style.cssText =
+                'position:fixed;top:64px;right:18px;z-index:2147483640;display:flex;align-items:center;gap:10px;' +
+                'padding:9px 13px;border-radius:10px;background:rgba(14,14,18,.94);' +
+                'border:1px solid rgba(145,71,255,.55);box-shadow:0 8px 24px rgba(0,0,0,.55);' +
+                'color:#efeff1;font:600 12px Inter,Roobert,"Helvetica Neue",Arial,sans-serif;backdrop-filter:blur(8px);';
+            el.innerHTML =
+                '<span class="tp9-exp-raid-txt"></span>' +
+                '<button type="button" class="tp9-exp-raid-now" style="padding:4px 9px;border-radius:6px;border:0;background:#9147ff;color:#fff;font-size:11px;font-weight:700;cursor:pointer;"></button>' +
+                '<button type="button" class="tp9-exp-raid-stay" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#adadb8;font-size:11px;font-weight:600;cursor:pointer;"></button>';
+            el.querySelector('.tp9-exp-raid-now').addEventListener('click', function () {
+                if (expVodPendingRaid) expVodExecuteRaidRedirect(expVodPendingRaid);
+            });
+            el.querySelector('.tp9-exp-raid-stay').addEventListener('click', function () {
+                logEvent('info', '🛑 Raid différé annulé par l\'utilisateur');
+                expVodCancelPendingRaid();
+            });
+            (document.fullscreenElement || document.body || document.documentElement).appendChild(el);
+            expVodPendingRaid.bannerEl = el;
+        }
+        var txtEl = el.querySelector('.tp9-exp-raid-txt');
+        var nowBtn = el.querySelector('.tp9-exp-raid-now');
+        var stayBtn = el.querySelector('.tp9-exp-raid-stay');
+        if (txtEl) {
+            txtEl.textContent = tt(
+                '🚀 Raid vers ' + expVodPendingRaid.targetChannel + ' dans ' + remSec + ' s (synchro VOD)',
+                '🚀 Raiding ' + expVodPendingRaid.targetChannel + ' in ' + remSec + 's (VOD sync)'
+            );
+        }
+        if (nowBtn) nowBtn.textContent = tt('Suivre', 'Join now');
+        if (stayBtn) stayBtn.textContent = tt('Rester', 'Stay');
+    }
+
+    function expVodStartDelayedRaid(originChannel, targetChannel, targetHref, delaySec) {
+        if (expVodPendingRaid && expVodPendingRaid.targetChannel === targetChannel) {
+            return;
+        }
+        expVodCancelPendingRaid();
+        logEvent(
+            'info',
+            '🚀 Raid vers ' + targetChannel + ' retardé de ' + delaySec +
+            ' s pour laisser la fin du live en VOD se terminer'
+        );
+        expVodPendingRaid = {
+            originChannel: originChannel,
+            targetChannel: targetChannel,
+            targetHref: targetHref,
+            dueAt: Date.now() + delaySec * 1000,
+            bannerEl: null,
+            timer: null
+        };
+        expVodRenderRaidBanner();
+        expVodPendingRaid.timer = setInterval(function () {
+            if (!expVodPendingRaid) return;
+            if (pageConfig.antiRaid || (getTestChannel() && getTestChannel() !== expVodPendingRaid.originChannel)) {
+                expVodCancelPendingRaid();
+                return;
+            }
+            if (Date.now() >= expVodPendingRaid.dueAt) {
+                expVodExecuteRaidRedirect(expVodPendingRaid);
+                return;
+            }
+            expVodRenderRaidBanner();
+        }, 500);
+    }
+
+    function expVodTryInterceptRaidUrl(rawUrl) {
+        if (expVodBypassRaidHook || !rawUrl || !expVodIsPlayingVod() || pageConfig.antiRaid) {
+            return false;
+        }
+        try {
+            var parsed = new URL(String(rawUrl), window.location.origin);
+            if (parsed.origin !== window.location.origin) return false;
+            if (!/[?&]referrer=raid\b/i.test(parsed.search || '')) return false;
+            var m = (parsed.pathname || '').match(/^\/([a-z0-9_]{2,30})\/?$/i);
+            if (!m || !m[1]) return false;
+            var targetCh = m[1].toLowerCase();
+            var originCh = getTestChannel();
+            if (!originCh || targetCh === originCh) return false;
+            var delaySec = Math.max(4, Math.min(90, Math.round(dvrCurrentOffset())));
+            expVodStartDelayedRaid(originCh, targetCh, parsed.href, delaySec);
+            return true;
+        } catch (eRaid) {
+            return false;
+        }
+    }
+
+    function expVodInstallRaidSyncHook() {
+        if (expVodRaidHookInstalled || typeof window.history !== 'object' || !window.history) {
+            return;
+        }
+        expVodRaidHookInstalled = true;
+        try {
+            var origPushState = window.history.pushState;
+            if (typeof origPushState === 'function' && !origPushState.__tp9RaidHooked) {
+                var hookedPush = function (state, title, url) {
+                    if (expVodTryInterceptRaidUrl(url)) {
+                        return;
+                    }
+                    return origPushState.apply(this, arguments);
+                };
+                hookedPush.__tp9RaidHooked = true;
+                window.history.pushState = hookedPush;
+            }
+            var origReplaceState = window.history.replaceState;
+            if (typeof origReplaceState === 'function' && !origReplaceState.__tp9RaidHooked) {
+                var hookedReplace = function (state, title, url) {
+                    if (expVodTryInterceptRaidUrl(url)) {
+                        return;
+                    }
+                    return origReplaceState.apply(this, arguments);
+                };
+                hookedReplace.__tp9RaidHooked = true;
+                window.history.replaceState = hookedReplace;
+            }
+        } catch (eHist) {}
+    }
+
+    // ---- Masquage auto du HUD lecteur, Badge latence en bas du tchat & Rideau anti-direct ----
+    function expVodFindVideoPlayerEl() {
+        if (typeof dvrOverlay !== 'undefined' && dvrOverlay && typeof dvrOverlay.closest === 'function') {
+            var p = dvrOverlay.closest('.video-player');
+            if (p) return p;
+        }
+        if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+            return document.querySelector('.video-player');
+        }
+        return null;
+    }
+
+    function expVodClearHudIdle() {
+        var player = expVodFindVideoPlayerEl();
+        if (player && player.classList && player.classList.contains('tp9-exp-hud-idle')) {
+            player.classList.remove('tp9-exp-hud-idle');
+        }
+    }
+
+    function expVodSyncHudIdle() {
+        var player = expVodFindVideoPlayerEl();
+        if (!player || !player.classList) {
+            return;
+        }
+        var keepAwake = Boolean(
+            !expVodIsPlayingVod() ||
+            !dvrVideo ||
+            dvrVideo.paused ||
+            dvrSwitching ||
+            expVodIsStartupGateActive() ||
+            (typeof dvrScrubbing !== 'undefined' && dvrScrubbing) ||
+            (typeof dvrFbVolDragging !== 'undefined' && dvrFbVolDragging) ||
+            (typeof dvrNativeSliderDragging !== 'undefined' && dvrNativeSliderDragging) ||
+            (typeof dvrMenusOpen === 'function' && dvrMenusOpen()) ||
+            (typeof dvrTwitchQualityOpen === 'function' && dvrTwitchQualityOpen()) ||
+            (typeof dvrPlayerMenuOpen === 'function' && dvrPlayerMenuOpen(player))
+        );
+        if (keepAwake) {
+            if (player.classList.contains('tp9-exp-hud-idle')) {
+                player.classList.remove('tp9-exp-hud-idle');
+            }
+            return;
+        }
+        var now = Date.now();
+        var shouldIdle = expVodPointerInPlayer
+            ? ((now - expVodLastHudWakeAt) >= (expVodHoveringControls ? 3200 : 2400))
+            : ((now - expVodPointerLeftAt) >= 180 && (now - expVodLastHudWakeAt) >= 350);
+        var wasIdle = player.classList.contains('tp9-exp-hud-idle');
+        if (shouldIdle !== wasIdle) {
+            player.classList.toggle('tp9-exp-hud-idle', shouldIdle);
+            if (shouldIdle && typeof hideTooltip === 'function') {
+                hideTooltip();
+            }
+        }
+    }
+
+    function expVodInstallHudIdleListeners() {
+        if (expVodHudListenersBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+            return;
+        }
+        expVodHudListenersBound = true;
+        document.addEventListener('mousemove', function (e) {
+            if (!e) return;
+            var cx = Number(e.clientX);
+            var cy = Number(e.clientY);
+            if (isFinite(cx) && isFinite(cy)) {
+                if (Math.abs(cx - expVodLastClientX) < 1 && Math.abs(cy - expVodLastClientY) < 1) {
+                    return;
+                }
+                expVodLastClientX = cx;
+                expVodLastClientY = cy;
+            }
+            var t = e.target && e.target.nodeType === 1 ? e.target : (e.target && e.target.parentElement);
+            var inPlayer = Boolean(t && t.closest && t.closest('.video-player'));
+            var inControls = Boolean(
+                inPlayer &&
+                t.closest(
+                    '[data-a-target="player-controls"], .player-controls, .top-bar, ' +
+                    '.tp9dvr-native-bar, .tp9dvr-native-info, .tp9dvr-fallback, .tp9dvr-menu'
+                )
+            );
+            var now = Date.now();
+            if (inPlayer) {
+                expVodPointerInPlayer = true;
+                expVodHoveringControls = inControls;
+                expVodLastHudWakeAt = now;
+                expVodClearHudIdle();
+            } else {
+                if (expVodPointerInPlayer) {
+                    expVodPointerLeftAt = now;
+                }
+                expVodPointerInPlayer = false;
+                expVodHoveringControls = false;
+                expVodSyncHudIdle();
+            }
+        }, true);
+        document.addEventListener('mouseout', function (e) {
+            if (e && !e.relatedTarget && !e.toElement) {
+                expVodPointerInPlayer = false;
+                expVodHoveringControls = false;
+                expVodPointerLeftAt = Date.now();
+                expVodSyncHudIdle();
+            }
+        }, true);
+        document.addEventListener('pointerdown', function (e) {
+            var t = e && e.target && e.target.nodeType === 1 ? e.target : (e && e.target && e.target.parentElement);
+            if (t && t.closest && t.closest('.video-player, .tp9dvr-menu')) {
+                expVodPointerInPlayer = true;
+                expVodLastHudWakeAt = Date.now();
+                expVodClearHudIdle();
+            }
+        }, true);
+        document.addEventListener('wheel', function (e) {
+            var t = e && e.target && e.target.nodeType === 1 ? e.target : (e && e.target && e.target.parentElement);
+            if (t && t.closest && t.closest('.video-player')) {
+                expVodPointerInPlayer = true;
+                expVodLastHudWakeAt = Date.now();
+                expVodClearHudIdle();
+            }
+        }, { capture: true, passive: true });
+        document.addEventListener('keydown', function (e) {
+            var t = e && e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+                if (!t.classList || !t.classList.contains('tp9dvr-seek')) {
+                    return;
+                }
+            }
+            if (expVodIsPlayingVod()) {
+                expVodLastHudWakeAt = Date.now();
+                expVodClearHudIdle();
+            }
+        }, true);
+    }
+
+    function expVodRemoveChatLatencyBadge() {
+        if (typeof document === 'undefined' || typeof document.getElementById !== 'function') {
+            return;
+        }
+        var existing = document.getElementById('tp9-exp-chat-sync');
+        if (existing) {
+            try { existing.remove(); } catch (eRm) {}
+        }
+    }
+
+    function expVodSyncChatLatencyBadge() {
+        if (
+            typeof document === 'undefined' ||
+            typeof document.getElementById !== 'function' ||
+            typeof document.querySelector !== 'function'
+        ) {
+            return;
+        }
+        if (!pageConfig.showVodChatSyncBadge || !expVodShouldDelayChat()) {
+            expVodRemoveChatLatencyBadge();
+            return;
+        }
+        var host = (typeof resolveChatInputAreaRoot === 'function' && resolveChatInputAreaRoot()) ||
+            document.querySelector('.chat-input, [data-test-selector="chat-input-container"]');
+        if (!host) {
+            var inp = document.querySelector('.chat-input__textarea, [data-a-target="chat-input"]');
+            if (inp) {
+                host = (inp.closest && inp.closest('.chat-input')) || inp.parentElement;
+            }
+        }
+        if (!host) {
+            return;
+        }
+        var el = document.getElementById('tp9-exp-chat-sync');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'tp9-exp-chat-sync';
+            el.setAttribute('data-tp9-tip-info', '');
+            el.setAttribute(
+                'data-tp9-tip',
+                tt('Tchat synchronisé avec la VOD sans pub', 'Chat synced with ad-free VOD')
+            );
+            el.style.cssText =
+                'display:flex;align-items:center;justify-content:space-between;gap:8px;' +
+                'margin:0 10px 6px 10px;padding:4px 9px;border-radius:6px;' +
+                'background:rgba(145,71,255,0.12);border:1px solid rgba(145,71,255,0.32);' +
+                'color:#e9d5ff;font-size:11px;font-weight:600;line-height:1.3;user-select:none;';
+
+            var leftSpan = document.createElement('span');
+            leftSpan.style.cssText = 'display:inline-flex;align-items:center;gap:6px;min-width:0;';
+
+            var dotSpan = document.createElement('span');
+            dotSpan.className = 'tp9-exp-chat-sync-dot';
+            dotSpan.style.cssText =
+                'width:7px;height:7px;border-radius:50%;flex-shrink:0;' +
+                'background:#a855f7;box-shadow:0 0 6px rgba(168,85,247,0.85);';
+
+            var titleSpan = document.createElement('span');
+            titleSpan.className = 'tp9-exp-chat-sync-label';
+            titleSpan.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+            var titleText = document.createTextNode('');
+            titleSpan.appendChild(titleText);
+
+            leftSpan.appendChild(dotSpan);
+            leftSpan.appendChild(titleSpan);
+
+            var rightSpan = document.createElement('span');
+            rightSpan.className = 'tp9-exp-chat-sync-val';
+            rightSpan.style.cssText =
+                'padding:1px 7px;border-radius:999px;flex-shrink:0;' +
+                'background:rgba(145,71,255,0.24);color:#f3e8ff;' +
+                'font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums;';
+            var rightText = document.createTextNode('');
+            rightSpan.appendChild(rightText);
+
+            el.appendChild(leftSpan);
+            el.appendChild(rightSpan);
+            el.__tp9Dot = dotSpan;
+            el.__tp9RightSpan = rightSpan;
+            el.__tp9TitleText = titleText;
+            el.__tp9ValText = rightText;
+            el.__tp9LastSig = '';
+
+            var anonBadge = document.getElementById('tp9-anon-chat-badge');
+            var refBefore = (anonBadge && anonBadge.parentElement === host)
+                ? anonBadge.nextSibling
+                : host.firstChild;
+            host.insertBefore(el, refBefore);
+            if (typeof attachTooltips === 'function') {
+                attachTooltips(el);
+            }
+        } else if (el.parentElement !== host) {
+            var anonB = document.getElementById('tp9-anon-chat-badge');
+            var refNode = (anonB && anonB.parentElement === host)
+                ? anonB.nextSibling
+                : host.firstChild;
+            host.insertBefore(el, refNode);
+        }
+
+        var now = Date.now();
+        var vodWallMs = expVodCurrentPlayheadWallMs(now);
+        var serverNow = expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now;
+        var lagSec = vodWallMs > 0
+            ? Math.max(1, Math.round((serverNow - vodWallMs) / 1000))
+            : Math.max(1, Math.round(dvrCurrentOffset() || expVodCurrentEdgeOffset()));
+        var isPaused = Boolean(dvrVideo && dvrVideo.paused);
+        var queuedCount = expVodChatQueue.length;
+        var labelStr = tt('Synchro tchat VOD', 'VOD chat sync');
+        var valStr = isPaused
+            ? (tt('⏸ Pause · -', '⏸ Paused · -') + lagSec + ' s')
+            : ('-' + lagSec + ' s');
+        var sig = labelStr + '|' + valStr + '|' + (isPaused ? '1' : '0') + '|' + queuedCount;
+        if (el.__tp9LastSig === sig) {
+            return;
+        }
+        el.__tp9LastSig = sig;
+        if (el.__tp9TitleText) el.__tp9TitleText.nodeValue = labelStr;
+        if (el.__tp9ValText) el.__tp9ValText.nodeValue = valStr;
+        if (el.__tp9Dot) {
+            el.__tp9Dot.style.background = isPaused ? '#f59e0b' : '#a855f7';
+            el.__tp9Dot.style.boxShadow = isPaused
+                ? '0 0 6px rgba(245,158,11,0.85)'
+                : '0 0 6px rgba(168,85,247,0.85)';
+        }
+        if (el.__tp9RightSpan) {
+            el.__tp9RightSpan.style.background = isPaused
+                ? 'rgba(245,158,11,0.22)'
+                : 'rgba(145,71,255,0.24)';
+            el.__tp9RightSpan.style.color = isPaused ? '#fde68a' : '#f3e8ff';
+        }
+        el.setAttribute(
+            'data-tp9-tip-sub',
+            tt(
+                'Décalage exact du tchat : -' + lagSec + ' s · ' + queuedCount + (queuedCount > 1 ? ' messages en file' : ' message en file'),
+                'Exact chat delay: -' + lagSec + 's · ' + queuedCount + (queuedCount === 1 ? ' queued message' : ' queued messages')
+            )
+        );
+    }
+
+    function expVodGetLivePageChannel() {
+        try {
+            var loc = (typeof window !== 'undefined' && window.location) || (typeof location !== 'undefined' ? location : null);
+            if (!loc || typeof loc.pathname !== 'string') {
+                return null;
+            }
+            var parts = loc.pathname.split('/').filter(Boolean);
+            if (!parts.length) {
+                return null;
+            }
+            var nonCh = typeof NON_CHANNEL_PATHS !== 'undefined' && Array.isArray(NON_CHANNEL_PATHS)
+                ? NON_CHANNEL_PATHS
+                : [];
+            var p0 = parts[0].toLowerCase();
+            if (parts.length === 1 && nonCh.indexOf(p0) === -1 && /^[a-z0-9_]{2,30}$/.test(p0)) {
+                return p0;
+            }
+            if (parts.length === 2 && p0 === 'moderator') {
+                var p1 = parts[1].toLowerCase();
+                if (nonCh.indexOf(p1) === -1 && /^[a-z0-9_]{2,30}$/.test(p1)) {
+                    return p1;
+                }
+            }
+        } catch (ePath) {}
+        return null;
+    }
+
+    function expVodInjectEarlyCSS() {
+        if (
+            typeof document === 'undefined' ||
+            typeof document.getElementById !== 'function' ||
+            typeof document.createElement !== 'function'
+        ) {
+            return;
+        }
+        if (document.getElementById('tp9-exp-vod-early-css')) {
+            return;
+        }
+        var target = document.head || document.documentElement;
+        if (!target || typeof target.appendChild !== 'function') {
+            return;
+        }
+        var style = document.createElement('style');
+        style.id = 'tp9-exp-vod-early-css';
+        style.textContent =
+            'html.tp9-exp-vod-gate .video-player video:not(.tp9dvr-video),' +
+            'html.tp9-exp-vod-gate .persistent-player video:not(.tp9dvr-video),' +
+            'html.tp9-exp-vod-gate [data-a-target="video-player"] video:not(.tp9dvr-video){' +
+            'opacity:0!important;' +
+            '}' +
+            '#tp9-exp-vod-curtain{' +
+            'position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;gap:10px;' +
+            'background:#000;color:rgba(239,239,241,0.86);pointer-events:none;user-select:none;' +
+            'font:600 13px Inter,Roobert,"Helvetica Neue",Arial,sans-serif;' +
+            '}' +
+            '#tp9-exp-vod-curtain .tp9-exp-vod-spin{' +
+            'width:16px;height:16px;border-radius:50%;' +
+            'border:2px solid rgba(145,71,255,0.28);border-top-color:#a855f7;' +
+            'animation:tp9ExpVodSpin .75s linear infinite;' +
+            '}' +
+            '@keyframes tp9ExpVodSpin{to{transform:rotate(360deg)}}';
+        target.appendChild(style);
+    }
+
+    function expVodIsStartupGateActive() {
+        if (!expVodStartupGateChannel) {
+            return false;
+        }
+        if (!expVodAdblockOn() || Date.now() >= expVodStartupDeadline) {
+            return false;
+        }
+        return true;
+    }
+
+    function expVodIsStartupGateMutingVideo(video) {
+        if (!video || !expVodIsStartupGateActive()) {
+            return false;
+        }
+        if (isOwnPlayerVideo(video)) {
+            return false;
+        }
+        if (typeof isPreviewOrAuxiliaryVideo === 'function' && isPreviewOrAuxiliaryVideo(video)) {
+            return false;
+        }
+        if (typeof isMiniPlayerVideo === 'function' && isMiniPlayerVideo(video)) {
+            return false;
+        }
+        return true;
+    }
+
+    function expVodMountStartupCurtain() {
+        if (
+            !expVodIsStartupGateActive() ||
+            typeof document === 'undefined' ||
+            typeof document.querySelector !== 'function' ||
+            typeof document.createElement !== 'function'
+        ) {
+            return;
+        }
+        // N'insère rien dans le conteneur React avant que les contrôles du lecteur
+        // soient montés (évite tout conflit d'hydratation DOM React). D'ici là, la
+        // règle CSS html.tp9-exp-vod-gate masque déjà 100 % du flux live dès 0 ms.
+        if (!document.querySelector('[data-a-target="player-controls"]')) {
+            return;
+        }
+        var container = document.querySelector('.video-player__container, .video-player, [data-a-target="video-player"]');
+        if (!container || typeof container.appendChild !== 'function') {
+            return;
+        }
+        if (expVodCurtainEl && expVodCurtainEl.parentElement === container) {
+            return;
+        }
+        if (!expVodCurtainEl) {
+            var el = document.createElement('div');
+            el.id = 'tp9-exp-vod-curtain';
+            el.innerHTML =
+                '<span class="tp9-exp-vod-spin"></span>' +
+                '<span>' + tt('Chargement du flux sans pub…', 'Loading ad-free stream…') + '</span>';
+            expVodCurtainEl = el;
+        }
+        container.appendChild(expVodCurtainEl);
+    }
+
+    function expVodLiftStartupGate() {
+        var gatedCh = expVodStartupGateChannel;
+        var wasActive = Boolean(gatedCh);
+        expVodStartupGateChannel = null;
+        expVodStartupDeadline = 0;
+        if (expVodStartupTimer) {
+            clearInterval(expVodStartupTimer);
+            expVodStartupTimer = null;
+        }
+        if (typeof document !== 'undefined' && document.documentElement && document.documentElement.classList) {
+            document.documentElement.classList.remove('tp9-exp-vod-gate');
+        }
+        if (expVodCurtainEl) {
+            try { expVodCurtainEl.remove(); } catch (eRmC) {}
+            expVodCurtainEl = null;
+        }
+        if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+            var stray = document.getElementById('tp9-exp-vod-curtain');
+            if (stray) {
+                try { stray.remove(); } catch (eRmS) {}
+            }
+        }
+        if (wasActive) {
+            if (!expVodIsPlayingVod() && !(typeof dvrOverlay !== 'undefined' && dvrOverlay && !dvrIsLive())) {
+                if (typeof dvrRestoreLiveSound === 'function') {
+                    dvrRestoreLiveSound();
+                }
+                if (gatedCh && !dvrStreamEnded() && typeof spWarmAutoplayForChannel === 'function') {
+                    spWarmAutoplayForChannel(gatedCh);
+                }
+            }
+            if (typeof audioNormSyncVolumeGain === 'function') {
+                audioNormSyncVolumeGain();
+            }
+        }
+    }
+
+    function expVodCheckCurtainReady() {
+        if (!expVodStartupGateChannel) {
+            return;
+        }
+        if (!expVodIsStartupGateActive()) {
+            expVodLiftStartupGate();
+            return;
+        }
+        if (
+            expVodIsPlayingVod() &&
+            dvrVideo &&
+            dvrVideo.readyState >= 2 &&
+            !expVodInitialSnapPending
+        ) {
+            expVodLiftStartupGate();
+            setTimeout(function () {
+                if (expVodIsPlayingVod() && dvrVideo && !dvrVideo.paused && dvrVideo.readyState >= 2) {
+                    expVodPauseBackgroundLive();
+                }
+            }, 900);
+        }
+    }
+
+    function expVodScheduleFastBoot(ch) {
+        if (expVodBootCheckQueued) {
+            return;
+        }
+        expVodBootCheckQueued = true;
+        setTimeout(function () {
+            expVodBootCheckQueued = false;
+            expVodTryFastBoot(ch || expVodStartupGateChannel || expVodGetLivePageChannel());
+        }, 0);
+    }
+
+    function expVodOnNativeVideoPlay(video) {
+        if (!expVodIsStartupGateMutingVideo(video)) {
+            return;
+        }
+        if (typeof dvrSyncVolumeFromPlayer === 'function') {
+            dvrSyncVolumeFromPlayer(video);
+        }
+        expVodMountStartupCurtain();
+        if (expVodStartupGateChannel) {
+            expVodScheduleFastBoot(expVodStartupGateChannel);
+        }
+    }
+
+    function expVodHandleAutoplayBlocked(err) {
+        if (!expVodIsPlayingVod()) {
+            return false;
+        }
+        if (err && (err.name === 'NotAllowedError' || /notallowed|interact/i.test(String(err.message || err)))) {
+            expVodLiftStartupGate();
+            dvrRefreshControls();
+            return true;
+        }
+        return false;
+    }
+
+    function expVodTryFastBoot(ch) {
+        var targetCh = ch || expVodStartupGateChannel || expVodGetLivePageChannel();
+        if (!targetCh || !expVodAdblockOn()) {
+            if (expVodStartupGateChannel) {
+                expVodLiftStartupGate();
+            }
+            return;
+        }
+        var curPageCh = expVodGetLivePageChannel();
+        if (curPageCh && curPageCh !== targetCh) {
+            if (expVodStartupGateChannel === targetCh) {
+                expVodLiftStartupGate();
+            }
+            return;
+        }
+        if (expVodStartupGateChannel === targetCh) {
+            if (Date.now() >= expVodStartupDeadline) {
+                expVodLiftStartupGate();
+                return;
+            }
+            expVodMountStartupCurtain();
+        }
+        if (typeof dvrSupported === 'function' && !dvrSupported()) {
+            if (expVodStartupGateChannel) {
+                expVodLiftStartupGate();
+            }
+            return;
+        }
+
+        var entry = dvrVodCache[targetCh];
+        if (!entry) {
+            if (!dvrVodInFlight[targetCh]) {
+                fetchDvrVodInfo(targetCh);
+            }
+            return;
+        }
+        if (dvrVodInFlight[targetCh]) {
+            return;
+        }
+        if (!entry.id || entry.failed || entry.ended || dvrStreamEnded()) {
+            if (expVodStartupGateChannel === targetCh) {
+                expVodLiftStartupGate();
+            }
+            return;
+        }
+        if (!dvrVodAccess[entry.id]) {
+            if (!dvrVodAccessPending[entry.id]) {
+                resolveDvrVodAccess(entry.id, targetCh);
+            }
+            return;
+        }
+        if (dvrVodAccessPending[entry.id]) {
+            return;
+        }
+        var info = dvrVodInfoFor(targetCh);
+        var vodDepth = dvrVodDepthSeconds(info);
+        if (!info || vodDepth < EXP_VOD_MIN_DEPTH_SECONDS) {
+            if (expVodStartupGateChannel === targetCh) {
+                expVodLiftStartupGate();
+            }
+            return;
+        }
+
+        var liveVid = findPlaybackVideo();
+        var nativeCtrls = typeof dvrNativeControls === 'function' ? dvrNativeControls() : true;
+        if (!dvrOverlay && (!liveVid || !nativeCtrls)) {
+            return;
+        }
+        if (!dvrOverlay && liveVid && nativeCtrls) {
+            if (expVodActiveChannel !== targetCh) {
+                expVodResetChannelState(targetCh);
+            }
+            openDvr();
+        }
+        if (
+            dvrOverlay &&
+            dvrChannelInUse === targetCh &&
+            dvrIsLive() &&
+            !dvrIsLivePaused() &&
+            !dvrSwitching
+        ) {
+            if (spAutoplayActive) {
+                spStopAutoplayOverlay(true);
+            }
+            spHideBadge();
+            expVodWasActive = true;
+            if (expVodActiveChannel !== targetCh) {
+                expVodResetChannelState(targetCh);
+            }
+            expVodAutoEnteredVod = true;
+            expVodUserRewound = false;
+            expVodInitialSnapPending = true;
+            expVodSnapToVodEdge(false);
+            if (expVodAnnouncedChannel !== targetCh) {
+                expVodAnnouncedChannel = targetCh;
+                logEvent(
+                    'info',
+                    '🛡️ Bloqueur de pub (Experimental) actif sur ' + targetCh +
+                    ' : lecture VOD sans pub (~30 s du direct) · tchat & raids synchronisés'
+                );
+            }
+        }
+        expVodCheckCurtainReady();
+    }
+
+    function expVodOnVodResolutionChanged(channel) {
+        if (!expVodAdblockOn()) {
+            return;
+        }
+        expVodScheduleFastBoot(channel || expVodStartupGateChannel || expVodGetLivePageChannel());
+    }
+
+    function expVodBeginStartupGate(ch) {
+        if (!ch || !expVodAdblockOn()) {
+            expVodLiftStartupGate();
+            return;
+        }
+        if (typeof dvrSupported === 'function' && !dvrSupported()) {
+            return;
+        }
+        var cachedEntry = dvrVodCache[ch];
+        if (cachedEntry) {
+            if (cachedEntry.failed) {
+                delete dvrVodCache[ch];
+            } else if (
+                cachedEntry.id &&
+                dvrVodAccess[cachedEntry.id] &&
+                dvrVodAccess[cachedEntry.id].state === 'blocked' &&
+                !dvrVodAccess[cachedEntry.id].fromPlaybackError
+            ) {
+                delete dvrVodBlockedRetries[cachedEntry.id];
+                delete dvrVodAccess[cachedEntry.id];
+            }
+        }
+        expVodStartupGateChannel = ch;
+        expVodStartupDeadline = Date.now() + 3800;
+        expVodInjectEarlyCSS();
+        if (typeof document !== 'undefined' && document.documentElement && document.documentElement.classList) {
+            document.documentElement.classList.add('tp9-exp-vod-gate');
+        }
+        expVodMountStartupCurtain();
+        var existingVid = typeof findPlaybackVideo === 'function' ? findPlaybackVideo() : null;
+        if (existingVid && typeof dvrSyncVolumeFromPlayer === 'function') {
+            dvrSyncVolumeFromPlayer(existingVid);
+        }
+        if (typeof audioNormSyncVolumeGain === 'function') {
+            audioNormSyncVolumeGain();
+        }
+        if (!dvrVodCache[ch] && !dvrVodInFlight[ch]) {
+            fetchDvrVodInfo(ch);
+        } else if (
+            dvrVodCache[ch] &&
+            dvrVodCache[ch].id &&
+            !dvrVodAccess[dvrVodCache[ch].id] &&
+            !dvrVodAccessPending[dvrVodCache[ch].id]
+        ) {
+            resolveDvrVodAccess(dvrVodCache[ch].id, ch);
+        }
+        if (!expVodStartupTimer) {
+            expVodStartupTimer = setInterval(function () {
+                if (!expVodStartupGateChannel) {
+                    clearInterval(expVodStartupTimer);
+                    expVodStartupTimer = null;
+                    return;
+                }
+                var liveVidNow = typeof findPlaybackVideo === 'function' ? findPlaybackVideo() : null;
+                if (liveVidNow && typeof dvrSyncVolumeFromPlayer === 'function') {
+                    dvrSyncVolumeFromPlayer(liveVidNow);
+                }
+                expVodTryFastBoot(expVodStartupGateChannel);
+            }, 180);
+        }
+        expVodScheduleFastBoot(ch);
+    }
+
+    function expVodInitEarlyStartupGate() {
+        if (!expVodAdblockOn()) {
+            return;
+        }
+        var ch = expVodGetLivePageChannel();
+        if (ch) {
+            expVodBeginStartupGate(ch);
+        }
+    }
+
+    // ---- Pilotage principal 1 Hz & Bascule automatique VOD / VAFT ----
+    function expVodResetChannelState(newCh) {
+        if (expVodActiveChannel && expVodActiveChannel !== newCh) {
+            expVodChatQueue.length = 0;
+            expVodStopChatFlushTimer();
+            expVodCancelPendingRaid();
+            expVodRemoveChatLatencyBadge();
+        }
+        if (newCh && newCh !== expVodActiveChannel) {
+            expVodLastSentMinuteWatchedAt = Date.now();
+        }
+        expVodActiveChannel = newCh || null;
+        expVodAutoEnteredVod = false;
+        expVodUserRewound = false;
+        expVodInitialSnapPending = false;
+        expVodPlaylistHasEndlist = false;
+        expVodPdtZeroMs = 0;
+        expVodLastVodEndSec = 0;
+        expVodLastCushionSec = 24;
+        expVodMeasuredEdgeLagSec = 0;
+        expVodPlayingSince = 0;
+        expVodEndedVerifyInFlight = false;
+        expVodClearHudIdle();
+    }
+
+    function expVodDeactivate(returnToLive) {
+        var hasDvr = typeof dvrOverlay !== 'undefined' && dvrOverlay;
+        var shouldReturnLive = returnToLive && expVodAutoEnteredVod && hasDvr && !dvrIsLive();
+        expVodWasActive = false;
+        expVodLiftStartupGate();
+        expVodClearHudIdle();
+        expVodRemoveChatLatencyBadge();
+        expVodResetChannelState(null);
+        expVodChatQueue.length = 0;
+        expVodStopChatFlushTimer();
+        expVodCancelPendingRaid();
+        if (shouldReturnLive) {
+            dvrEnterLiveMode();
+        } else if (hasDvr) {
+            dvrRefreshControls();
+        }
+        expVodResumeBackgroundLive();
+    }
+
+    function expVodTick() {
+        if (!expVodAdblockOn()) {
+            if (expVodWasActive || expVodStartupGateChannel) {
+                expVodDeactivate(true);
+            }
+            return;
+        }
+        expVodWasActive = true;
+        var now = Date.now();
+        var ch = getTestChannel();
+        if (!ch) {
+            if (expVodStartupGateChannel) {
+                expVodLiftStartupGate();
+            }
+            expVodClearHudIdle();
+            expVodRemoveChatLatencyBadge();
+            if (expVodActiveChannel) {
+                expVodResetChannelState(null);
+                expVodResumeBackgroundLive();
+            }
+            return;
+        }
+        if (ch !== expVodActiveChannel) {
+            expVodResumeBackgroundLive();
+            expVodResetChannelState(ch);
+        }
+
+        var entry = dvrVodCache[ch];
+        if (!entry && !dvrVodInFlight[ch]) {
+            fetchDvrVodInfo(ch);
+        } else if (entry && !dvrVodInFlight[ch]) {
+            // Si le streamer vient tout juste de lancer son live (< 3 min) ou si
+            // un essai réseau transitoire a échoué (hors erreur fatale de lecture),
+            // on revérifie proprement sans jamais bloquer définitivement le VOD.
+            var streamAgeMs = isFinite(entry.startWall) ? (now - entry.startWall) : Infinity;
+            if ((!entry.id || entry.failed) && (now - entry.at) >= 10000) {
+                fetchDvrVodInfo(ch);
+            } else if (
+                entry.id &&
+                dvrVodAccess[entry.id] &&
+                dvrVodAccess[entry.id].state === 'blocked' &&
+                !dvrVodAccess[entry.id].fromPlaybackError &&
+                !dvrVodAccessPending[entry.id]
+            ) {
+                var blockedInfo = dvrVodAccess[entry.id];
+                var isYoungStream = (streamAgeMs >= 0 && streamAgeMs < 180000);
+                var retryCount = dvrVodBlockedRetries[entry.id] || blockedInfo.retries || 0;
+                var retryWaitMs = isYoungStream ? 10000 : 25000;
+                if ((isYoungStream || retryCount < 3) && (now - expVodLastReprobeAt) >= retryWaitMs) {
+                    expVodLastReprobeAt = now;
+                    if (!isYoungStream) {
+                        dvrVodBlockedRetries[entry.id] = retryCount + 1;
+                    }
+                    delete dvrVodAccess[entry.id];
+                    resolveDvrVodAccess(entry.id, ch);
+                }
+            }
+        }
+
+        var info = dvrVodInfoFor(ch);
+        var vodDepth = dvrVodDepthSeconds(info);
+        var vodReady = Boolean(info && vodDepth >= EXP_VOD_MIN_DEPTH_SECONDS && !dvrStreamEnded());
+
+        if (!vodReady) {
+            expVodPlayingSince = 0;
+            expVodClearHudIdle();
+            expVodRemoveChatLatencyBadge();
+            if (!expVodIsStartupGateActive()) {
+                expVodResumeBackgroundLive();
+                if (!dvrStreamEnded()) {
+                    spWarmAutoplayForChannel(ch);
+                }
+            }
+            if (dashboardVisible) {
+                updateActiveProxyDisplay();
+                renderAdblockStats();
+            }
+            return;
+        }
+
+        var hasNativeCtrls = typeof dvrNativeControls === 'function' ? Boolean(dvrNativeControls()) : true;
+        if (!dvrOverlay && findPlaybackVideo() && hasNativeCtrls && (typeof dvrSupported !== 'function' || dvrSupported())) {
+            openDvr();
+        }
+
+        if (
+            dvrOverlay &&
+            dvrChannelInUse === ch &&
+            dvrIsLive() &&
+            !dvrIsLivePaused() &&
+            !dvrSwitching
+        ) {
+            if (spAutoplayActive) {
+                spStopAutoplayOverlay(true);
+            }
+            spHideBadge();
+            expVodAutoEnteredVod = true;
+            expVodUserRewound = false;
+            expVodInitialSnapPending = true;
+            expVodSnapToVodEdge(false);
+            if (expVodAnnouncedChannel !== ch) {
+                expVodAnnouncedChannel = ch;
+                logEvent(
+                    'info',
+                    '🛡️ Bloqueur de pub (Experimental) actif sur ' + ch +
+                    ' : lecture VOD sans pub (~30 s du direct) · tchat & raids synchronisés'
+                );
+            }
+        }
+
+        expVodCheckCurtainReady();
+
+        if (expVodIsPlayingVod()) {
+            if (dvrVideo && !dvrVideo.paused && !dvrVideo.ended && dvrVideo.readyState >= 2) {
+                if (!expVodPlayingSince) {
+                    expVodPlayingSince = now;
+                } else if ((now - expVodPlayingSince) >= 1200) {
+                    expVodPauseBackgroundLive();
+                }
+            } else {
+                expVodPlayingSince = 0;
+            }
+            expVodSendMinuteWatchedIfDue(now);
+        } else {
+            expVodPlayingSince = 0;
+        }
+
+        expVodSyncHudIdle();
+        expVodSyncChatLatencyBadge();
+
+        if (dashboardVisible) {
+            updateActiveProxyDisplay();
+            renderAdblockStats();
+        }
+    }
+
+    function syncExpVodAdblockState() {
+        if (!expVodAdblockOn()) {
+            expVodDeactivate(true);
+            if (typeof applyCustomPlayerState === 'function' && pageConfig.customPlayer === false) {
+                applyCustomPlayerState();
+            }
+        } else {
+            expVodTick();
+        }
+        if (typeof dashboard !== 'undefined' && dashboard) {
+            renderDashboardSettings();
+            updateActiveProxyDisplay();
+        }
+    }
+
+    function setExperimentalVodAdblock(on) {
+        on = !!on;
+        if (!!pageConfig.experimentalVodAdblock === on) {
+            return;
+        }
+        pageConfig.experimentalVodAdblock = on;
+        saveConfig(pageConfig);
+        broadcastConfig();
+        logEvent(
+            'info',
+            on
+                ? '🧪 Bloqueur de pub (Experimental) activé : lecture sur la VOD sans pub (~30 s du direct) avec synchronisation du tchat et des raids'
+                : 'Bloqueur de pub (Experimental) désactivé : retour au bloqueur Adblock (VAFT) classique en direct'
+        );
+        if (on && typeof applyCustomPlayerState === 'function') {
+            applyCustomPlayerState();
+        }
+        syncExpVodAdblockState();
+    }
+
+    function setShowVodChatSyncBadge(on) {
+        on = !!on;
+        if (!!pageConfig.showVodChatSyncBadge === on) {
+            return;
+        }
+        pageConfig.showVodChatSyncBadge = on;
+        saveConfig(pageConfig);
+        broadcastConfig();
+        expVodSyncChatLatencyBadge();
+        if (typeof dashboard !== 'undefined' && dashboard) {
+            renderDashboardSettings();
+        }
     }
 
     // ============================================================
@@ -41468,6 +44693,23 @@ dashboardButton.style.visibility = 'hidden';
 
         spStopAutoplayOverlay(true);
 
+        var livePageCh = typeof expVodGetLivePageChannel === 'function'
+            ? expVodGetLivePageChannel()
+            : null;
+        if (!channel || !livePageCh) {
+            if (typeof expVodLiftStartupGate === 'function') {
+                expVodLiftStartupGate();
+            }
+            if (typeof expVodClearHudIdle === 'function') {
+                expVodClearHudIdle();
+            }
+            if (typeof expVodRemoveChatLatencyBadge === 'function') {
+                expVodRemoveChatLatencyBadge();
+            }
+        } else if (typeof expVodAdblockOn === 'function' && expVodAdblockOn()) {
+            expVodBeginStartupGate(livePageCh);
+        }
+
         // Pub encore « en cours » sur la chaîne qu'on quitte (stream
         // coupé en pleine pub, départ pendant la pub) : on la clôt ici.
         // Restée ouverte, elle faisait ignorer la première pub de la
@@ -41501,7 +44743,9 @@ dashboardButton.style.visibility = 'hidden';
 
         console.log('[TwitchProxy] Changement de chaîne détecté :', channel);
 
-        spWarmAutoplayForChannel(channel);
+        if (!(typeof expVodIsStartupGateActive === 'function' && expVodIsStartupGateActive())) {
+            spWarmAutoplayForChannel(channel);
+        }
 
         scheduleVolumeRestore(channel, 2800);
         if (typeof onBttvChannelChange === 'function') {
@@ -41871,12 +45115,93 @@ dashboardButton.style.visibility = 'hidden';
         });
     }
 
+    function normalizeChatBodyForMatch(str) {
+        var s = (str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return s;
+    }
+
+    function stripLeadingMentionForMatch(normStr, targetLogin, targetDisplayLower) {
+        if (!normStr || normStr.charAt(0) !== '@') return normStr;
+        var sp = normStr.indexOf(' ');
+        if (sp <= 1) return normStr;
+        var lead = normStr.slice(1, sp).replace(/[,.:;!?)]+$/, '');
+        if (!targetLogin && !targetDisplayLower) {
+            return normStr.slice(sp + 1).trim();
+        }
+        if ((targetLogin && lead === targetLogin) || (targetDisplayLower && lead === targetDisplayLower)) {
+            return normStr.slice(sp + 1).trim();
+        }
+        return normStr;
+    }
+
     function registerIrcPrivmsgMeta(parsed) {
         if (!parsed) return;
         var now = Date.now();
         while (bttvPendingIrcQueue.length > 0 && (bttvPendingIrcQueue.length >= 80 || (now - bttvPendingIrcQueue[0].createdAt) > 10000)) {
             bttvPendingIrcQueue.shift();
         }
+
+        // Réconcilie immédiatement un message optimiste déjà rendu dans le DOM (ex: propre message envoyé par l'utilisateur)
+        // afin d'éviter la création d'un doublon (dom-X + vrai UUID IRC) dans l'historique et les fils de réponses
+        var authorKey = (parsed.senderLogin || parsed.senderDisplayLower || '').trim();
+        if (parsed.msgId && authorKey && bttvChatMsgsByAuthor.has(authorKey)) {
+            var existingList = bttvChatMsgsByAuthor.get(authorKey);
+            var incomingClean = normalizeChatBodyForMatch(parsed.cleanBody || parsed.msgBody || '');
+            var incomingRaw = normalizeChatBodyForMatch(parsed.msgBody || '');
+            for (var e = existingList.length - 1; e >= 0; e--) {
+                var ex = existingList[e];
+                if (!ex || !ex.id || !/^dom-/.test(ex.id)) continue;
+                if ((now - (ex.createdAt || 0)) > 12000) continue;
+                var exNorm = normalizeChatBodyForMatch(ex.bodyText || '');
+                var exStripped = stripLeadingMentionForMatch(exNorm, parsed.replyParentUserLogin, (parsed.replyParentDisplayName || '').toLowerCase());
+                if (
+                    incomingClean &&
+                    (exNorm === incomingClean || exNorm === incomingRaw || (exStripped && exStripped === incomingClean))
+                ) {
+                    bttvChatMsgById.delete(ex.id);
+                    ex.id = parsed.msgId;
+                    ex.rawBody = parsed.msgBody || ex.rawBody || '';
+                    ex.uncensoredBody = parsed.cleanBody || parsed.msgBody || ex.uncensoredBody || '';
+                    ex.uncensoredRawBody = parsed.msgBody || ex.uncensoredRawBody || '';
+                    ex.ircFlags = parsed.flagsRaw || ex.ircFlags || '';
+                    ex.parentMsgId = parsed.replyParentMsgId || ex.parentMsgId || '';
+                    ex.parentUserLogin = parsed.replyParentUserLogin || ex.parentUserLogin || '';
+                    ex.parentDisplayName = parsed.replyParentDisplayName || ex.parentDisplayName || '';
+                    ex.parentMsgBody = parsed.replyParentMsgBody || ex.parentMsgBody || '';
+                    ex.threadId = parsed.replyThreadParentMsgId || parsed.replyParentMsgId || ex.threadId || '';
+                    ex.matchedDom = Boolean(ex.msgEl && ex.msgEl.isConnected);
+                    if (ex.msgEl) {
+                        ex.msgEl.setAttribute('data-tp9-msg-id', parsed.msgId);
+                        if (ex.parentMsgId) ex.msgEl.setAttribute('data-tp9-reply-parent-id', ex.parentMsgId);
+                        if (ex.threadId) ex.msgEl.setAttribute('data-tp9-thread-id', ex.threadId);
+                        if (ex.msgEl.__tp9Meta) {
+                            ex.msgEl.__tp9Meta.id = parsed.msgId;
+                            ex.msgEl.__tp9Meta.parentMsgId = ex.parentMsgId;
+                            ex.msgEl.__tp9Meta.parentUserLogin = ex.parentUserLogin;
+                            ex.msgEl.__tp9Meta.parentDisplayName = ex.parentDisplayName;
+                            ex.msgEl.__tp9Meta.parentMsgBody = ex.parentMsgBody;
+                            ex.msgEl.__tp9Meta.threadId = ex.threadId;
+                        }
+                    }
+                    bttvChatMsgById.set(parsed.msgId, ex);
+                    if (ex.threadId) {
+                        var tArr = bttvChatThreadIndex.get(ex.threadId);
+                        if (!tArr) {
+                            tArr = [];
+                            bttvChatThreadIndex.set(ex.threadId, tArr);
+                            var rRoot = bttvChatMsgById.get(ex.threadId);
+                            if (rRoot && rRoot !== ex) tArr.push(rRoot);
+                        }
+                        if (tArr.indexOf(ex) === -1) tArr.push(ex);
+                    }
+                    if (!ex.matchedDom) {
+                        bttvPendingIrcQueue.push(ex);
+                    }
+                    return;
+                }
+            }
+        }
+
         var rec = {
             id: parsed.msgId || ('irc-' + (++bttvSyntheticMsgSeq)),
             authorLogin: parsed.senderLogin || '',
@@ -42119,10 +45444,26 @@ dashboardButton.style.visibility = 'hidden';
         }
         ev.__tp9IrcEvaluated = true;
         if (typeof rawVal !== 'string' || !rawVal) return rawVal;
-        if (rawVal.indexOf('PRIVMSG #') === -1 && rawVal.indexOf('USERSTATE') === -1) {
-            return rawVal;
+        var currentRaw = rawVal;
+        if (
+            !ev.__tp9SyntheticReplay &&
+            typeof expVodShouldDelayChat === 'function' &&
+            expVodShouldDelayChat() &&
+            typeof expVodFilterIncomingIrc === 'function'
+        ) {
+            currentRaw = expVodFilterIncomingIrc(ev, currentRaw);
+            if (!currentRaw) {
+                ev.__tp9FilteredIrcData = '';
+                return '';
+            }
         }
-        var filtered = filterIrcPayloadForSlowChat(rawVal);
+        if (currentRaw.indexOf('PRIVMSG #') === -1 && currentRaw.indexOf('USERSTATE') === -1) {
+            if (currentRaw !== rawVal) {
+                ev.__tp9FilteredIrcData = currentRaw;
+            }
+            return currentRaw;
+        }
+        var filtered = filterIrcPayloadForSlowChat(currentRaw);
         if (filtered !== rawVal) {
             ev.__tp9FilteredIrcData = filtered;
         }
@@ -42131,10 +45472,24 @@ dashboardButton.style.visibility = 'hidden';
 
     function shouldDropEntireIrcEvent(ws, ev) {
         try {
-            if (!pageConfig.slowChat || scriptIsOff() || !ev) return false;
+            var delayChatOn = typeof expVodShouldDelayChat === 'function' && expVodShouldDelayChat();
+            if ((!pageConfig.slowChat && !delayChatOn) || scriptIsOff() || !ev) return false;
             if (ws && ws.url && ws.url.indexOf('irc-ws') === -1) return false;
+            if (ws) {
+                try { ev.__tp9Ws = ws; } catch (eWs) {}
+            }
             var raw = bttvOrigMsgDataGet ? bttvOrigMsgDataGet.call(ev) : ev.data;
-            if (typeof raw !== 'string' || raw.indexOf('PRIVMSG #') === -1) return false;
+            if (typeof raw !== 'string') return false;
+            if (
+                raw.indexOf('PRIVMSG #') === -1 &&
+                (!delayChatOn || (
+                    raw.indexOf('USERNOTICE #') === -1 &&
+                    raw.indexOf('CLEARCHAT #') === -1 &&
+                    raw.indexOf('CLEARMSG #') === -1
+                ))
+            ) {
+                return false;
+            }
             var res = evaluateEventIrcFilter(ev, raw);
             return res === '';
         } catch (e) {
@@ -42198,7 +45553,19 @@ dashboardButton.style.visibility = 'hidden';
                                     }
                                 }
                             }
-                            if (this && typeof val === 'string' && (val.indexOf('PRIVMSG #') !== -1 || val.indexOf('USERSTATE') !== -1)) {
+                            if (
+                                this &&
+                                typeof val === 'string' &&
+                                (
+                                    val.indexOf('PRIVMSG #') !== -1 ||
+                                    val.indexOf('USERSTATE') !== -1 ||
+                                    (typeof expVodShouldDelayChat === 'function' && expVodShouldDelayChat() && (
+                                        val.indexOf('USERNOTICE #') !== -1 ||
+                                        val.indexOf('CLEARCHAT #') !== -1 ||
+                                        val.indexOf('CLEARMSG #') !== -1
+                                    ))
+                                )
+                            ) {
                                 return evaluateEventIrcFilter(this, val);
                             }
                         } catch (e) {}
@@ -42480,17 +45847,78 @@ dashboardButton.style.visibility = 'hidden';
         return raw;
     }
 
-    function reapplySplitChatOnExisting() {
-        var container = document.querySelector('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]');
-        if (!container) return;
-        var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
-        var alt = false;
-        for (var i = 0; i < msgs.length; i++) {
-            if (msgs[i].style && msgs[i].style.display === 'none') continue;
-            alt = !alt;
-            msgs[i].classList.toggle('tp9-chat-alt', alt);
+    function isChatMessageRowVisibleForSplit(msgEl, container) {
+        if (!msgEl || msgEl.nodeType !== 1 || msgEl.isConnected === false) return false;
+        if (
+            msgEl.parentElement &&
+            msgEl.parentElement.closest &&
+            msgEl.parentElement.closest('.chat-line__message, [data-a-target="chat-line-message"]')
+        ) {
+            return false;
         }
-        bttvSplitAlt = alt;
+        if (msgEl.__tp9HiddenBySpam || msgEl.__tp9HiddenBySlow || msgEl.__tp9HiddenByBlacklist) return false;
+        if (pageConfig.hideBots && msgEl.classList && msgEl.classList.contains('tp9-is-bot-msg')) return false;
+        if (pageConfig.hideChatNotices) {
+            if (msgEl.classList && (msgEl.classList.contains('chat-line__status') || msgEl.classList.contains('user-notice-line'))) {
+                return false;
+            }
+            if (msgEl.closest && msgEl.closest('.user-notice-line, [data-test-selector="user-notice-line"], [data-a-target="chat-WatchStreak-message"]')) {
+                return false;
+            }
+        }
+        var cur = msgEl;
+        while (cur && cur !== container && cur !== document.body && cur !== document.documentElement) {
+            if (cur.hidden || (cur.style && cur.style.display === 'none')) return false;
+            if (cur.getAttribute && cur.getAttribute('data-tp9-hide')) return false;
+            cur = cur.parentElement;
+        }
+        return true;
+    }
+
+    function reapplySplitChatOnExisting(optContainer) {
+        var container =
+            optContainer ||
+            bttvObservedChatNode ||
+            document.querySelector('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]');
+        if (!container || !container.querySelectorAll) return;
+        var msgs = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
+        if (!msgs.length) return;
+
+        var visible = [];
+        for (var i = 0; i < msgs.length; i++) {
+            var m = msgs[i];
+            if (isChatMessageRowVisibleForSplit(m, container)) {
+                visible.push(m);
+            } else {
+                m.classList.remove('tp9-chat-alt');
+                m.__tp9SplitAssigned = false;
+            }
+        }
+        if (!visible.length) {
+            bttvSplitAlt = false;
+            return;
+        }
+
+        // Ancre la parité sur la première ligne visible déjà assignée afin d'éviter tout clignotement
+        // lorsque Twitch évince les anciens messages en haut du tchat (~150 lignes max)
+        var firstAlt = null;
+        for (var k = 0; k < visible.length; k++) {
+            if (visible[k].__tp9SplitAssigned) {
+                var anchorAlt = visible[k].classList.contains('tp9-chat-alt');
+                firstAlt = (k % 2 === 0) ? anchorAlt : !anchorAlt;
+                break;
+            }
+        }
+        if (firstAlt === null) {
+            firstAlt = true;
+        }
+
+        for (var v = 0; v < visible.length; v++) {
+            var wantAlt = (v % 2 === 0) ? firstAlt : !firstAlt;
+            visible[v].classList.toggle('tp9-chat-alt', wantAlt);
+            visible[v].__tp9SplitAssigned = true;
+        }
+        bttvSplitAlt = visible[visible.length - 1].classList.contains('tp9-chat-alt');
     }
 
     var bttvEmoteMapRevision = 0;
@@ -43697,6 +47125,58 @@ dashboardButton.style.visibility = 'hidden';
     var CHAT_REPLY_HEADER_RE =
         /^(?:R[ée]pond(?:\s+[àa])?|Replying\s+to|En\s+r[ée]ponse\s+[àa])\s+@?([a-zA-Z0-9_\u00C0-\u024F]{2,35})(?:\s*:\s*([\s\S]*))?$/i;
 
+    function syncReplyHeaderNativeTitles(replyHdrEl, suppress) {
+        if (!replyHdrEl || replyHdrEl.nodeType !== 1) return;
+        var nodes = [replyHdrEl];
+        if (replyHdrEl.querySelectorAll) {
+            var sub = replyHdrEl.querySelectorAll('[title], [data-tp9-orig-reply-title]');
+            for (var i = 0; i < sub.length; i++) {
+                nodes.push(sub[i]);
+            }
+        }
+        for (var j = 0; j < nodes.length; j++) {
+            var n = nodes[j];
+            if (!n || !n.getAttribute) continue;
+            var curTitle = n.getAttribute('title');
+            if (curTitle && !n.hasAttribute('data-tp9-orig-reply-title')) {
+                n.setAttribute('data-tp9-orig-reply-title', curTitle);
+            }
+            if (suppress) {
+                if (curTitle !== null) {
+                    n.removeAttribute('title');
+                }
+            } else {
+                var saved = n.getAttribute('data-tp9-orig-reply-title');
+                if (saved && curTitle === null) {
+                    n.setAttribute('title', saved);
+                }
+            }
+        }
+    }
+
+    function syncAllReplyHeaderNativeTitles() {
+        if (typeof document === 'undefined' || !document.querySelectorAll) return;
+        var suppress = !scriptIsOff() && pageConfig.replyThreadNav !== false;
+        var hdrs = document.querySelectorAll('.tp9-reply-header-nav');
+        for (var i = 0; i < hdrs.length; i++) {
+            syncReplyHeaderNativeTitles(hdrs[i], suppress);
+        }
+    }
+
+    function readReplyHeaderSavedTitle(replyHdrEl) {
+        if (!replyHdrEl || !replyHdrEl.getAttribute) return '';
+        var own = replyHdrEl.getAttribute('data-tp9-orig-reply-title') || replyHdrEl.getAttribute('title') || '';
+        if (own) return own.replace(/\s+/g, ' ').trim();
+        if (replyHdrEl.querySelector) {
+            var sub = replyHdrEl.querySelector('[data-tp9-orig-reply-title], [title]');
+            if (sub) {
+                var st = sub.getAttribute('data-tp9-orig-reply-title') || sub.getAttribute('title') || '';
+                return st.replace(/\s+/g, ' ').trim();
+            }
+        }
+        return '';
+    }
+
     function findReplyHeaderElement(msgEl) {
         if (!msgEl || msgEl.nodeType !== 1) return null;
         if (msgEl.__tp9ReplyHdrEl && msgEl.contains(msgEl.__tp9ReplyHdrEl)) {
@@ -43707,7 +47187,9 @@ dashboardButton.style.visibility = 'hidden';
         );
         var explicit = msgEl.querySelector(
             '[data-a-target*="reply" i], [data-test-selector*="reply" i], [class*="message-reply" i], [class*="reply-line" i], ' +
-            'p[title*="Répond" i], p[title*="Replying" i], span[title*="Répond" i], span[title*="Replying" i]'
+            'p[title*="Répond" i], p[title*="Replying" i], span[title*="Répond" i], span[title*="Replying" i], ' +
+            'p[data-tp9-orig-reply-title*="Répond" i], p[data-tp9-orig-reply-title*="Replying" i], ' +
+            'span[data-tp9-orig-reply-title*="Répond" i], span[data-tp9-orig-reply-title*="Replying" i]'
         );
         if (explicit && (!authorOrBody || (!explicit.contains(authorOrBody) && !authorOrBody.contains(explicit)))) {
             var cur = explicit;
@@ -43729,11 +47211,9 @@ dashboardButton.style.visibility = 'hidden';
             var prev = spine.previousElementSibling;
             while (prev) {
                 if (!prev.classList || (!prev.classList.contains('tp9-chat-ts-tag') && !prev.classList.contains('tp9-bot-badge'))) {
-                    var tNode = (prev.getAttribute && prev.getAttribute('title'))
-                        ? prev
-                        : (prev.querySelector ? prev.querySelector('[title]') : null);
-                    var candTxt = ((tNode && tNode.getAttribute('title')) || prev.textContent || '').replace(/\s+/g, ' ').trim();
-                    if (candTxt && CHAT_REPLY_HEADER_RE.test(candTxt)) {
+                    var savedT = readReplyHeaderSavedTitle(prev);
+                    var textT = (prev.textContent || '').replace(/\s+/g, ' ').trim();
+                    if ((savedT && CHAT_REPLY_HEADER_RE.test(savedT)) || (textT && CHAT_REPLY_HEADER_RE.test(textT))) {
                         msgEl.__tp9ReplyHdrEl = prev;
                         return prev;
                     }
@@ -43862,6 +47342,7 @@ dashboardButton.style.visibility = 'hidden';
         if (!bttvPendingIrcQueue.length) return null;
         var now = Date.now();
         var normBody = (bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        var normBodyNoMention = stripLeadingMentionForMatch(normBody, domReplyUserLower, '');
         var maskedExactRe = normBody.indexOf('**') !== -1 ? buildMaskedIrcMatchRegex(normBody, true) : null;
         var maskedFlexRe = normBody.indexOf('**') !== -1 ? buildMaskedIrcMatchRegex(normBody, false) : null;
         var bestIdx = -1;
@@ -43876,7 +47357,15 @@ dashboardButton.style.visibility = 'hidden';
             if (!sameAuthor) continue;
             var itemClean = ((item.uncensoredBody || item.bodyText) || '').replace(/\s+/g, ' ').trim().toLowerCase();
             var itemRaw = ((item.uncensoredRawBody || item.rawBody) || '').replace(/\s+/g, ' ').trim().toLowerCase();
-            if (normBody && (itemClean === normBody || itemRaw === normBody || itemRaw.indexOf(normBody) !== -1)) {
+            var itemStripped = stripLeadingMentionForMatch(itemRaw, item.parentUserLogin, (item.parentDisplayName || '').toLowerCase());
+            if (
+                normBody &&
+                (
+                    itemClean === normBody ||
+                    itemRaw === normBody ||
+                    (normBodyNoMention && (itemClean === normBodyNoMention || itemStripped === normBodyNoMention))
+                )
+            ) {
                 bestIdx = i;
                 bestScore = 4;
                 break;
@@ -43890,12 +47379,11 @@ dashboardButton.style.visibility = 'hidden';
                 bestIdx = i;
                 bestScore = 2;
             }
-            if (domReplyUserLower && item.parentUserLogin === domReplyUserLower && bestScore < 1) {
-                bestIdx = i;
-                bestScore = 1;
-            } else if (!normBody && bestScore < 1) {
-                bestIdx = i;
-                bestScore = 1;
+            if (!normBody && bestScore < 1) {
+                if (!domReplyUserLower || item.parentUserLogin === domReplyUserLower) {
+                    bestIdx = i;
+                    bestScore = 1;
+                }
             }
         }
         if (bestIdx !== -1) {
@@ -43904,6 +47392,22 @@ dashboardButton.style.visibility = 'hidden';
             return matched;
         }
         return null;
+    }
+
+    function doesBodyMatchReplySnippet(rawBody, cleanSnip, cleanNoLead) {
+        if (!cleanSnip) return true;
+        var rb = (rawBody || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!rb) return false;
+        var rbNoLead = rb.charAt(0) === '@' ? stripLeadingMentionForMatch(rb, '', '') : rb;
+        if (rb.indexOf(cleanSnip) === 0 || (rb.length >= 2 && cleanSnip.indexOf(rb) === 0)) return true;
+        if (rbNoLead && (rbNoLead.indexOf(cleanSnip) === 0 || (rbNoLead.length >= 2 && cleanSnip.indexOf(rbNoLead) === 0))) return true;
+        if (cleanNoLead) {
+            if (rb.indexOf(cleanNoLead) === 0 || (rb.length >= 2 && cleanNoLead.indexOf(rb) === 0)) return true;
+            if (rbNoLead && (rbNoLead.indexOf(cleanNoLead) === 0 || (rbNoLead.length >= 2 && cleanNoLead.indexOf(rbNoLead) === 0))) return true;
+        }
+        if (cleanSnip.length >= 8 && rb.indexOf(cleanSnip) !== -1) return true;
+        if (cleanNoLead && cleanNoLead.length >= 8 && rb.indexOf(cleanNoLead) !== -1) return true;
+        return false;
     }
 
     function findParentRecordInHistory(parentUserLower, parentSnippet, beforeSeq) {
@@ -43915,23 +47419,23 @@ dashboardButton.style.visibility = 'hidden';
             .replace(/\s+/g, ' ')
             .trim()
             .toLowerCase();
+        var cleanNoLead = '';
         if (cleanSnip.charAt(0) === '@') {
             var sp = cleanSnip.indexOf(' ');
-            var cleanNoLead = sp > 1 ? cleanSnip.slice(sp + 1).trim() : '';
+            if (sp > 1) cleanNoLead = cleanSnip.slice(sp + 1).trim();
+        }
+        if (cleanSnip) {
             for (var i = arr.length - 1; i >= 0; i--) {
                 var r = arr[i];
                 if (beforeSeq && r.seq && r.seq >= beforeSeq) continue;
-                var rb = (r.bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                if (cleanSnip && rb.indexOf(cleanSnip) === 0) return r;
-                if (cleanNoLead && rb.indexOf(cleanNoLead) === 0) return r;
+                if (doesBodyMatchReplySnippet(r.bodyText || '', cleanSnip, cleanNoLead)) {
+                    return r;
+                }
             }
-        } else if (cleanSnip) {
-            for (var j = arr.length - 1; j >= 0; j--) {
-                var r2 = arr[j];
-                if (beforeSeq && r2.seq && r2.seq >= beforeSeq) continue;
-                var rb2 = (r2.bodyText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                if (rb2.indexOf(cleanSnip) === 0 || cleanSnip.indexOf(rb2) === 0) return r2;
-            }
+            // Important : si un extrait du message parent est connu et qu'aucun message en mémoire
+            // ne lui correspond, ne JAMAIS retomber aveuglément sur un autre message récent de cet auteur
+            // (sinon on mélange la discussion avec une autre conversation eue avec un autre membre).
+            return null;
         }
         for (var k = arr.length - 1; k >= 0; k--) {
             if (!beforeSeq || !arr[k].seq || arr[k].seq < beforeSeq) {
@@ -43962,16 +47466,27 @@ dashboardButton.style.visibility = 'hidden';
         var domReplyBody = '';
         if (replyHdrEl) {
             replyHdrEl.classList.add('tp9-reply-header-nav');
-            var tNode = (replyHdrEl.getAttribute && replyHdrEl.getAttribute('title'))
-                ? replyHdrEl
-                : (replyHdrEl.querySelector ? replyHdrEl.querySelector('[title]') : null);
-            var hdrFull = ((tNode && tNode.getAttribute('title')) || replyHdrEl.textContent || '').replace(/\s+/g, ' ').trim();
-            var hm = hdrFull.match(CHAT_REPLY_HEADER_RE);
-            if (hm) {
-                domReplyDisplay = hm[1].trim();
+            var savedHdrTitle = readReplyHeaderSavedTitle(replyHdrEl);
+            var hdrTextOnly = (replyHdrEl.textContent || '').replace(/\s+/g, ' ').trim();
+            var hmTitle = savedHdrTitle ? savedHdrTitle.match(CHAT_REPLY_HEADER_RE) : null;
+            var hmText = hdrTextOnly ? hdrTextOnly.match(CHAT_REPLY_HEADER_RE) : null;
+            if (hmTitle) {
+                domReplyDisplay = hmTitle[1].trim();
                 domReplyUser = domReplyDisplay.toLowerCase();
-                domReplyBody = (hm[2] || '').trim();
+                domReplyBody = (hmTitle[2] || '').trim();
+            } else if (hmText) {
+                domReplyDisplay = hmText[1].trim();
+                domReplyUser = domReplyDisplay.toLowerCase();
+                var textSnippet = (hmText[2] || '').trim();
+                // Twitch place souvent uniquement le texte complet du message parent dans title="..."
+                // tandis que textContent contient « Répond à @pseudo : extrait... »
+                if (savedHdrTitle && savedHdrTitle.toLowerCase() !== ('@' + domReplyUser) && savedHdrTitle.toLowerCase() !== domReplyUser) {
+                    domReplyBody = savedHdrTitle;
+                } else {
+                    domReplyBody = textSnippet;
+                }
             }
+            syncReplyHeaderNativeTitles(replyHdrEl, !scriptIsOff() && pageConfig.replyThreadNav !== false);
         }
 
         var fiberMeta = extractChatMsgMetaFromFiber(msgEl);
@@ -44580,13 +48095,70 @@ dashboardButton.style.visibility = 'hidden';
         var liveColor = (authorEl && authorEl.style && authorEl.style.color) || meta.authorColor || '';
 
         var rec = (meta.id && bttvChatMsgById.get(meta.id)) || meta.ircRec || null;
+        var authorKey = (meta.authorLogin || (meta.authorDisplay || '').toLowerCase()).trim();
+        var normBodyNow = normalizeChatBodyForMatch(bodyText || '');
+
+        // Fusionne avec un éventuel enregistrement optimiste récent (dom-X ou nœud remplacé par Twitch)
+        // du même auteur et au contenu identique afin d'empêcher tout message en double
+        if (authorKey && normBodyNow && bttvChatMsgsByAuthor.has(authorKey)) {
+            var candAuthorArr = bttvChatMsgsByAuthor.get(authorKey);
+            var nowMerge = Date.now();
+            for (var dupI = candAuthorArr.length - 1; dupI >= 0; dupI--) {
+                var prevRec = candAuthorArr[dupI];
+                if (!prevRec || prevRec === rec) continue;
+                if ((nowMerge - (prevRec.createdAt || 0)) > 12000) continue;
+                var prevNorm = normalizeChatBodyForMatch(prevRec.bodyText || '');
+                var prevStripped = stripLeadingMentionForMatch(prevNorm, meta.parentUserLogin || prevRec.parentUserLogin, '');
+                var curStripped = stripLeadingMentionForMatch(normBodyNow, meta.parentUserLogin || prevRec.parentUserLogin, '');
+                var sameBody =
+                    prevNorm === normBodyNow ||
+                    (prevStripped && curStripped && prevStripped === curStripped);
+                if (!sameBody) continue;
+                var prevIsSynthetic = Boolean(prevRec.id && /^dom-/.test(prevRec.id));
+                var curIsSynthetic = Boolean(meta.id && /^dom-/.test(meta.id));
+                var prevDisconnected = Boolean(!prevRec.msgEl || prevRec.msgEl.isConnected === false || prevRec.msgEl === msgEl);
+                if (prevIsSynthetic || curIsSynthetic || prevDisconnected) {
+                    if (!rec) {
+                        if (prevRec.id && prevRec.id !== meta.id && !curIsSynthetic) {
+                            bttvChatMsgById.delete(prevRec.id);
+                        }
+                        rec = prevRec;
+                    } else {
+                        // Remplace prevRec par rec en conservant le numéro de séquence d'origine
+                        if (prevRec.seq && (!rec.seq || prevRec.seq < rec.seq)) {
+                            rec.seq = prevRec.seq;
+                        }
+                        if (prevRec.id && prevRec.id !== rec.id) {
+                            bttvChatMsgById.delete(prevRec.id);
+                        }
+                        candAuthorArr.splice(dupI, 1);
+                        var prevTid = prevRec.threadId || prevRec.parentMsgId || '';
+                        if (prevTid && bttvChatThreadIndex.has(prevTid)) {
+                            var pThread = bttvChatThreadIndex.get(prevTid);
+                            var ptIdx = pThread.indexOf(prevRec);
+                            if (ptIdx !== -1) {
+                                if (pThread.indexOf(rec) === -1) {
+                                    pThread[ptIdx] = rec;
+                                } else {
+                                    pThread.splice(ptIdx, 1);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
         if (!rec) {
             rec = {
                 id: meta.id,
                 createdAt: Date.now()
             };
         }
-        rec.id = meta.id;
+        if (meta.id && (!rec.id || /^dom-/.test(rec.id) || !/^dom-/.test(meta.id))) {
+            rec.id = meta.id;
+        }
         rec.authorLogin = meta.authorLogin;
         rec.authorDisplay = meta.authorDisplay || meta.authorLogin;
         rec.authorColor = liveColor;
@@ -44616,7 +48188,7 @@ dashboardButton.style.visibility = 'hidden';
             pruneChatHistoryMapRefs();
         }
 
-        var authorKey = (rec.authorLogin || (rec.authorDisplay || '').toLowerCase()).trim();
+        authorKey = (rec.authorLogin || (rec.authorDisplay || '').toLowerCase()).trim();
         if (authorKey) {
             var uList = bttvChatMsgsByAuthor.get(authorKey);
             if (!uList) {
@@ -44703,14 +48275,18 @@ dashboardButton.style.visibility = 'hidden';
             }
         }
         if (isBlacklisted) {
+            msgEl.__tp9HiddenByBlacklist = true;
             msgEl.style.display = 'none';
             return true;
-        } else if (!msgEl.__tp9HiddenBySpam) {
-            if (!pageConfig.slowChat && msgEl.__tp9HiddenBySlow) {
-                msgEl.__tp9HiddenBySlow = false;
-            }
-            if (!msgEl.__tp9HiddenBySlow) {
-                msgEl.style.display = '';
+        } else {
+            msgEl.__tp9HiddenByBlacklist = false;
+            if (!msgEl.__tp9HiddenBySpam) {
+                if (!pageConfig.slowChat && msgEl.__tp9HiddenBySlow) {
+                    msgEl.__tp9HiddenBySlow = false;
+                }
+                if (!msgEl.__tp9HiddenBySlow) {
+                    msgEl.style.display = '';
+                }
             }
         }
 
@@ -44788,12 +48364,6 @@ dashboardButton.style.visibility = 'hidden';
         }
 
         msgEl.__tp9Processed = true;
-
-        // 0. Lignes alternées (Split Chat)
-        bttvSplitAlt = !bttvSplitAlt;
-        if (bttvSplitAlt) {
-            msgEl.classList.add('tp9-chat-alt');
-        }
 
         // 0b. Détection des Bots connus (Badge [BOT] et classe de masquage)
         var isBot = !!(authorLower && KNOWN_TWITCH_BOTS[authorLower]);
@@ -44900,6 +48470,21 @@ dashboardButton.style.visibility = 'hidden';
 
         // 6. Émotes/Émojis géants si le message ne contient que des émotes ou émojis
         updateMessageOnlyEmotesState(msgEl);
+
+        // 7. Lignes alternées (Split Chat) — calculé APRÈS tous les filtres de visibilité
+        // (blacklist, masquage des bots, anti-spam, mode lent) pour garantir 1 ligne sur 2 stricte
+        if (!isInitialBatch) {
+            var splitContainer =
+                (msgEl.closest && msgEl.closest('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]')) ||
+                msgEl.parentElement;
+            if (typeof reapplySplitChatOnExisting === 'function' && splitContainer && splitContainer.querySelectorAll) {
+                reapplySplitChatOnExisting(splitContainer);
+            } else if (typeof isChatMessageRowVisibleForSplit !== 'function' || isChatMessageRowVisibleForSplit(msgEl, null)) {
+                bttvSplitAlt = !bttvSplitAlt;
+                msgEl.classList.toggle('tp9-chat-alt', bttvSplitAlt);
+                msgEl.__tp9SplitAssigned = true;
+            }
+        }
     }
 
     var bttvChatResumeTimer = null;
@@ -45620,6 +49205,7 @@ dashboardButton.style.visibility = 'hidden';
             var scBefore = resolveChatScroller(container);
             var wasAtLive = scBefore ? isChatScrollerNearLiveEdge(scBefore, 85) : false;
             var needsLiveRepin = false;
+            var hadChildListChange = false;
             var inspectProcessedMsg = function (mEl) {
                 if (!mEl || mEl.nodeType !== 1) return;
                 if (
@@ -45631,6 +49217,9 @@ dashboardButton.style.visibility = 'hidden';
             };
             for (var i = 0; i < records.length; i++) {
                 var rec = records[i];
+                if ((rec.addedNodes && rec.addedNodes.length > 0) || (rec.removedNodes && rec.removedNodes.length > 0)) {
+                    hadChildListChange = true;
+                }
                 var targetMsg = rec.target && rec.target.nodeType === 1 && rec.target.closest
                     ? rec.target.closest('.chat-line__message, [data-a-target="chat-line-message"]')
                     : null;
@@ -45657,6 +49246,9 @@ dashboardButton.style.visibility = 'hidden';
                     }
                 }
             }
+            if (hadChildListChange && typeof reapplySplitChatOnExisting === 'function') {
+                reapplySplitChatOnExisting(container);
+            }
             if (isChatHoverScrollLocked(null)) {
                 syncHoverPausePosition();
             } else if (wasAtLive && needsLiveRepin && scBefore) {
@@ -45682,6 +49274,9 @@ dashboardButton.style.visibility = 'hidden';
         var existing = container.querySelectorAll('.chat-line__message, [data-a-target="chat-line-message"]');
         for (var m = 0; m < existing.length; m++) {
             processChatMessageNode(existing[m], true);
+        }
+        if (typeof reapplySplitChatOnExisting === 'function') {
+            reapplySplitChatOnExisting(container);
         }
 
         var scrollerForBind = resolveChatScroller(container);
@@ -48109,7 +51704,6 @@ dashboardButton.style.visibility = 'hidden';
             if (sp > 1) cleanNoLead = cleanSnip.slice(sp + 1).trim();
         }
 
-        var fallbackUserMatch = null;
         var prev = refMsgEl.previousElementSibling;
         var steps = 0;
         while (prev && steps < 250) {
@@ -48119,21 +51713,156 @@ dashboardButton.style.visibility = 'hidden';
                 var pUser = (pMeta && pMeta.authorLogin) || (prev.getAttribute('data-tp9-author') || '').toLowerCase();
                 var pDisp = (pMeta && pMeta.authorLower) || '';
                 if (pUser === userLower || pDisp === userLower) {
-                    if (!fallbackUserMatch) fallbackUserMatch = prev;
                     if (!cleanSnip) return prev;
-                    var pBody = extractChatMessagePlainText(prev).replace(/\s+/g, ' ').trim().toLowerCase();
-                    if (
-                        pBody.indexOf(cleanSnip) === 0 ||
-                        cleanSnip.indexOf(pBody) === 0 ||
-                        (cleanNoLead && pBody.indexOf(cleanNoLead) === 0)
-                    ) {
+                    var pBody = extractChatMessagePlainText(prev);
+                    if (doesBodyMatchReplySnippet(pBody, cleanSnip, cleanNoLead)) {
                         return prev;
                     }
                 }
             }
             prev = prev.previousElementSibling;
         }
-        return fallbackUserMatch;
+        return null;
+    }
+
+    function dedupePreviewRecords(items, curRec, parentRec) {
+        if (!items || !items.length) return [];
+        var out = [];
+        var isSynth = function (id) {
+            return !id || /^(?:dom-|irc-|synthetic-)/.test(id);
+        };
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            if (!it) continue;
+            var itAuthor = (it.authorLogin || it.authorDisplay || '').toLowerCase();
+            var itNorm = normalizeChatBodyForMatch(it.bodyText || '');
+            var itStripped = stripLeadingMentionForMatch(itNorm, it.parentUserLogin || '', '');
+            var dupIdx = -1;
+            for (var j = 0; j < out.length; j++) {
+                var ex = out[j];
+                if (ex === it || (ex.id && it.id && ex.id === it.id)) {
+                    dupIdx = j;
+                    break;
+                }
+                var exAuthor = (ex.authorLogin || ex.authorDisplay || '').toLowerCase();
+                if (!itAuthor || itAuthor !== exAuthor || !itNorm) continue;
+                var exNorm = normalizeChatBodyForMatch(ex.bodyText || '');
+                var exStripped = stripLeadingMentionForMatch(exNorm, ex.parentUserLogin || '', '');
+                var sameText =
+                    exNorm === itNorm ||
+                    (exStripped && itStripped && exStripped === itStripped);
+                if (!sameText) continue;
+                var closeInTime =
+                    !ex.createdAt || !it.createdAt || Math.abs(it.createdAt - ex.createdAt) <= 12000;
+                if (isSynth(ex.id) || isSynth(it.id) || closeInTime) {
+                    dupIdx = j;
+                    break;
+                }
+            }
+            if (dupIdx === -1) {
+                out.push(it);
+            } else {
+                var kept = out[dupIdx];
+                // Préserve la référence exacte de parentRec ou curRec pour le style visuel dans la carte
+                var preferIt =
+                    (it === parentRec || it === curRec) ||
+                    (kept !== parentRec && kept !== curRec && isSynth(kept.id) && !isSynth(it.id));
+                var winner = preferIt ? it : kept;
+                var loser = preferIt ? kept : it;
+                if ((!winner.msgEl || winner.msgEl.isConnected === false) && loser.msgEl) {
+                    winner.msgEl = loser.msgEl;
+                }
+                if (!winner.tsText && loser.tsText) winner.tsText = loser.tsText;
+                if ((!winner.parts || !winner.parts.length) && loser.parts && loser.parts.length) {
+                    winner.parts = loser.parts;
+                }
+                out[dupIdx] = winner;
+            }
+        }
+        return out;
+    }
+
+    function filterReplyBranchRecords(rawThread, curRec, parentRec, rootId) {
+        if (!rawThread || !rawThread.length) return [];
+        var byId = new Map();
+        for (var i = 0; i < rawThread.length; i++) {
+            var r0 = rawThread[i];
+            if (r0 && r0.id) byId.set(r0.id, r0);
+        }
+
+        var branchSet = new Set();
+        var ancestorIds = new Set();
+        var descendantIds = new Set();
+        var participants = new Set();
+        var addParticipant = function (u) {
+            if (u) participants.add(String(u).toLowerCase());
+        };
+
+        // 1. Chaîne ascendante directe de la réponse survolée (curRec -> parentRec -> ... -> racine)
+        var stepAnc = curRec;
+        var hops = 0;
+        while (stepAnc && hops < 25) {
+            hops++;
+            if (branchSet.has(stepAnc)) break;
+            branchSet.add(stepAnc);
+            if (stepAnc.id) ancestorIds.add(stepAnc.id);
+            addParticipant(stepAnc.authorLogin || stepAnc.authorDisplay);
+            addParticipant(stepAnc.parentUserLogin);
+            var nextPid = stepAnc.parentMsgId;
+            if (!nextPid) break;
+            var nextAnc = byId.get(nextPid) || bttvChatMsgById.get(nextPid) || null;
+            if (!nextAnc && stepAnc === curRec && parentRec) {
+                nextAnc = parentRec;
+            }
+            stepAnc = nextAnc;
+        }
+        if (parentRec && !branchSet.has(parentRec)) {
+            branchSet.add(parentRec);
+            if (parentRec.id) ancestorIds.add(parentRec.id);
+            addParticipant(parentRec.authorLogin || parentRec.authorDisplay);
+        }
+        if (curRec && curRec.id) {
+            descendantIds.add(curRec.id);
+        }
+
+        // 2. Réponses descendantes directes de curRec (suite de CE sous-fil)
+        var changed = true;
+        while (changed) {
+            changed = false;
+            for (var d = 0; d < rawThread.length; d++) {
+                var rd = rawThread[d];
+                if (!rd || branchSet.has(rd)) continue;
+                if (rd.parentMsgId && descendantIds.has(rd.parentMsgId)) {
+                    branchSet.add(rd);
+                    if (rd.id) descendantIds.add(rd.id);
+                    addParticipant(rd.authorLogin || rd.authorDisplay);
+                    changed = true;
+                }
+            }
+        }
+
+        // 3. Réponses sœurs entre les MÊMES participants de cette branche (ex: double réponse à la racine M0 par le même interlocuteur),
+        // tout en excluant strictement les conversations parallèles avec d'autres membres sur la même racine M0
+        for (var s = 0; s < rawThread.length; s++) {
+            var rs = rawThread[s];
+            if (!rs || branchSet.has(rs)) continue;
+            var rsAuthor = (rs.authorLogin || rs.authorDisplay || '').toLowerCase();
+            var rsTarget = (rs.parentUserLogin || '').toLowerCase();
+            var rsPid = rs.parentMsgId || '';
+            if (!rsAuthor || !participants.has(rsAuthor)) continue;
+            if (rsTarget && !participants.has(rsTarget)) continue;
+            if (rsPid && !ancestorIds.has(rsPid) && !descendantIds.has(rsPid) && rsPid !== rootId) continue;
+            branchSet.add(rs);
+            if (rs.id) descendantIds.add(rs.id);
+        }
+
+        var filtered = [];
+        for (var k = 0; k < rawThread.length; k++) {
+            if (branchSet.has(rawThread[k])) {
+                filtered.push(rawThread[k]);
+            }
+        }
+        return filtered;
     }
 
     function resolveParentRecordAndElementForReply(msgEl) {
@@ -48222,25 +51951,29 @@ dashboardButton.style.visibility = 'hidden';
         var tId = (meta && (meta.threadId || meta.parentMsgId)) || '';
         if (tId && bttvChatThreadIndex.has(tId)) {
             var rawThread = bttvChatThreadIndex.get(tId);
-            for (var i = 0; i < rawThread.length; i++) {
-                var tr = rawThread[i];
-                if (tr.msgEl && tr.msgEl.isConnected) {
-                    addReplyThreadPeerHighlight(tr.msgEl, tr === parentRec || tr.msgEl === parentEl);
-                }
-                threadItems.push(tr);
+            var isolatedBranch = filterReplyBranchRecords(rawThread, curRec, parentRec, tId);
+            for (var i = 0; i < isolatedBranch.length; i++) {
+                threadItems.push(isolatedBranch[i]);
             }
         }
-        if (parentEl) {
-            addReplyThreadPeerHighlight(parentEl, true);
-        }
-        addReplyThreadPeerHighlight(msgEl, false);
-
         if (parentRec && threadItems.indexOf(parentRec) === -1) {
             threadItems.unshift(parentRec);
         }
         if (curRec && threadItems.indexOf(curRec) === -1) {
             threadItems.push(curRec);
         }
+        threadItems = dedupePreviewRecords(threadItems, curRec, parentRec);
+
+        for (var h = 0; h < threadItems.length; h++) {
+            var tr = threadItems[h];
+            if (tr && tr.msgEl && tr.msgEl.isConnected) {
+                addReplyThreadPeerHighlight(tr.msgEl, tr === parentRec || tr.msgEl === parentEl);
+            }
+        }
+        if (parentEl) {
+            addReplyThreadPeerHighlight(parentEl, true);
+        }
+        addReplyThreadPeerHighlight(msgEl, false);
 
         if (threadItems.length > 6) {
             var curIdx = curRec ? threadItems.indexOf(curRec) : (threadItems.length - 1);
@@ -48338,7 +52071,8 @@ dashboardButton.style.visibility = 'hidden';
             return;
         }
 
-        var previewItems = uList.slice(Math.max(0, uList.length - 5));
+        var dedupedUList = dedupePreviewRecords(uList, null, (targetJumpEl && targetJumpEl.__tp9HistoryRec) || null);
+        var previewItems = dedupedUList.slice(Math.max(0, dedupedUList.length - 5));
         var targetRec = (targetJumpEl && targetJumpEl.__tp9HistoryRec) || previewItems[previewItems.length - 1] || null;
         var dispName = (targetRec && targetRec.authorDisplay) || (mentionEl.textContent || '').replace(/^@+/, '').trim() || mentionedUserLower;
         var canJump = Boolean(targetJumpEl && targetJumpEl.isConnected);
@@ -48507,6 +52241,7 @@ dashboardButton.style.visibility = 'hidden';
                         }
                     }
                     if (replyHdr) {
+                        syncReplyHeaderNativeTitles(replyHdr, true);
                         if (bttvSidebarHoverLogin) hideSidebarLivePreview();
                         showReplyThreadHoverForHeader(inChatMsg, replyHdr);
                         return;
@@ -50025,7 +53760,6 @@ dashboardButton.style.visibility = 'hidden';
         rebuildBttvEmoteMap();
         ensureChatEmoteButton();
         ensurePlayerToolButtons();
-        reapplySplitChatOnExisting();
         updateChatInputEmoteMirror();
 
         // Réévalue en temps réel les messages déjà présents dans le tchat (mots-clés, blacklist, émotes statiques/animées)
@@ -50044,6 +53778,9 @@ dashboardButton.style.visibility = 'hidden';
                     img.setAttribute('data-tp9-emote-big', resolveEmoteDisplayUrl(em, true));
                 }
             });
+            reapplySplitChatOnExisting(container);
+        } else {
+            reapplySplitChatOnExisting();
         }
     }
 
@@ -50327,6 +54064,9 @@ dashboardButton.style.visibility = 'hidden';
         applyTwitchUIClasses();
         startTwitchUIHider();
         initBttvEngine();
+        expVodInstallRaidSyncHook();
+        expVodInstallHudIdleListeners();
+        expVodInstallHoverPrefetch();
 
         createPlayerButton();
 
@@ -50432,6 +54172,7 @@ dashboardButton.style.visibility = 'hidden';
             watchNativeTwitchPause,
             audioNormScan,
             spLiveEdgeKeepUpTick,
+            expVodTick,
             bttvOneSecondTick
         ];
         setInterval(function () {
@@ -50472,6 +54213,10 @@ dashboardButton.style.visibility = 'hidden';
 
         startAutoBackup();
     }
+
+    // Arme immédiatement le rideau anti-direct à document-start (0 ms)
+    // si Bloqueur de pub (Experimental) est actif sur une chaîne live.
+    expVodInitEarlyStartupGate();
 
     // Démarre l'injection UI dès que document.body existe (souvent ~1s avant DOMContentLoaded sur Twitch)
     initUI();
