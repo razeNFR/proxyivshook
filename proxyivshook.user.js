@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Twitch HLS Proxy
 // @namespace    twitch-proxy-ivs
-// @version      1.12
+// @version      1.12.2
 // @author       razeNFR
 // @description  Twitch Guard : bloque les pubs Twitch (via proxys ou en mode Adblock sans proxy), retour arrière dans le direct et dashboard de statistiques
 // @match        https://www.twitch.tv/*
@@ -14,6 +14,12 @@
 // ==/UserScript==
 
 // ==Changelog==
+// 1.12.2
+// - Tchat VOD synchronisé même plusieurs heures en arrière (en mode « Bloqueur de pub (Experimental) » comme en retour arrière DVR ⏪ classique) : récupération et relecture en temps réel de l'historique officiel des commentaires de la VOD via GraphQL (VideoCommentsByOffsetOrCursor) couplée à une mémoire locale des messages récents du direct, masquage propre des messages hors contexte lors des sauts temporels, horodatages exacts d'époque et prise en charge intégrale des émotes BTTV/7TV/FFZ, couleurs lisibles, badges et lignes alternées (Split Chat) || Synchronized historical VOD chat even hours back (in both "Ad blocker (Experimental)" mode and classic ⏪ DVR rewind): fetches and streams official VOD comments in real time via GraphQL (VideoCommentsByOffsetOrCursor) paired with a local live IRC buffer for recent messages, cleanly hides out-of-context chat on timeline jumps, preserves original message timestamps, and maintains full support for BTTV/7TV/FFZ emotes, readable username colors, badges, and Split Chat
+// - Correctif des statistiques en mode « Bloqueur de pub (Experimental) » : suppression du double comptage de la bande passante (~2x) en lecture VOD, restauration de l'affichage du débit en direct (Mo/s, Ko/s) dans le menu latéral et la Vue d'ensemble, et comptabilisation précise des coupures pub évitées, du nombre de pubs, du temps sauvé, de la part de pub et des médailles via les notifications temps réel Hermes / PubSub (« VOD sans pub ») malgré la coupure du lecteur direct (0 Ko/s) || Fixed statistics in "Ad blocker (Experimental)" mode: eliminated ~2x bandwidth double-counting during VOD playback, restored live throughput (MB/s, KB/s) display in both the side menu and Overview tab, and added accurate tracking of avoided ad breaks, ad count, time saved, ad share, and streamer medals via real-time Hermes / PubSub commercial events ("Ad-free VOD") while the background live player is paused (0 KB/s)
+// - Correctif du clignotement vert / gris dans l'onglet « Streamers » du Dashboard : synchronisation directe de la lecture active entre onglets via BroadcastChannel et élargissement de la fenêtre d'activité pour que le streamer regardé reste vert en continu (avec secondes et Mo mis à jour en temps réel) sans coupure entre deux sauvegardes localStorage ni lors des retours arrière DVR, tout en repassant immédiatement en gris à l'arrêt || Fixed green / gray intermittent flickering in the Dashboard's "Streamers" tab: added real-time cross-tab playback heartbeats via BroadcastChannel and widened the live activity window so the watched streamer stays solid green (with live seconds and MB updates) across localStorage save intervals and DVR rewinds while turning gray immediately when playback stops
+// 1.12.1
+// - Synchronisation ultra-précise du tchat et des raids en mode « Bloqueur de pub (Experimental) » : ancrage direct de l'horloge VOD sur l'arrivée réelle des segments HLS (index-dvr.m3u8) au lieu de l'heure théorique de début de stream (éliminant tout décalage initial ainsi que la dérive progressive liée aux pertes d'images OBS sur les longs lives), compensation automatique de la latence ~2,2 s des viewers en direct sur les horodatages IRC (tmi-sent-ts) et protection contre les décalages d'horloge PC ou l'historique IRC || Ultra-accurate chat and raid synchronization in "Ad blocker (Experimental)" mode: anchors the VOD clock directly to live HLS segment arrivals (index-dvr.m3u8) instead of theoretical stream start time (eliminating startup offset and cumulative OBS frame-drop drift on multi-hour streams), automatically compensates for live viewers' ~2.2s latency on IRC timestamps (tmi-sent-ts), and hardens against PC clock skew and IRC history replay
 // 1.12
 // - Nouvelle option « Bloqueur de pub (Experimental) » dans l'onglet Adblock : lit automatiquement la VOD sans pub du stream au plus près du direct (~30 s) sans jamais sauter sur le flux publicitaire, synchronise le tchat à la seconde près ainsi que les raids sortants, conserve 100 % des Points de chaîne, coffres bonus, séries de visionnage et Drops Twitch, masque le direct dès l'ouverture de la chaîne et bascule automatiquement sur le VAFT classique s'il n'y a pas de VOD ou en tout début de live || New "Ad blocker (Experimental)" option in the Adblock tab: automatically plays the stream's ad-free VOD as close to live as possible (~30s) without ever jumping to the ad-bearing live feed, synchronizes chat messages to the exact second as well as outgoing raids, preserves 100% of Channel Points, bonus chests, watch streaks, and Twitch Drops, hides the live feed from channel open, and automatically falls back to classic VAFT if no VOD exists or right as a stream starts
 // - Nouvelle option « Afficher « Synchro tchat VOD » » (caché par défaut) : permet d'afficher ou de masquer à la demande l'indicateur du décalage exact du tchat en bas de la discussion tout en gardant la synchronisation active || New "Show 'VOD chat sync' badge" option (hidden by default): lets you toggle the exact chat delay indicator at the bottom of chat on demand while keeping chat synchronization active
@@ -97,7 +103,7 @@
         Math.random().toString(36).substring(2, 9);
 
     // Doit être tenu à jour avec le @version de l'en-tête du script.
-    var CURRENT_VERSION = '1.12';
+    var CURRENT_VERSION = '1.12.2';
 
     // Même URL que @updateURL : contient toujours la dernière version
     // publiée. On la relit nous-même (plutôt que de compter sur le
@@ -2775,6 +2781,16 @@
     // est asynchrone et n'aurait pas le temps de tourner avant la
     // fermeture.
     function flushStatsSave() {
+        if (
+            typeof activeLiveHeartbeatChannel === 'string' &&
+            activeLiveHeartbeatChannel &&
+            pageStats &&
+            pageStats.streamers &&
+            pageStats.streamers[activeLiveHeartbeatChannel]
+        ) {
+            pageStats.streamers[activeLiveHeartbeatChannel].lastSeen = Date.now();
+        }
+
         if (!statsSaveTimer) {
             return;
         }
@@ -2789,7 +2805,15 @@
         saveStatsUnlocked();
     }
 
-    window.addEventListener('pagehide', flushStatsSave);
+    window.addEventListener('pagehide', function () {
+        flushStatsSave();
+        if (typeof emitLiveStreamerStop === 'function') {
+            emitLiveStreamerStop();
+        }
+        if (typeof dvrVodResetThroughput === 'function') {
+            dvrVodResetThroughput(true);
+        }
+    });
 
     document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') {
@@ -3510,7 +3534,7 @@
     // paquets, sinon la valeur sautille d'un affichage à l'autre (un
     // segment vidéo n'arrive pas à intervalle régulier).
 
-    var THROUGHPUT_MAX_AGE_MS = 20000;
+    var THROUGHPUT_MAX_AGE_MS = 25000;
 
     // Poids du dernier échantillon dans la moyenne glissante : un
     // segment vidéo n'arrive pas à intervalle régulier, une valeur
@@ -3524,7 +3548,7 @@
     // montre que le débit de SON onglet.
     var throughputByTab = {};
 
-    function recordThroughputSample(tabId, bytes) {
+    function recordThroughputSample(tabId, bytes, minElapsedMs) {
         if (!tabId) {
             return;
         }
@@ -3536,14 +3560,27 @@
         var elapsedMs = previous ? (now - previous.at) : 0;
 
         // Premier paquet de cet onglet, ou reprise après une longue
-        // pause : aucune durée de référence, on note juste l'instant.
+        // pause : si la durée média du segment est connue (VOD HLS),
+        // on en déduit tout de suite un débit réaliste ; sinon on
+        // pose juste le repère temporel.
         if (elapsedMs <= 0 || elapsedMs > THROUGHPUT_MAX_AGE_MS) {
-            throughputByTab[tabId] = { at: now, bps: null };
+            if (minElapsedMs && minElapsedMs > 0 && bytes > 0) {
+                throughputByTab[tabId] = {
+                    at: now,
+                    bps: bytes / (Math.max(1000, minElapsedMs) / 1000)
+                };
+            } else {
+                throughputByTab[tabId] = { at: now, bps: null };
+            }
 
             return;
         }
 
-        var instant = bytes / (elapsedMs / 1000);
+        var effectiveElapsedMs = (minElapsedMs && minElapsedMs > 0)
+            ? Math.max(elapsedMs, minElapsedMs * 0.85)
+            : elapsedMs;
+
+        var instant = bytes / (effectiveElapsedMs / 1000);
 
         throughputByTab[tabId] = {
             at: now,
@@ -3553,6 +3590,87 @@
                     : previous.bps +
                         (instant - previous.bps) * THROUGHPUT_SMOOTHING
         };
+    }
+
+    function clearThroughputForTab(tabId) {
+        if (tabId && throughputByTab[tabId]) {
+            delete throughputByTab[tabId];
+        }
+    }
+
+    var dvrVodPendingThroughputBytes = 0;
+    var dvrVodPendingFragDurMs = 0;
+    var dvrVodQuickFlushTimer = null;
+
+    function dvrVodFlushThroughput() {
+        if (dvrVodQuickFlushTimer) {
+            clearTimeout(dvrVodQuickFlushTimer);
+            dvrVodQuickFlushTimer = null;
+        }
+        if (!(dvrVodPendingThroughputBytes > 0)) {
+            dvrVodPendingThroughputBytes = 0;
+            dvrVodPendingFragDurMs = 0;
+            return;
+        }
+        var bytes = dvrVodPendingThroughputBytes;
+        var minElapsedMs = dvrVodPendingFragDurMs > 0 ? Math.round(dvrVodPendingFragDurMs) : 0;
+        dvrVodPendingThroughputBytes = 0;
+        dvrVodPendingFragDurMs = 0;
+
+        recordThroughputSample(TAB_ID, bytes, minElapsedMs);
+        if (typeof refreshLiveThroughput === 'function') {
+            refreshLiveThroughput();
+        }
+        if (typeof dashboardVisible !== 'undefined' && dashboardVisible && typeof updateActiveProxyDisplay === 'function') {
+            updateActiveProxyDisplay();
+        }
+        if (typeof configChannel !== 'undefined' && configChannel) {
+            try {
+                configChannel.postMessage({
+                    type: 'vodThroughput',
+                    tabId: TAB_ID,
+                    bytes: bytes,
+                    minElapsedMs: minElapsedMs
+                });
+            } catch (eBcVodTp) {}
+        }
+    }
+
+    function dvrVodRecordFragThroughput(bytes, fragDurationSec) {
+        if (!(bytes > 0)) return;
+        dvrVodPendingThroughputBytes += bytes;
+        if (typeof fragDurationSec === 'number' && isFinite(fragDurationSec) && fragDurationSec > 0) {
+            dvrVodPendingFragDurMs += fragDurationSec * 1000;
+        }
+        var curSample = throughputByTab[TAB_ID];
+        var needsInitialSample = !curSample || curSample.bps === null || (Date.now() - curSample.at) > THROUGHPUT_MAX_AGE_MS;
+        if (needsInitialSample && !dvrVodQuickFlushTimer) {
+            dvrVodQuickFlushTimer = setTimeout(dvrVodFlushThroughput, 600);
+        }
+    }
+
+    function dvrVodResetThroughput(broadcastStop) {
+        if (dvrVodQuickFlushTimer) {
+            clearTimeout(dvrVodQuickFlushTimer);
+            dvrVodQuickFlushTimer = null;
+        }
+        dvrVodPendingThroughputBytes = 0;
+        dvrVodPendingFragDurMs = 0;
+        clearThroughputForTab(TAB_ID);
+        if (typeof refreshLiveThroughput === 'function') {
+            refreshLiveThroughput();
+        }
+        if (typeof dashboardVisible !== 'undefined' && dashboardVisible && typeof updateActiveProxyDisplay === 'function') {
+            updateActiveProxyDisplay();
+        }
+        if (broadcastStop && typeof configChannel !== 'undefined' && configChannel) {
+            try {
+                configChannel.postMessage({
+                    type: 'vodThroughputStop',
+                    tabId: TAB_ID
+                });
+            } catch (eBcVodStop) {}
+        }
     }
 
     function throughputForTab(tabId) {
@@ -5099,7 +5217,7 @@
             dvrVideo &&
             !dvrVideo.paused &&
             !dvrVideo.ended &&
-            dvrVideo.readyState >= 2
+            (dvrVideo.readyState >= 2 || (dvrVideo.currentTime > 0 && !!dvrHls))
         ) {
             return { video: dvrVideo, channel: urlChannel };
         }
@@ -5162,9 +5280,14 @@
     }
 
     function trackBandwidthAndWatchTime() {
+        if (typeof dvrVodFlushThroughput === 'function' && dvrVodPendingThroughputBytes > 0) {
+            dvrVodFlushThroughput();
+        }
+
         var playback = getActivePlayback();
 
         if (!playback) {
+            emitLiveStreamerStop();
 
             // Lecture interrompue, ou vidéo qui ne doit pas compter
             // (aperçu automatique, bande-annonce) : on oublie les
@@ -5179,22 +5302,26 @@
         var channel = playback.channel;
         var video = playback.video;
 
+        if (activeLiveHeartbeatChannel && activeLiveHeartbeatChannel !== channel) {
+            emitLiveStreamerStop();
+        }
+
         // Le temps de visionnage se lit sur la vidéo À L'ÉCRAN, les
         // octets sur celle de Twitch : voir getShownVideo.
         var shownVideo = getShownVideo(video);
 
         var watchedMs = 0;
+        var shownPlaying = Boolean(
+            shownVideo &&
+            !shownVideo.paused &&
+            !shownVideo.ended &&
+            (shownVideo.readyState >= 2 || (shownVideo === dvrVideo && shownVideo.currentTime > 0 && !!dvrHls))
+        );
 
-        if (
-            shownVideo === video ||
-            (
-                !shownVideo.paused &&
-                !shownVideo.ended &&
-                shownVideo.readyState >= 2
-            )
-        ) {
+        if (shownVideo === video || shownPlaying) {
             watchedMs = readWatchedMs(shownVideo, channel);
         } else {
+            emitLiveStreamerStop();
 
             // Passé mis en pause, ou source encore en chargement :
             // rien à compter, et un repère périmé ferait compter un
@@ -5203,8 +5330,14 @@
         }
 
         // ---- bande passante ----
+        // En lecture VOD (dvrVideo), les octets sont déjà comptés au
+        // segment près par hls.js (FRAG_LOADED -> 'network') : on ne
+        // déclenche jamais le repli décodeur/estimation par-dessus,
+        // même si hls.js a pré-chargé assez d'avance pour faire une
+        // pause réseau de plus de 20 s.
+        var isVodManagedVideo = (typeof dvrVideo !== 'undefined' && dvrVideo && video === dvrVideo);
 
-        if (isNetworkBandwidthLive()) {
+        if (isNetworkBandwidthLive() || isVodManagedVideo) {
 
             // Déjà comptabilisée à la réception (source 'network').
         } else {
@@ -5234,6 +5367,10 @@
         // ---- temps de visionnage ----
 
         if (watchedMs <= 0) {
+            if (shownPlaying && pageStats.streamers[channel]) {
+                pageStats.streamers[channel].lastSeen = Date.now();
+                emitLiveStreamerTick(channel);
+            }
             return;
         }
 
@@ -5246,7 +5383,7 @@
         // Mode Adblock : compté à part, pour que la part de pub d'un
         // streamer ne mélange pas les heures passées en mode Proxy,
         // où les pubs ne sont pas comptées.
-        if (directPlaybackOn()) {
+        if (directPlaybackOn() && !(typeof dvrStreamEnded === 'function' && dvrStreamEnded())) {
             streamer.adblockWatchMs = (streamer.adblockWatchMs || 0) + watchedMs;
             pageStats.totals.adblockWatchMsGlobal =
                 (pageStats.totals.adblockWatchMsGlobal || 0) + watchedMs;
@@ -5254,6 +5391,9 @@
             // les pubs comptées avant ne gonflent pas la part de pub.
             streamer.adShareWatchMs = (streamer.adShareWatchMs || 0) + watchedMs;
             spAddStreamWatch(channel, watchedMs);
+            if (typeof expVodAdvanceCommercialBreak === 'function') {
+                expVodAdvanceCommercialBreak(channel, watchedMs);
+            }
         }
 
         recordSessionProgress(watchedMs);
@@ -5275,6 +5415,18 @@
         var heatKey = now2.getDay() + '-' + now2.getHours();
 
         pageStats.watchHeatmap[heatKey] = (pageStats.watchHeatmap[heatKey] || 0) + watchedMs;
+
+        emitLiveStreamerTick(channel);
+
+        if (
+            typeof dashboardVisible !== 'undefined' &&
+            dashboardVisible &&
+            typeof activeDashboardTab !== 'undefined' &&
+            activeDashboardTab === 'stats' &&
+            typeof updateQuickStatsPane === 'function'
+        ) {
+            updateQuickStatsPane();
+        }
 
         scheduleStatsSave();
     }
@@ -5379,16 +5531,160 @@
     // voit donc aussi bien qu'un autre ce que l'onglet d'à côté est
     // en train de regarder.
     //
-    // La fenêtre couvre le pire cas : un tick de 5 s, plus les 2 s
-    // de regroupement des écritures, plus un peu de marge quand le
-    // navigateur étire les minuteurs d'un onglet en arrière-plan.
-    var STREAMER_LIVE_WINDOW_MS = 15000;
+    // La fenêtre couvre le pire cas : un tick de 5 s, plus les 15 s
+    // de regroupement des écritures localStorage (STATS_SAVE_DELAY_MS),
+    // plus la marge d'étirement des minuteurs en arrière-plan. En
+    // complément, BroadcastChannel transmet chaque tick en direct à
+    // l'onglet Dashboard sans attendre le localStorage.
+    var STREAMER_LIVE_WINDOW_MS = 30000;
+    var liveStreamerHeartbeats = {};
+    var activeLiveHeartbeatChannel = null;
+
+    function pruneLiveHeartbeatTabs(hb, now) {
+        if (!hb || !hb.tabs) return 0;
+        var keys = Object.keys(hb.tabs);
+        var alive = 0;
+        for (var i = 0; i < keys.length; i++) {
+            var tid = keys[i];
+            if ((now - (hb.tabs[tid] || 0)) >= STREAMER_LIVE_WINDOW_MS) {
+                delete hb.tabs[tid];
+            } else {
+                alive++;
+            }
+        }
+        return alive;
+    }
+
+    function noteLiveStreamerHeartbeat(tabId, channel, at, watchTimeMs, bandwidthBytes) {
+        if (!channel) return;
+        var now = Date.now();
+        var stamp = typeof at === 'number' && at > 0 ? at : now;
+        var hb = liveStreamerHeartbeats[channel];
+        if (!hb) {
+            hb = { at: 0, stoppedAt: 0, watchTimeMs: 0, bandwidthBytes: 0, tabs: {} };
+            liveStreamerHeartbeats[channel] = hb;
+        }
+        if (tabId) {
+            hb.tabs[tabId] = stamp;
+        }
+        pruneLiveHeartbeatTabs(hb, now);
+        if (stamp > (hb.at || 0)) {
+            hb.at = stamp;
+        }
+        hb.stoppedAt = 0;
+        if (typeof watchTimeMs === 'number' && watchTimeMs > (hb.watchTimeMs || 0)) {
+            hb.watchTimeMs = watchTimeMs;
+        }
+        if (typeof bandwidthBytes === 'number' && bandwidthBytes > (hb.bandwidthBytes || 0)) {
+            hb.bandwidthBytes = bandwidthBytes;
+        }
+    }
+
+    function stopLiveStreamerHeartbeat(tabId, channel) {
+        if (!channel) return;
+        var now = Date.now();
+        var hb = liveStreamerHeartbeats[channel];
+        if (!hb) {
+            hb = { at: 0, stoppedAt: now, watchTimeMs: 0, bandwidthBytes: 0, tabs: {} };
+            liveStreamerHeartbeats[channel] = hb;
+        }
+        if (tabId && hb.tabs) {
+            delete hb.tabs[tabId];
+        }
+        if (pruneLiveHeartbeatTabs(hb, now) === 0) {
+            hb.stoppedAt = now;
+        }
+    }
+
+    function clearLiveStreamerHeartbeats(channel, broadcast) {
+        if (channel) {
+            delete liveStreamerHeartbeats[channel];
+        } else {
+            liveStreamerHeartbeats = {};
+        }
+        if (broadcast && typeof configChannel !== 'undefined' && configChannel) {
+            try {
+                configChannel.postMessage({
+                    type: 'streamerLiveClear',
+                    channel: channel || null
+                });
+            } catch (eBcClr) {}
+        }
+    }
+
+    function emitLiveStreamerTick(channel) {
+        if (!channel) return;
+        var s = pageStats && pageStats.streamers && pageStats.streamers[channel];
+        var at = (s && s.lastSeen) || Date.now();
+        var wt = s ? (s.watchTimeMs || 0) : 0;
+        var bw = s ? (s.bandwidthBytes || 0) : 0;
+        activeLiveHeartbeatChannel = channel;
+        noteLiveStreamerHeartbeat(TAB_ID, channel, at, wt, bw);
+        if (typeof configChannel !== 'undefined' && configChannel) {
+            try {
+                configChannel.postMessage({
+                    type: 'streamerLiveTick',
+                    tabId: TAB_ID,
+                    channel: channel,
+                    at: at,
+                    watchTimeMs: wt,
+                    bandwidthBytes: bw
+                });
+            } catch (eBcLive) {}
+        }
+    }
+
+    function emitLiveStreamerStop() {
+        var prev = activeLiveHeartbeatChannel;
+        if (!prev) return;
+        activeLiveHeartbeatChannel = null;
+        stopLiveStreamerHeartbeat(TAB_ID, prev);
+        if (typeof configChannel !== 'undefined' && configChannel) {
+            try {
+                configChannel.postMessage({
+                    type: 'streamerLiveStop',
+                    tabId: TAB_ID,
+                    channel: prev
+                });
+            } catch (eBcStop) {}
+        }
+    }
+
+    function getStreamerLiveWatchMs(channel, s) {
+        var base = s ? (s.watchTimeMs || 0) : 0;
+        var hb = liveStreamerHeartbeats[channel];
+        if (hb && (Date.now() - (hb.at || 0)) < STREAMER_LIVE_WINDOW_MS && (hb.watchTimeMs || 0) > base) {
+            return hb.watchTimeMs;
+        }
+        return base;
+    }
+
+    function getStreamerLiveBandwidthBytes(channel, s) {
+        var base = s ? (s.bandwidthBytes || 0) : 0;
+        var hb = liveStreamerHeartbeats[channel];
+        if (hb && (Date.now() - (hb.at || 0)) < STREAMER_LIVE_WINDOW_MS && (hb.bandwidthBytes || 0) > base) {
+            return hb.bandwidthBytes;
+        }
+        return base;
+    }
 
     function isStreamerLive(channel) {
         var s = pageStats.streamers[channel];
+        if (!s) return false;
 
-        return !!s &&
-            (Date.now() - (s.lastSeen || 0)) < STREAMER_LIVE_WINDOW_MS;
+        var now = Date.now();
+        var hb = liveStreamerHeartbeats[channel];
+        if (hb) {
+            var aliveTabs = pruneLiveHeartbeatTabs(hb, now);
+            if (aliveTabs > 0 && (now - (hb.at || 0)) < STREAMER_LIVE_WINDOW_MS) {
+                return true;
+            }
+            if (hb.stoppedAt && hb.stoppedAt >= (s.lastSeen || 0)) {
+                return false;
+            }
+        }
+
+        return (now - (s.lastSeen || 0)) < STREAMER_LIVE_WINDOW_MS;
     }
 
     // ============================================================
@@ -6042,6 +6338,8 @@
 
                 mergeStatsFrom(purgePrerollAds(migrateAdPubs(incoming)));
 
+                clearLiveStreamerHeartbeats(null, true);
+
                 // Une restauration remplace : le nouvel epoch dit aux
                 // autres onglets de jeter leur delta, qui porterait
                 // sinon sur des chiffres d'avant l'import.
@@ -6471,6 +6769,46 @@
                         recordThroughputSample(event.data.tabId, event.data.bytes);
 
                         refreshLiveThroughput();
+                    }
+
+                    if (event.data && event.data.type === 'vodThroughput') {
+                        recordThroughputSample(
+                            event.data.tabId,
+                            event.data.bytes,
+                            event.data.minElapsedMs
+                        );
+
+                        refreshLiveThroughput();
+                    }
+
+                    if (event.data && event.data.type === 'vodThroughputStop') {
+                        clearThroughputForTab(event.data.tabId);
+
+                        refreshLiveThroughput();
+                    }
+
+                    if (event.data && event.data.type === 'streamerLiveTick') {
+                        noteLiveStreamerHeartbeat(
+                            event.data.tabId,
+                            event.data.channel,
+                            event.data.at,
+                            event.data.watchTimeMs,
+                            event.data.bandwidthBytes
+                        );
+
+                        refreshLiveStreamerRows();
+                    }
+
+                    if (event.data && event.data.type === 'streamerLiveStop') {
+                        stopLiveStreamerHeartbeat(event.data.tabId, event.data.channel);
+
+                        refreshLiveStreamerRows();
+                    }
+
+                    if (event.data && event.data.type === 'streamerLiveClear') {
+                        clearLiveStreamerHeartbeats(event.data.channel, false);
+
+                        refreshLiveStreamerRows();
                     }
 
                     if (event.data && event.data.type === 'bandwidth' && event.data.tabId === TAB_ID) {
@@ -13450,6 +13788,10 @@ function showAddProxyForm() {
             dvrStatusTimer = null;
         }
 
+        if (typeof dvrOnReturnToLiveChat === 'function') {
+            dvrOnReturnToLiveChat(true);
+        }
+
         dvrDestroyPlayback();
 
         dvrUncoverPicture();
@@ -13478,6 +13820,10 @@ function showAddProxyForm() {
         // Le choix de rendu appartient à la source qu'on quitte.
         dvrManualLevel = -1;
         dvrSwitching = false;
+
+        if (typeof dvrVodResetThroughput === 'function') {
+            dvrVodResetThroughput(true);
+        }
 
         if (dvrHls) {
             try {
@@ -13714,12 +14060,18 @@ function showAddProxyForm() {
             return;
         }
 
+        var wasReplayingBeforeLive = !isInitialMount && !dvrIsLive();
+
         dvrDestroyPlayback();
 
         dvrRestoreNativeControls();
         dvrUncoverPicture();
         clearStraySdaHiddenOnPlayer(null);
         dvrSourceKind = 'live';
+
+        if (wasReplayingBeforeLive && typeof dvrOnReturnToLiveChat === 'function') {
+            dvrOnReturnToLiveChat(false);
+        }
 
         // Revenir au direct annule le gel : on y est, il n'y a plus
         // rien à rattraper. Et le retard visé n'a plus d'objet.
@@ -18032,6 +18384,10 @@ function showAddProxyForm() {
         try {
             dvrVideo.currentTime = target;
         } catch (e) {}
+
+        if (typeof dvrScheduleReplayChatSync === 'function') {
+            dvrScheduleReplayChatSync('seek');
+        }
     }
 
     function dvrLoadSource(kind, offset) {
@@ -18181,9 +18537,10 @@ function showAddProxyForm() {
         // des segments déjà comptés quand le lecteur Twitch les a
         // reçus : on ne la recompte pas.
         //
-        // Aucune source n'est passée : elle décrit la MÉTHODE de
-        // mesure du direct, affichée sous le total du dashboard, et
-        // un VOD n'a pas à la réécrire.
+        // Les octets sont mesurés directement sur les segments reçus
+        // par hls.js ('network'), et le débit instantané est lissé sur
+        // la durée réelle des segments VOD (~10 s) puis diffusé aux
+        // autres onglets (Dashboard compris).
         if (kind === 'vod') {
             dvrHls.on(
                 lib.Events.FRAG_LOADED,
@@ -18194,12 +18551,23 @@ function showAddProxyForm() {
                         data.payload.byteLength;
 
                     if (bytes > 0 && dvrChannelInUse) {
+                        lastNetworkBytesAt = Date.now();
+
                         recordBandwidthBytes(
                             dvrChannelInUse,
                             bytes,
-                            null,
+                            'network',
                             { viaProxy: false }
                         );
+
+                        dvrVodRecordFragThroughput(
+                            bytes,
+                            data && data.frag && data.frag.duration
+                        );
+
+                        if (activeLiveHeartbeatChannel === dvrChannelInUse) {
+                            emitLiveStreamerTick(dvrChannelInUse);
+                        }
                     }
                 }
             );
@@ -20584,6 +20952,10 @@ function showAddProxyForm() {
         }
 
         dvrRefreshControls();
+
+        if (typeof dvrTickReplayChatSync === 'function') {
+            dvrTickReplayChatSync();
+        }
 
         var offset = dvrCurrentOffset();
 
@@ -31159,6 +31531,7 @@ dashboardButton.style.visibility = 'hidden';
     // lecteur en cours — évite de masquer le stream.
     function openStatsDashboardInNewTab(initialTab) {
         try {
+            flushStatsSave();
 
             // On évite l'accueil Twitch ("/") : il autoplay une
             // preview de stream en vedette (parfois avec le son).
@@ -31322,6 +31695,8 @@ dashboardButton.style.visibility = 'hidden';
         var previousEpoch = pageStats.epoch || 0;
 
         pageStats = defaultStats();
+
+        clearLiveStreamerHeartbeats(null, true);
 
         // Le nouvel epoch dit aux autres onglets de jeter ce qu'ils
         // gardaient en mémoire : sinon leur prochaine sauvegarde
@@ -31655,12 +32030,20 @@ dashboardButton.style.visibility = 'hidden';
 
             row.classList.toggle('tp9s-row-live', live);
 
+            var dispWatchMs = live
+                ? getStreamerLiveWatchMs(channel, s)
+                : (s.watchTimeMs || 0);
+
+            var dispBwBytes = live
+                ? getStreamerLiveBandwidthBytes(channel, s)
+                : (s.bandwidthBytes || 0);
+
             var watchCell = row.querySelector('[data-tp9-live-watch]');
 
             if (watchCell) {
                 var watchText = live
-                    ? formatDurationPrecise(s.watchTimeMs)
-                    : formatDuration(s.watchTimeMs);
+                    ? formatDurationPrecise(dispWatchMs)
+                    : formatDuration(dispWatchMs);
 
                 // Comparé avant écriture : réécrire un textContent
                 // identique casse une sélection de texte en cours.
@@ -31674,8 +32057,8 @@ dashboardButton.style.visibility = 'hidden';
             if (bwCell) {
                 var bwHTML = withUnit(
                     live
-                        ? formatBytesPrecise(s.bandwidthBytes)
-                        : formatBytes(s.bandwidthBytes)
+                        ? formatBytesPrecise(dispBwBytes)
+                        : formatBytes(dispBwBytes)
                 );
 
                 if (bwCell.innerHTML !== bwHTML) {
@@ -33264,7 +33647,8 @@ dashboardButton.style.visibility = 'hidden';
         });
 
         var maxBandwidth = channels.reduce(function (max, channel) {
-            return Math.max(max, pageStats.streamers[channel].bandwidthBytes);
+            var st = pageStats.streamers[channel];
+            return Math.max(max, getStreamerLiveBandwidthBytes(channel, st));
         }, 0);
 
         // ---- cartes ----
@@ -33371,8 +33755,18 @@ dashboardButton.style.visibility = 'hidden';
                 ? pageConfig.proxies.find(function (p) { return p.id === bestProxyId; })
                 : null;
 
+            var live = isStreamerLive(channel);
+
+            var dispWatchMs = live
+                ? getStreamerLiveWatchMs(channel, s)
+                : (s.watchTimeMs || 0);
+
+            var dispBwBytes = live
+                ? getStreamerLiveBandwidthBytes(channel, s)
+                : (s.bandwidthBytes || 0);
+
             var bwPercent = maxBandwidth
-                ? Math.max(6, Math.round((s.bandwidthBytes / maxBandwidth) * 100))
+                ? Math.max(6, Math.round((dispBwBytes / maxBandwidth) * 100))
                 : 0;
 
             var avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length];
@@ -33393,8 +33787,6 @@ dashboardButton.style.visibility = 'hidden';
                         initialLetter(displayName) +
                     '</div>'
                 );
-
-            var live = isStreamerLive(channel);
 
             return (
                 '<div class="tp9s-table-row tp9s-table-row-streamers' +
@@ -33418,8 +33810,8 @@ dashboardButton.style.visibility = 'hidden';
                     '<div class="tp9s-td tp9s-td-strong" data-tp9-live-watch>' +
                         escapeHTML(
                             live
-                                ? formatDurationPrecise(s.watchTimeMs)
-                                : formatDuration(s.watchTimeMs)
+                                ? formatDurationPrecise(dispWatchMs)
+                                : formatDuration(dispWatchMs)
                         ) +
                     '</div>' +
                     '<div class="tp9s-td">' +
@@ -33448,8 +33840,8 @@ dashboardButton.style.visibility = 'hidden';
                         '<span data-tp9-live-bw>' +
                             withUnit(
                                 live
-                                    ? formatBytesPrecise(s.bandwidthBytes)
-                                    : formatBytes(s.bandwidthBytes)
+                                    ? formatBytesPrecise(dispBwBytes)
+                                    : formatBytes(dispBwBytes)
                             ) +
                         '</span>' +
                     '</div>' +
@@ -33526,6 +33918,7 @@ dashboardButton.style.visibility = 'hidden';
         embed: 'Embedded player',
         popout: 'Popout player',
         autoplay: 'Autoplay player',
+        vod: 'Ad-free VOD',
         proxy: 'Proxy',
         blank: 'Blank image'
     };
@@ -33538,6 +33931,7 @@ dashboardButton.style.visibility = 'hidden';
         embed: 'Lecteur intégré',
         popout: 'Lecteur popout',
         autoplay: 'Lecteur autoplay',
+        vod: 'VOD sans pub',
         proxy: 'Proxy',
         blank: 'Image vide'
     };
@@ -33572,13 +33966,16 @@ dashboardButton.style.visibility = 'hidden';
             return '<span class="tp9s-td-dim">—</span>';
         }
         var blank = entry.backup === 'blank';
+        var isVod = entry.backup === 'vod';
         return (
             '<span class="tp9s-tag" style="--tone:' + (blank ? '#ffcf7a' : '#00e57a') + '"' +
                 ' data-tp9-tip-info data-tp9-tip="' + escapeHTML(blank ? tt('Aucun flux sans pub trouvé', 'No ad-free stream found') : tt('Flux sans pub utilisé', 'Ad-free stream used')) + '"' +
                 ' data-tp9-tip-sub="' + escapeHTML(
                     blank
                         ? tt('La pub a été remplacée par une image vide le temps de la coupure.', 'The ad was replaced by a blank image during the break.')
-                        : tt('Le même stream, pris sur un autre lecteur Twitch sans pub.', 'The same stream, taken from another ad-free Twitch player.')
+                        : isVod
+                            ? tt('Lecture continue sur la VOD du live (~30 s du direct), sans aucune coupure pub.', 'Continuous playback on the live VOD (~30s behind live), with zero ad breaks.')
+                            : tt('Le même stream, pris sur un autre lecteur Twitch sans pub.', 'The same stream, taken from another ad-free Twitch player.')
                 ) + '">' +
                 escapeHTML(adBackupLabel(entry.backup)) +
                 (entry.quality ? ' · ' + escapeHTML(entry.quality) : '') +
@@ -33760,9 +34157,15 @@ dashboardButton.style.visibility = 'hidden';
         var recentRows = events.slice(-15).reverse().map(function (e) {
             var running =
                 !e.ms &&
-                spCurrentAdKey &&
-                spCurrentAdKey.t === e.t &&
-                spCurrentAdKey.channel === e.channel;
+                (
+                    (spCurrentAdKey &&
+                        spCurrentAdKey.t === e.t &&
+                        spCurrentAdKey.channel === e.channel) ||
+                    (typeof expVodCommercialBreak !== 'undefined' &&
+                        expVodCommercialBreak &&
+                        expVodCommercialBreak.t === e.t &&
+                        expVodCommercialBreak.channel === e.channel)
+                );
 
             return (
                 '<div class="tp9s-table-row tp9s-table-row-adlog">' +
@@ -33865,6 +34268,8 @@ dashboardButton.style.visibility = 'hidden';
 
         delete pageStats.streamers[channel];
 
+        clearLiveStreamerHeartbeats(channel, true);
+
         saveStatsNow();
 
         logEvent('warn', 'Fiche streamer supprimée : ' + channel);
@@ -33951,6 +34356,8 @@ dashboardButton.style.visibility = 'hidden';
             subtractStreamerFromTotals(pageStats.streamers[channel]);
 
             delete pageStats.streamers[channel];
+
+            clearLiveStreamerHeartbeats(channel, true);
         });
 
         saveStatsNow();
@@ -41765,6 +42172,7 @@ dashboardButton.style.visibility = 'hidden';
         mobile_web: 'mobile',
         embed: 'intégré',
         autoplay: 'autoplay',
+        vod: 'VOD',
         proxy: 'proxy'
     };
 
@@ -41774,6 +42182,7 @@ dashboardButton.style.visibility = 'hidden';
         mobile_web: 'mobile',
         embed: 'embed',
         autoplay: 'autoplay',
+        vod: 'VOD',
         proxy: 'proxy'
     };
 
@@ -42377,6 +42786,14 @@ dashboardButton.style.visibility = 'hidden';
     var EXP_VOD_MIN_DEPTH_SECONDS = 40;
     var EXP_VOD_TARGET_OFFSET_SECONDS = 30;
     var EXP_VOD_CHAT_QUEUE_MAX = 2500;
+    // Latence moyenne d'un viewer Twitch en direct (Low-Latency HLS ~2,2 s) :
+    // un message envoyé à tmi-sent-ts réagit à une image capturée au mieux à
+    // (tmi-sent-ts - 2,2 s). Ajouter ce décalage à l'horloge de la tête de lecture
+    // VOD aligne les réactions du tchat sur l'action à l'écran exactement comme en
+    // direct, sans aucun risque de spoil.
+    var EXP_VOD_LIVE_VIEWER_LATENCY_MS = 2200;
+    // Délai moyen d'empaquetage/publication CloudFront après la fin d'un segment VOD.
+    var EXP_VOD_PACKAGER_DELAY_MS = 2000;
 
     var expVodHoverListenersBound = false;
     var expVodHoverTimer = null;
@@ -42391,6 +42808,9 @@ dashboardButton.style.visibility = 'hidden';
     var expVodInitialSnapPending = false;
     var expVodPlaylistHasEndlist = false;
     var expVodPdtZeroMs = 0;
+    var expVodLocalZeroMs = 0;
+    var expVodPrevLevelPollAt = 0;
+    var expVodAnchorSamples = 0;
     var expVodLastVodEndSec = 0;
     var expVodLastCushionSec = 24;
     var expVodMeasuredEdgeLagSec = 0;
@@ -42413,12 +42833,47 @@ dashboardButton.style.visibility = 'hidden';
     var expVodBootCheckQueued = false;
     var expVodCurtainEl = null;
 
+    var EXP_VOD_LIVE_IRC_HISTORY_MAX = 1800;
+    var EXP_VOD_LIVE_IRC_MAX_AGE_MS = 45 * 60 * 1000;
+    var DVR_VOD_COMMENTS_SHA256 = 'b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a';
+    var DVR_VOD_CHAT_CONTEXT_COUNT = 12;
+    var DVR_VOD_CHAT_PREFETCH_AHEAD_SEC = 26;
+    var DVR_VOD_CHAT_QUEUE_MAX = 3000;
+
     var expVodChatQueue = [];
     var expVodChatFlushTimer = null;
+    var expVodChatVisBound = false;
     var expVodServerClockOffsetMs = 0;
     var expVodHasServerClockOffset = false;
+    var expVodClockLowStreak = 0;
     var expVodCachedSelfLogin = '';
     var expVodCachedSelfLoginAt = 0;
+
+    var expVodLiveIrcHistory = [];
+    var expVodLiveIrcSeenIds = Object.create(null);
+    var expVodLiveIrcChannel = '';
+
+    var dvrVodChatActive = false;
+    var dvrVodChatSessionToken = 0;
+    var dvrVodChatVideoId = '';
+    var dvrVodChatChannel = '';
+    var dvrVodChatQueue = [];
+    var dvrVodChatSeenIds = Object.create(null);
+    var dvrVodChatSeenCount = 0;
+    var dvrVodChatNextCursor = '';
+    var dvrVodChatHasNextPage = false;
+    var dvrVodChatFetchInFlight = false;
+    var dvrVodChatLastReqOffsetSec = -1;
+    var dvrVodChatLastMaxOffsetSec = -1;
+    var dvrVodChatDisableCursor = false;
+    var dvrVodChatTailPollAt = 0;
+
+    var dvrReplayChatDebounceTimer = null;
+    var dvrReplayChatWasActive = false;
+    var dvrReplayChatHasCustomView = false;
+    var dvrReplayChatLastChannel = '';
+    var dvrReplayChatLastMediaSec = -1;
+    var dvrReplayChatPendingSocket = false;
 
     var expVodSpadeUrl = 'https://spade.twitch.tv/track';
     var expVodSpadeBaseProps = {};
@@ -42536,10 +42991,14 @@ dashboardButton.style.visibility = 'hidden';
             dvrVideo &&
             expVodLastVodEndSec > 0
         ) {
+            var prevMediaSecBeforeSnap = Number(dvrVideo.currentTime) || 0;
             var idealT = Math.max(0.5, expVodLastVodEndSec - expVodLastCushionSec);
             try {
                 dvrVideo.currentTime = idealT;
             } catch (eSeek) {}
+            if (typeof dvrOnSnapToVodEdgeChat === 'function') {
+                dvrOnSnapToVodEdgeChat(prevMediaSecBeforeSnap, idealT);
+            }
             if (dvrVideo.paused) {
                 try {
                     var pPlay = dvrVideo.play();
@@ -42588,6 +43047,23 @@ dashboardButton.style.visibility = 'hidden';
         var targetDur = Number(details.targetduration) || Number(lastFrag.duration) || 10;
         var cushion = Math.max(20, Math.min(32, targetDur * 2.4));
         var prevVodEnd = expVodLastVodEndSec;
+        var nowLoad = Date.now();
+        if (lastEnd > 0 && details.live !== false) {
+            if (prevVodEnd > 0 && lastEnd > prevVodEnd) {
+                var rawGap = expVodPrevLevelPollAt > 0 ? Math.max(0, nowLoad - expVodPrevLevelPollAt) : (targetDur * 500);
+                var pubWindowMs = Math.max(1000, Math.min(rawGap, targetDur * 1000));
+                var sampleZero = nowLoad - (lastEnd * 1000) - (0.5 * pubWindowMs + EXP_VOD_PACKAGER_DELAY_MS);
+                if (expVodAnchorSamples === 0 || !(expVodLocalZeroMs > 0) || Math.abs(sampleZero - expVodLocalZeroMs) > 8000) {
+                    expVodLocalZeroMs = sampleZero;
+                } else {
+                    expVodLocalZeroMs = expVodLocalZeroMs * 0.75 + sampleZero * 0.25;
+                }
+                expVodAnchorSamples++;
+            } else if (!(expVodLocalZeroMs > 0)) {
+                expVodLocalZeroMs = nowLoad - (lastEnd * 1000) - (0.5 * targetDur * 1000 + EXP_VOD_PACKAGER_DELAY_MS);
+            }
+            expVodPrevLevelPollAt = nowLoad;
+        }
         if (lastEnd > 0) {
             expVodLastVodEndSec = lastEnd;
             expVodLastCushionSec = cushion;
@@ -42668,6 +43144,223 @@ dashboardButton.style.visibility = 'hidden';
         return true;
     }
 
+    var expVodCommercialBreak = null;
+    var expVodLastCommercialSig = '';
+    var expVodLastCommercialAt = 0;
+
+    function expVodCurrentQualityLabel() {
+        if (typeof dvrHls !== 'undefined' && dvrHls && Array.isArray(dvrHls.levels) && dvrHls.currentLevel >= 0) {
+            var lv = dvrHls.levels[dvrHls.currentLevel];
+            if (lv && lv.height > 0) {
+                var fps = lv.attrs && lv.attrs['FRAME-RATE'] ? Math.round(parseFloat(lv.attrs['FRAME-RATE'])) : 0;
+                return lv.height + 'p' + (fps >= 50 ? '60' : '');
+            }
+        }
+        if (typeof dvrVideo !== 'undefined' && dvrVideo && dvrVideo.videoHeight > 0) {
+            return dvrVideo.videoHeight + 'p';
+        }
+        if (typeof dvrChannelInUse !== 'undefined' && dvrChannelInUse && typeof dvrVodAccessFor === 'function') {
+            var found = dvrVodAccessFor(dvrChannelInUse);
+            var u = found && found.access && found.access.url;
+            if (u) {
+                var m = u.match(/\/(\d{3,4}p(?:30|60)?)\/index-dvr\.m3u8/i);
+                if (m && m[1]) return m[1];
+                if (/\/chunked\/index-dvr\.m3u8/i.test(u)) return 'Source';
+            }
+        }
+        return '';
+    }
+
+    function expVodKnownChannelIdsFor(channel) {
+        var ids = [];
+        if (!channel) return ids;
+        var vod = typeof dvrVodCache !== 'undefined' && dvrVodCache[channel];
+        if (vod && vod.channelId) {
+            ids.push(String(vod.channelId));
+        }
+        if (typeof dvrLastKnownRoomIdByChannel !== 'undefined' && dvrLastKnownRoomIdByChannel && dvrLastKnownRoomIdByChannel[channel]) {
+            var rid = String(dvrLastKnownRoomIdByChannel[channel]);
+            if (ids.indexOf(rid) === -1) ids.push(rid);
+        }
+        if (typeof expVodSpadeBaseProps !== 'undefined' && expVodSpadeBaseProps && expVodSpadeBaseProps.channel_id) {
+            var spCh = expVodSpadeBaseProps.channel ? String(expVodSpadeBaseProps.channel).toLowerCase() : '';
+            if (!spCh || spCh === channel) {
+                var spId = String(expVodSpadeBaseProps.channel_id);
+                if (ids.indexOf(spId) === -1) ids.push(spId);
+            }
+        }
+        return ids;
+    }
+
+    function expVodFindCommercialAdEntry(channel, stamp) {
+        var list = pageStats && pageStats.adBlocks;
+        if (!Array.isArray(list) || !channel || !stamp) return null;
+        for (var i = list.length - 1; i >= 0; i--) {
+            if (list[i] && list[i].t === stamp && list[i].channel === channel) {
+                return list[i];
+            }
+        }
+        return null;
+    }
+
+    function expVodOnPubsubCommercial(lengthSec, serverTimeSec, topicChannelId) {
+        if (pageConfig.statsEnabled === false) return false;
+        if (!expVodAdblockOn()) return false;
+        if (!expVodIsPlayingVod() && !expVodIsStartupGateActive()) return false;
+        if (typeof dvrStreamEnded === 'function' && dvrStreamEnded()) return false;
+
+        var channel = (dvrChannelInUse || expVodStartupGateChannel || getTestChannel() || '').toLowerCase();
+        if (!channel) return false;
+
+        if (topicChannelId) {
+            var knownIds = expVodKnownChannelIdsFor(channel);
+            if (knownIds.length > 0 && knownIds.indexOf(String(topicChannelId)) === -1) {
+                return false;
+            }
+        }
+
+        var rawSec = Math.round(Number(lengthSec) || 0);
+        if (!(rawSec > 0)) return false;
+        var sec = Math.max(5, Math.min(600, rawSec));
+        var now = Date.now();
+        var srvBucket = Math.round((Number(serverTimeSec) || 0) / 2);
+        var sig = channel + '|' + srvBucket + '|' + sec;
+
+        if (sig === expVodLastCommercialSig && (now - expVodLastCommercialAt) < 45000) {
+            return false;
+        }
+        if (
+            expVodCommercialBreak &&
+            expVodCommercialBreak.channel === channel &&
+            expVodCommercialBreak.remainingMs > 0 &&
+            (now - expVodCommercialBreak.startedAt) < Math.max(15000, expVodCommercialBreak.targetMs - 5000)
+        ) {
+            return false;
+        }
+
+        expVodLastCommercialSig = sig;
+        expVodLastCommercialAt = now;
+
+        if (spStreamStats.channel !== channel) {
+            spResetStreamStats(channel);
+        }
+
+        spStreamStats.count = (spStreamStats.count || 0) + 1;
+        pageStats.totals.adsBlockedGlobal = (pageStats.totals.adsBlockedGlobal || 0) + 1;
+        var streamer = getStreamerStats(channel);
+        streamer.adsBlocked = (streamer.adsBlocked || 0) + 1;
+        streamer.adPubs = streamer.adPubs || 0;
+
+        if (!Array.isArray(pageStats.adBlocks)) {
+            pageStats.adBlocks = [];
+        }
+        var created = {
+            t: now,
+            channel: channel,
+            ms: 0,
+            pubs: 0,
+            midroll: true,
+            backup: 'vod',
+            quality: expVodCurrentQualityLabel()
+        };
+        pageStats.adBlocks.push(created);
+        if (pageStats.adBlocks.length > AD_BLOCKS_MAX) {
+            pageStats.adBlocks.shift();
+        }
+
+        var totalPubs = Math.max(1, Math.round(sec / 30));
+        spAddPubs(channel, created, 1);
+
+        expVodCommercialBreak = {
+            t: now,
+            channel: channel,
+            startedAt: now,
+            targetMs: sec * 1000,
+            creditedMs: 0,
+            remainingMs: sec * 1000,
+            totalPubs: totalPubs,
+            creditedPubs: 1
+        };
+
+        logEvent(
+            'success',
+            '🛡️ Coupure pub évitée via VOD sans pub sur ' + channel +
+            ' (' + sec + ' s · ' + formatPubs(totalPubs) + ')'
+        );
+
+        spSaveStreamStats();
+        scheduleStatsSave();
+        renderAdblockStats();
+        if (
+            typeof dashboardVisible !== 'undefined' &&
+            dashboardVisible &&
+            typeof activeDashboardTab !== 'undefined' &&
+            activeDashboardTab === 'stats' &&
+            typeof updateQuickStatsPane === 'function'
+        ) {
+            updateQuickStatsPane();
+        }
+        if (statsDashboardVisible) {
+            renderStatsDashboard(true);
+        }
+        return true;
+    }
+
+    function expVodAdvanceCommercialBreak(channel, watchedMs) {
+        if (!expVodCommercialBreak) return;
+        if (!channel || expVodCommercialBreak.channel !== channel) {
+            expVodCommercialBreak = null;
+            return;
+        }
+        if (!(watchedMs > 0) || !(expVodCommercialBreak.remainingMs > 0)) {
+            if (expVodCommercialBreak.remainingMs <= 0) {
+                expVodCommercialBreak = null;
+            }
+            return;
+        }
+
+        var sliceMs = Math.min(watchedMs, expVodCommercialBreak.remainingMs);
+        expVodCommercialBreak.creditedMs += sliceMs;
+        expVodCommercialBreak.remainingMs -= sliceMs;
+
+        if (spStreamStats.channel !== channel) {
+            spResetStreamStats(channel);
+        }
+        spStreamStats.ms = (spStreamStats.ms || 0) + sliceMs;
+        pageStats.totals.adsBlockedMsGlobal = (pageStats.totals.adsBlockedMsGlobal || 0) + sliceMs;
+        var streamer = getStreamerStats(channel);
+        streamer.adsBlockedMs = (streamer.adsBlockedMs || 0) + sliceMs;
+        streamer.adShareAdMs = (streamer.adShareAdMs || 0) + sliceMs;
+
+        var entry = expVodFindCommercialAdEntry(channel, expVodCommercialBreak.t);
+        if (entry) {
+            entry.ms = expVodCommercialBreak.creditedMs;
+            if (!entry.quality) {
+                var q = expVodCurrentQualityLabel();
+                if (q) entry.quality = q;
+            }
+        }
+
+        var duePubs = expVodCommercialBreak.remainingMs <= 0
+            ? expVodCommercialBreak.totalPubs
+            : Math.min(
+                expVodCommercialBreak.totalPubs,
+                1 + Math.floor(expVodCommercialBreak.creditedMs / 30000)
+            );
+        var addPubs = duePubs - expVodCommercialBreak.creditedPubs;
+        if (addPubs > 0) {
+            spAddPubs(channel, entry, addPubs);
+            expVodCommercialBreak.creditedPubs += addPubs;
+        }
+
+        if (expVodCommercialBreak.remainingMs <= 0) {
+            expVodCommercialBreak = null;
+        }
+
+        spSaveStreamStats();
+        renderAdblockStats();
+    }
+
     function expVodShouldHoldBackgroundLive() {
         return expVodIsPlayingVod();
     }
@@ -42675,6 +43368,20 @@ dashboardButton.style.visibility = 'hidden';
     function expVodPauseBackgroundLive() {
         if (!expVodShouldHoldBackgroundLive()) {
             return;
+        }
+        if (typeof spAd !== 'undefined' && spAd && spAd.active) {
+            if (typeof spCountAd === 'function') {
+                spCountAd({ active: false, channel: spAd.channel || getTestChannel() });
+            }
+            spAd.active = false;
+            spAd.stripping = false;
+            spAd.searching = false;
+            if (typeof spHideBadge === 'function') {
+                spHideBadge();
+            }
+            if (typeof renderAdblockStats === 'function') {
+                renderAdblockStats();
+            }
         }
         var liveVid = (dvrLiveVideo && dvrLiveVideo.isConnected) ? dvrLiveVideo : findPlaybackVideo();
         if (!liveVid || isOwnPlayerVideo(liveVid)) {
@@ -43092,9 +43799,25 @@ dashboardButton.style.visibility = 'hidden';
         } catch (eSendMw) {}
     }
 
-    // ---- Synchronisation du tchat IRC sur l'horloge VOD (tmi-sent-ts) ----
+    // ---- Synchronisation du tchat IRC & Relecture de l'historique VOD/DVR ----
+    function dvrIsActiveReplay() {
+        return Boolean(
+            dvrOverlay &&
+            !dvrIsLive() &&
+            (dvrSourceKind === 'vod' || dvrSourceKind === 'buffer') &&
+            dvrVideo &&
+            !dvrVideo.ended
+        );
+    }
+
     function expVodShouldDelayChat() {
-        return Boolean(expVodIsPlayingVod() && !dvrStreamEnded());
+        if (expVodIsPlayingVod() && !dvrStreamEnded()) {
+            return true;
+        }
+        if (dvrIsActiveReplay() && (!expVodAdblockOn() || expVodIsRewoundFromVodEdge())) {
+            return true;
+        }
+        return false;
     }
 
     function expVodGetSelfLogin() {
@@ -43116,24 +43839,1097 @@ dashboardButton.style.visibility = 'hidden';
         return expVodCachedSelfLogin;
     }
 
+    function expVodUpdateServerClockFromTs(ts, now) {
+        if (!(ts > 0)) return false;
+        var measuredSkew = ts - now;
+        var offsetChanged = false;
+        if (!expVodHasServerClockOffset || measuredSkew > expVodServerClockOffsetMs + 1500) {
+            expVodServerClockOffsetMs = measuredSkew;
+            expVodHasServerClockOffset = true;
+            expVodClockLowStreak = 0;
+            offsetChanged = true;
+        } else if (measuredSkew >= expVodServerClockOffsetMs - 3000) {
+            expVodServerClockOffsetMs = expVodServerClockOffsetMs * 0.9 + measuredSkew * 0.1;
+            expVodClockLowStreak = 0;
+            offsetChanged = true;
+        } else {
+            expVodClockLowStreak++;
+            if (expVodClockLowStreak >= 5) {
+                expVodServerClockOffsetMs = measuredSkew;
+                expVodClockLowStreak = 0;
+                offsetChanged = true;
+            }
+        }
+        return offsetChanged;
+    }
+
+    function dvrVodZeroUtcMs(now) {
+        var refNow = now > 0 ? now : Date.now();
+        var serverNow = expVodHasServerClockOffset ? (refNow + expVodServerClockOffsetMs) : refNow;
+        var candidates = [];
+        if (expVodPdtZeroMs > 0) {
+            candidates.push(expVodPdtZeroMs);
+        }
+        if (expVodLocalZeroMs > 0) {
+            candidates.push(expVodLocalZeroMs + (expVodHasServerClockOffset ? expVodServerClockOffsetMs : 0));
+        }
+        if (dvrSourceKind === 'vod' && dvrSourceStartWall > 0) {
+            candidates.push(dvrSourceStartWall);
+        }
+        var ch = dvrChannelInUse || getTestChannel();
+        if (ch && dvrVodCache[ch] && dvrVodCache[ch].startWall > 0) {
+            candidates.push(dvrVodCache[ch].startWall);
+        }
+        for (var i = 0; i < candidates.length; i++) {
+            var z = candidates[i];
+            if (z > 0 && (serverNow - z) >= 1000 && (serverNow - z) <= 72 * 3600 * 1000) {
+                return z;
+            }
+        }
+        return 0;
+    }
+
     function expVodCurrentPlayheadWallMs(now) {
         if (!dvrVideo) return 0;
         var curSec = Number(dvrVideo.currentTime) || 0;
-        var wallMs = expVodPdtZeroMs > 0
-            ? (expVodPdtZeroMs + curSec * 1000)
-            : (dvrSourceStartWall > 0 ? (dvrSourceStartWall + curSec * 1000) : 0);
-        if (!(wallMs > 0)) return 0;
         var serverNow = expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now;
-        var lag = serverNow - wallMs;
-        if (lag < 4000 || lag > 48 * 3600 * 1000) {
+        var candidates = [];
+        if (dvrSourceKind === 'vod') {
+            if (expVodPdtZeroMs > 0) {
+                candidates.push(expVodPdtZeroMs + curSec * 1000);
+            }
+            if (expVodLocalZeroMs > 0) {
+                candidates.push(
+                    (expVodLocalZeroMs + curSec * 1000) +
+                    (expVodHasServerClockOffset ? expVodServerClockOffsetMs : 0)
+                );
+            }
+            if (dvrSourceStartWall > 0) {
+                candidates.push(dvrSourceStartWall + curSec * 1000);
+            }
+        } else if (dvrSourceKind === 'buffer') {
+            if (dvrSourceStartWall > 0) {
+                candidates.push(
+                    (dvrSourceStartWall + curSec * 1000) +
+                    (expVodHasServerClockOffset ? expVodServerClockOffsetMs : 0)
+                );
+            }
+        } else if (dvrSourceStartWall > 0) {
+            candidates.push(dvrSourceStartWall + curSec * 1000);
+        }
+        for (var i = 0; i < candidates.length; i++) {
+            var wallMs = candidates[i];
+            if (wallMs > 0) {
+                var lag = serverNow - wallMs;
+                if (lag >= 1500 && lag <= 48 * 3600 * 1000) {
+                    return wallMs;
+                }
+            }
+        }
+        return 0;
+    }
+
+    function expVodEffectiveChatTargetWallMs(now) {
+        var vodWallMs = expVodCurrentPlayheadWallMs(now);
+        return vodWallMs > 0 ? (vodWallMs + EXP_VOD_LIVE_VIEWER_LATENCY_MS) : 0;
+    }
+
+    function expVodEffectiveChatDelayMs(now, targetWallMs) {
+        var target = targetWallMs > 0 ? targetWallMs : expVodEffectiveChatTargetWallMs(now);
+        if (target > 0) {
+            var serverNow = expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now;
+            return Math.max(1000, serverNow - target);
+        }
+        return Math.max(1000, (dvrCurrentOffset() || expVodCurrentEdgeOffset()) * 1000);
+    }
+
+    function expVodGetActiveIrcSocket(preferredWs) {
+        if (preferredWs && preferredWs.readyState === 1 && typeof preferredWs.dispatchEvent === 'function') {
+            return preferredWs;
+        }
+        for (var i = bttvActiveIrcSockets.length - 1; i >= 0; i--) {
+            var s = bttvActiveIrcSockets[i];
+            if (s && s.readyState === 1 && typeof s.dispatchEvent === 'function') {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    function expVodEnsureTrackedIrcSocket(ws) {
+        if (!ws || typeof ws.dispatchEvent !== 'function') return;
+        if (ws.url && ws.url.indexOf('irc-ws') === -1) return;
+        if (bttvActiveIrcSockets.indexOf(ws) === -1) {
+            bttvActiveIrcSockets.push(ws);
+            if (typeof ws.addEventListener === 'function') {
+                try {
+                    ws.addEventListener('close', function () {
+                        var idx = bttvActiveIrcSockets.indexOf(ws);
+                        if (idx !== -1) bttvActiveIrcSockets.splice(idx, 1);
+                    });
+                } catch (eCl) {}
+            }
+        }
+    }
+
+    function expVodExtractIrcMsgId(line) {
+        if (!line || line.charCodeAt(0) !== 64) return '';
+        var sp = line.indexOf(' ');
+        if (sp <= 1) return '';
+        var m = line.slice(1, sp).match(/(?:^|;)id=([^;]+)/);
+        return (m && m[1]) ? m[1] : '';
+    }
+
+    function expVodObserveIncomingIrcEvent(ws, ev, rawText) {
+        if (typeof rawText !== 'string' || !rawText) return;
+        if (ev && (ev.__tp9SyntheticReplay || ev.__tp9LiveHistoryRecorded)) return;
+        if (ev) {
+            try { ev.__tp9LiveHistoryRecorded = true; } catch (eMark) {}
+        }
+        var sock = ws || (ev && (ev.__tp9Ws || (ev.target && typeof ev.target.dispatchEvent === 'function' ? ev.target : null))) || null;
+        if (sock) {
+            expVodEnsureTrackedIrcSocket(sock);
+        }
+        if (rawText.indexOf('PRIVMSG #') === -1 && rawText.indexOf('USERNOTICE #') === -1) {
+            return;
+        }
+        var now = Date.now();
+        var activeCh = (getTestChannel() || expVodGetLivePageChannel() || '').toLowerCase();
+        if (activeCh && expVodLiveIrcChannel && expVodLiveIrcChannel !== activeCh) {
+            expVodLiveIrcHistory = [];
+            expVodLiveIrcSeenIds = Object.create(null);
+        }
+        if (activeCh) {
+            expVodLiveIrcChannel = activeCh;
+        }
+        var lines = rawText.split('\r\n');
+        for (var i = 0; i < lines.length; i++) {
+            var ln = lines[i];
+            if (!ln) continue;
+            var cmdMatch = ln.match(/\s(PRIVMSG|USERNOTICE)\s+#([a-z0-9_]+)/i);
+            if (!cmdMatch) continue;
+            var msgCh = cmdMatch[2].toLowerCase();
+            var isHistorical = /(?:^@|;)historical=1(?:;|\s)/.test(ln);
+            var ts = 0;
+            var tsMatch = ln.match(/(?:^@|;)tmi-sent-ts=(\d+)/);
+            if (tsMatch && tsMatch[1]) {
+                ts = parseInt(tsMatch[1], 10) || 0;
+                if (ts > 0 && !isHistorical) {
+                    expVodUpdateServerClockFromTs(ts, now);
+                }
+            }
+            if (activeCh && msgCh !== activeCh) continue;
+            if (!expVodLiveIrcChannel) expVodLiveIrcChannel = msgCh;
+            var msgId = expVodExtractIrcMsgId(ln);
+            if (msgId && expVodLiveIrcSeenIds[msgId]) continue;
+            if (msgId) expVodLiveIrcSeenIds[msgId] = 1;
+            var effTs = ts > 0 ? ts : (expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now);
+            var rec = {
+                id: msgId,
+                channel: msgCh,
+                line: ln,
+                tmiSentTs: effTs,
+                recordedAt: now
+            };
+            if (!expVodLiveIrcHistory.length || expVodLiveIrcHistory[expVodLiveIrcHistory.length - 1].tmiSentTs <= effTs) {
+                expVodLiveIrcHistory.push(rec);
+            } else {
+                var ins = expVodLiveIrcHistory.length;
+                while (ins > 0 && expVodLiveIrcHistory[ins - 1].tmiSentTs > effTs) {
+                    ins--;
+                }
+                expVodLiveIrcHistory.splice(ins, 0, rec);
+            }
+        }
+        var minKeepTs = (expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now) - EXP_VOD_LIVE_IRC_MAX_AGE_MS;
+        while (
+            expVodLiveIrcHistory.length > EXP_VOD_LIVE_IRC_HISTORY_MAX ||
+            (expVodLiveIrcHistory.length > 0 && expVodLiveIrcHistory[0].tmiSentTs < minKeepTs)
+        ) {
+            var oldRec = expVodLiveIrcHistory.shift();
+            if (oldRec && oldRec.id) {
+                delete expVodLiveIrcSeenIds[oldRec.id];
+            }
+        }
+    }
+
+    function dvrVodChatMarkSeen(msgId) {
+        if (!msgId) return;
+        if (!dvrVodChatSeenIds[msgId]) {
+            if (dvrVodChatSeenCount >= 6000) {
+                dvrVodChatSeenIds = Object.create(null);
+                dvrVodChatSeenCount = 0;
+            }
+            dvrVodChatSeenIds[msgId] = 1;
+            dvrVodChatSeenCount++;
+        }
+    }
+
+    function dvrVodChatReset() {
+        dvrVodChatSessionToken++;
+        dvrVodChatActive = false;
+        dvrVodChatVideoId = '';
+        dvrVodChatChannel = '';
+        dvrVodChatQueue = [];
+        dvrVodChatSeenIds = Object.create(null);
+        dvrVodChatSeenCount = 0;
+        dvrVodChatNextCursor = '';
+        dvrVodChatHasNextPage = false;
+        dvrVodChatFetchInFlight = false;
+        dvrVodChatLastReqOffsetSec = -1;
+        dvrVodChatLastMaxOffsetSec = -1;
+        dvrVodChatTailPollAt = 0;
+    }
+
+    function dvrNumericVodIdFor(ch) {
+        var entry = ch && dvrVodCache[ch];
+        var rawId = entry && entry.id ? String(entry.id) : '';
+        return /^\d+$/.test(rawId) ? rawId : '';
+    }
+
+    function dvrEscapeIrcTagValue(str) {
+        return String(str == null ? '' : str)
+            .replace(/\\/g, '\\\\')
+            .replace(/;/g, '\\:')
+            .replace(/ /g, '\\s')
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n');
+    }
+
+    function dvrConvertGqlCommentToIrc(node, channel, roomId, vodZeroUtcMs, smoothOffsetSec) {
+        if (!node || !node.message || !node.commenter) return null;
+        var login = String(node.commenter.login || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+        if (!login) return null;
+        var displayName = String(node.commenter.displayName || login).trim();
+        var userId = String(node.commenter.id || '');
+        var msgId = String(node.id || ('vodc-' + Math.round(smoothOffsetSec * 1000) + '-' + login));
+        var rawColor = String(node.message.userColor || '').trim();
+        var color = /^#[0-9a-fA-F]{3,6}$/.test(rawColor) ? rawColor : '';
+
+        var badgeList = [];
+        var isMod = false;
+        var isSub = false;
+        var isVip = false;
+        var userBadges = Array.isArray(node.message.userBadges) ? node.message.userBadges : [];
+        for (var b = 0; b < userBadges.length; b++) {
+            var ub = userBadges[b];
+            if (!ub || !ub.setID) continue;
+            var setId = String(ub.setID).trim();
+            if (!setId) continue;
+            var ver = (ub.version !== undefined && ub.version !== null && ub.version !== '') ? String(ub.version) : '1';
+            badgeList.push(setId + '/' + ver);
+            var lowSet = setId.toLowerCase();
+            if (lowSet === 'moderator' || lowSet === 'lead_moderator') isMod = true;
+            else if (lowSet === 'subscriber' || lowSet === 'founder') isSub = true;
+            else if (lowSet === 'vip') isVip = true;
+        }
+        var badgesStr = badgeList.join(',');
+
+        var frags = Array.isArray(node.message.fragments) ? node.message.fragments : [];
+        var bodyParts = [];
+        var emoteRangesById = Object.create(null);
+        var emoteOrder = [];
+        var cpOffset = 0;
+        for (var f = 0; f < frags.length; f++) {
+            var frag = frags[f];
+            if (!frag) continue;
+            var fText = String(frag.text != null ? frag.text : '').replace(/[\r\n]+/g, ' ');
+            if (!fText) continue;
+            var cpLen = Array.from(fText).length;
+            var emObj = frag.emoticon || frag.emote || null;
+            var emId = emObj && (emObj.emoticonID || emObj.emoteID || emObj.id);
+            if (emId && cpLen > 0) {
+                var emKey = String(emId);
+                if (!emoteRangesById[emKey]) {
+                    emoteRangesById[emKey] = [];
+                    emoteOrder.push(emKey);
+                }
+                emoteRangesById[emKey].push(cpOffset + '-' + (cpOffset + cpLen - 1));
+            }
+            bodyParts.push(fText);
+            cpOffset += cpLen;
+        }
+        var fullBody = bodyParts.join('');
+        if (!fullBody.trim()) return null;
+
+        var emoteTagParts = [];
+        for (var e = 0; e < emoteOrder.length; e++) {
+            var ek = emoteOrder[e];
+            emoteTagParts.push(ek + ':' + emoteRangesById[ek].join(','));
+        }
+        var emotesTag = emoteTagParts.join('/');
+
+        var parsedCreated = node.createdAt ? Date.parse(node.createdAt) : NaN;
+        var sentTs = (isFinite(parsedCreated) && parsedCreated > 0)
+            ? Math.round(parsedCreated)
+            : Math.round((vodZeroUtcMs > 0 ? vodZeroUtcMs : Date.now()) + smoothOffsetSec * 1000);
+
+        var tags =
+            '@badge-info=;' +
+            'badges=' + dvrEscapeIrcTagValue(badgesStr) + ';' +
+            'color=' + color + ';' +
+            'display-name=' + dvrEscapeIrcTagValue(displayName) + ';' +
+            'emotes=' + emotesTag + ';' +
+            'first-msg=0;flags=;' +
+            'id=' + dvrEscapeIrcTagValue(msgId) + ';' +
+            'mod=' + (isMod ? '1' : '0') + ';' +
+            'returning-chatter=0;' +
+            'room-id=' + dvrEscapeIrcTagValue(roomId || '') + ';' +
+            'subscriber=' + (isSub ? '1' : '0') + ';' +
+            'tmi-sent-ts=' + sentTs + ';' +
+            'turbo=0;' +
+            'user-id=' + dvrEscapeIrcTagValue(userId) + ';' +
+            'user-type=' + (isMod ? 'mod' : '') +
+            (isVip ? ';vip=1' : '');
+
+        return {
+            id: msgId,
+            sentTs: sentTs,
+            smoothOffsetSec: smoothOffsetSec,
+            line: tags + ' :' + login + '!' + login + '@' + login + '.tmi.twitch.tv PRIVMSG #' + channel + ' :' + fullBody
+        };
+    }
+
+    function dvrPostVodCommentsGql(bodyObj, onOk, onErr) {
+        try {
+            spNativeFetch.call(window, 'https://gql.twitch.tv/gql', {
+                method: 'POST',
+                headers: {
+                    'Client-Id': TWITCH_GQL_CLIENT_ID,
+                    'Content-Type': 'text/plain;charset=UTF-8'
+                },
+                body: JSON.stringify(bodyObj)
+            })
+                .then(function (r) { return r && r.ok ? r.json() : null; })
+                .then(function (json) {
+                    if (json) onOk(json);
+                    else if (onErr) onErr();
+                })
+                .catch(function () {
+                    if (onErr) onErr();
+                });
+        } catch (eFetch) {
+            if (onErr) onErr();
+        }
+    }
+
+    function dvrFetchVodCommentsPage(videoId, reqOpts, sessionToken, onDone) {
+        var useCursor = Boolean(reqOpts && reqOpts.cursor && !dvrVodChatDisableCursor);
+        var fallbackOffset = Math.max(0, Math.floor(Number(reqOpts && reqOpts.offsetSec) || 0));
+        var vars = useCursor
+            ? { videoID: String(videoId), cursor: String(reqOpts.cursor) }
+            : { videoID: String(videoId), contentOffsetSeconds: fallbackOffset };
+        var persistedPayload = {
+            operationName: 'VideoCommentsByOffsetOrCursor',
+            variables: vars,
+            extensions: {
+                persistedQuery: {
+                    version: 1,
+                    sha256Hash: DVR_VOD_COMMENTS_SHA256
+                }
+            }
+        };
+
+        var finishWithComments = function (commentsObj, reqOffsetUsed) {
+            if (sessionToken !== dvrVodChatSessionToken) return;
+            onDone(commentsObj || null, reqOffsetUsed);
+        };
+
+        var tryInlineFallback = function (offSec) {
+            var inlineQuery =
+                'query($videoID:ID!,$offset:Int){video(id:$videoID){comments(contentOffsetSeconds:$offset){' +
+                'edges{cursor node{id createdAt contentOffsetSeconds commenter{id login displayName}' +
+                'message{fragments{text emoticon{emoticonID}}userBadges{setID version}userColor}}}' +
+                'pageInfo{hasNextPage hasPreviousPage}}}}';
+            dvrPostVodCommentsGql(
+                { query: inlineQuery, variables: { videoID: String(videoId), offset: offSec } },
+                function (json2) {
+                    var c2 = json2 && json2.data && json2.data.video && json2.data.video.comments;
+                    finishWithComments(c2 || null, offSec);
+                },
+                function () { finishWithComments(null, offSec); }
+            );
+        };
+
+        dvrPostVodCommentsGql(
+            persistedPayload,
+            function (json) {
+                if (sessionToken !== dvrVodChatSessionToken) return;
+                var comments = json && json.data && json.data.video && json.data.video.comments;
+                if (comments && Array.isArray(comments.edges)) {
+                    finishWithComments(comments, fallbackOffset);
+                    return;
+                }
+                var hasPqNotFound = false;
+                if (json && Array.isArray(json.errors)) {
+                    for (var i = 0; i < json.errors.length; i++) {
+                        var msg = String((json.errors[i] && json.errors[i].message) || '');
+                        if (/PersistedQueryNotFound/i.test(msg)) {
+                            hasPqNotFound = true;
+                        }
+                    }
+                }
+                if (useCursor) {
+                    dvrVodChatDisableCursor = true;
+                    dvrFetchVodCommentsPage(videoId, { offsetSec: fallbackOffset }, sessionToken, onDone);
+                    return;
+                }
+                if (hasPqNotFound) {
+                    tryInlineFallback(fallbackOffset);
+                    return;
+                }
+                finishWithComments(null, fallbackOffset);
+            },
+            function () {
+                if (sessionToken !== dvrVodChatSessionToken) return;
+                if (useCursor) {
+                    dvrVodChatDisableCursor = true;
+                    dvrFetchVodCommentsPage(videoId, { offsetSec: fallbackOffset }, sessionToken, onDone);
+                    return;
+                }
+                finishWithComments(null, fallbackOffset);
+            }
+        );
+    }
+
+    function dvrConvertGqlEdgesToItems(edges, channel, roomId, vodZeroUtcMs) {
+        if (!Array.isArray(edges) || !edges.length) {
+            return { items: [], maxOffsetSec: -1, lastCursor: '' };
+        }
+        var items = [];
+        var maxOffsetSec = -1;
+        var lastCursor = '';
+        var idx = 0;
+        while (idx < edges.length) {
+            var e0 = edges[idx];
+            if (e0 && e0.cursor) lastCursor = String(e0.cursor);
+            var n0 = e0 && e0.node;
+            if (!n0) {
+                idx++;
+                continue;
+            }
+            var baseSec = Math.max(0, Math.floor(Number(n0.contentOffsetSeconds) || 0));
+            var runEnd = idx + 1;
+            while (runEnd < edges.length) {
+                var en = edges[runEnd];
+                if (en && en.cursor) lastCursor = String(en.cursor);
+                var nn = en && en.node;
+                if (!nn) {
+                    runEnd++;
+                    continue;
+                }
+                var nextSec = Math.max(0, Math.floor(Number(nn.contentOffsetSeconds) || 0));
+                if (nextSec !== baseSec) break;
+                runEnd++;
+            }
+            var validNodes = [];
+            for (var r = idx; r < runEnd; r++) {
+                if (edges[r] && edges[r].node) validNodes.push(edges[r].node);
+            }
+            var count = validNodes.length;
+            for (var k = 0; k < count; k++) {
+                var smooth = baseSec + (count > 1 ? (k / count) * 0.88 : 0);
+                if (smooth > maxOffsetSec) maxOffsetSec = smooth;
+                var conv = dvrConvertGqlCommentToIrc(validNodes[k], channel, roomId, vodZeroUtcMs, smooth);
+                if (conv) {
+                    items.push(conv);
+                }
+            }
+            if (baseSec > maxOffsetSec) maxOffsetSec = baseSec;
+            idx = runEnd;
+        }
+        return {
+            items: items,
+            maxOffsetSec: maxOffsetSec,
+            lastCursor: lastCursor
+        };
+    }
+
+    function dvrHideExistingChatRows() {
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') {
             return 0;
         }
-        return wallMs;
+        var container =
+            (typeof bttvObservedChatNode !== 'undefined' && bttvObservedChatNode && bttvObservedChatNode.isConnected ? bttvObservedChatNode : null) ||
+            document.querySelector('.chat-scrollable-area__message-container, [data-test-selector="chat-scrollable-area__message-container"]');
+        if (!container || typeof container.querySelectorAll !== 'function') {
+            return 0;
+        }
+        var rows = container.querySelectorAll(
+            '.chat-line__message, [data-a-target="chat-line-message"], ' +
+            '.user-notice-line, [data-test-selector="user-notice-line"], .chat-line__status'
+        );
+        var hiddenCount = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (r && r.style && r.style.display !== 'none') {
+                r.__tp9HiddenBySeek = true;
+                r.style.display = 'none';
+                hiddenCount++;
+            }
+        }
+        if (typeof bttvLastSpamNorm !== 'undefined') {
+            bttvLastSpamNorm = '';
+            bttvLastSpamEl = null;
+            bttvLastSpamCount = 0;
+        }
+        if (hiddenCount > 0 && typeof reapplySplitChatOnExisting === 'function') {
+            reapplySplitChatOnExisting(container);
+        }
+        return hiddenCount;
+    }
+
+    function dvrDispatchIrcLinesOnSocket(ws, lines, bypassSlowRate) {
+        if (!ws || ws.readyState !== 1 || !lines || !lines.length) return;
+        try {
+            var payload = lines.join('\r\n') + '\r\n';
+            var synEv = new MessageEvent('message', { data: payload });
+            synEv.__tp9SyntheticReplay = true;
+            if (bypassSlowRate) {
+                synEv.__tp9BypassSlowRate = true;
+            }
+            synEv.__tp9Ws = ws;
+            ws.dispatchEvent(synEv);
+        } catch (eDisp) {}
+    }
+
+    function dvrSeedFromLiveIrcHistory(channel, targetWallMs, hideExisting) {
+        var ws = expVodGetActiveIrcSocket(null);
+        if (!ws) {
+            dvrReplayChatPendingSocket = true;
+            return false;
+        }
+        var ch = (channel || '').toLowerCase();
+        var contextLines = [];
+        var upcoming = [];
+        var queuedIds = Object.create(null);
+
+        for (var i = 0; i < expVodLiveIrcHistory.length; i++) {
+            var rec = expVodLiveIrcHistory[i];
+            if (ch && rec.channel && rec.channel !== ch) continue;
+            if (targetWallMs > 0 && rec.tmiSentTs <= targetWallMs) {
+                if (rec.tmiSentTs >= targetWallMs - 90000) {
+                    contextLines.push(rec);
+                }
+            } else {
+                if (rec.id) queuedIds[rec.id] = 1;
+                upcoming.push({
+                    ws: ws,
+                    id: rec.id || '',
+                    channel: rec.channel || ch,
+                    line: rec.line,
+                    tmiSentTs: rec.tmiSentTs,
+                    fallbackDueAt: Date.now() + Math.max(500, rec.tmiSentTs - (targetWallMs || Date.now()))
+                });
+            }
+        }
+
+        for (var q = 0; q < expVodChatQueue.length; q++) {
+            var existing = expVodChatQueue[q];
+            if (ch && existing.channel && existing.channel !== ch) continue;
+            if (existing.id && queuedIds[existing.id]) continue;
+            if (targetWallMs > 0 && existing.tmiSentTs > 0 && existing.tmiSentTs <= targetWallMs) continue;
+            if (existing.id) queuedIds[existing.id] = 1;
+            upcoming.push({
+                ws: existing.ws && existing.ws.readyState === 1 ? existing.ws : ws,
+                id: existing.id || '',
+                channel: existing.channel || ch,
+                line: existing.line,
+                tmiSentTs: existing.tmiSentTs,
+                fallbackDueAt: existing.fallbackDueAt
+            });
+        }
+
+        upcoming.sort(function (a, b) {
+            return (a.tmiSentTs || 0) - (b.tmiSentTs || 0);
+        });
+        if (upcoming.length > EXP_VOD_CHAT_QUEUE_MAX) {
+            upcoming = upcoming.slice(upcoming.length - EXP_VOD_CHAT_QUEUE_MAX);
+        }
+
+        if (hideExisting) {
+            dvrHideExistingChatRows();
+            dvrReplayChatHasCustomView = true;
+        }
+        expVodChatQueue = upcoming;
+        if (contextLines.length > DVR_VOD_CHAT_CONTEXT_COUNT) {
+            contextLines = contextLines.slice(contextLines.length - DVR_VOD_CHAT_CONTEXT_COUNT);
+        }
+        if (contextLines.length) {
+            var rawCtx = [];
+            for (var c = 0; c < contextLines.length; c++) {
+                if (contextLines[c].id) dvrVodChatMarkSeen(contextLines[c].id);
+                rawCtx.push(contextLines[c].line);
+            }
+            dvrDispatchIrcLinesOnSocket(ws, rawCtx, true);
+        }
+        if (expVodChatQueue.length || expVodShouldDelayChat()) {
+            expVodStartChatFlushTimer();
+        }
+        return true;
+    }
+
+    function dvrTryRefreshArchiveVodId(channel, sessionToken, targetMediaSec) {
+        var entry = channel && dvrVodCache[channel];
+        var now = Date.now();
+        if (!entry || (entry.noArchiveCommentsAt && (now - entry.noArchiveCommentsAt) < 60000)) {
+            return;
+        }
+        entry.noArchiveCommentsAt = now;
+        dvrGql(
+            'query($login:String!){user(login:$login){stream{archiveVideo{id}}}}',
+            { login: channel },
+            function (json) {
+                if (sessionToken !== dvrVodChatSessionToken) return;
+                var archId = json && json.data && json.data.user && json.data.user.stream &&
+                    json.data.user.stream.archiveVideo && json.data.user.stream.archiveVideo.id;
+                if (archId && /^\d+$/.test(String(archId))) {
+                    var oldId = entry.id;
+                    entry.id = String(archId);
+                    if (oldId && dvrVodAccess[oldId] && !dvrVodAccess[entry.id]) {
+                        dvrVodAccess[entry.id] = dvrVodAccess[oldId];
+                    }
+                    dvrStartVodCommentsStream(channel, entry.id, targetMediaSec, sessionToken);
+                }
+            },
+            function () {}
+        );
+    }
+
+    function dvrStartVodCommentsStream(channel, videoId, targetMediaSec, sessionToken) {
+        var ws = expVodGetActiveIrcSocket(null);
+        if (!ws) {
+            dvrReplayChatPendingSocket = true;
+            return;
+        }
+        dvrVodChatActive = true;
+        dvrVodChatVideoId = String(videoId);
+        dvrVodChatChannel = channel;
+        dvrVodChatQueue = [];
+        dvrVodChatNextCursor = '';
+        dvrVodChatHasNextPage = false;
+        dvrVodChatFetchInFlight = true;
+
+        var viewerOffsetSec = EXP_VOD_LIVE_VIEWER_LATENCY_MS / 1000;
+        var targetCommentSec = Math.max(0, targetMediaSec + viewerOffsetSec);
+        var initialReqOffset = Math.max(0, Math.floor(targetCommentSec - 20));
+        dvrVodChatLastReqOffsetSec = initialReqOffset;
+        dvrVodChatLastMaxOffsetSec = initialReqOffset;
+
+        dvrHideExistingChatRows();
+        dvrReplayChatHasCustomView = true;
+        expVodStartChatFlushTimer();
+
+        dvrFetchVodCommentsPage(
+            videoId,
+            { offsetSec: initialReqOffset },
+            sessionToken,
+            function (commentsObj, reqUsed) {
+                dvrVodChatFetchInFlight = false;
+                if (sessionToken !== dvrVodChatSessionToken || !dvrVodChatActive) return;
+                if (!commentsObj || !Array.isArray(commentsObj.edges)) return;
+
+                var vodEntry = dvrVodCache[channel];
+                var roomId = (vodEntry && vodEntry.channelId) ? String(vodEntry.channelId) : '';
+                var vodZeroMs = dvrVodZeroUtcMs(Date.now());
+                var parsed = dvrConvertGqlEdgesToItems(commentsObj.edges, channel, roomId, vodZeroMs);
+
+                var curMediaNow = dvrVideo ? (Number(dvrVideo.currentTime) || targetMediaSec) : targetMediaSec;
+                var nowCommentTarget = Math.max(0, curMediaNow + viewerOffsetSec);
+
+                var ctxBatch = [];
+                var futureBatch = [];
+                for (var i = 0; i < parsed.items.length; i++) {
+                    var it = parsed.items[i];
+                    if (it.id && dvrVodChatSeenIds[it.id]) continue;
+                    if (it.smoothOffsetSec <= nowCommentTarget) {
+                        ctxBatch.push(it);
+                    } else {
+                        dvrVodChatMarkSeen(it.id);
+                        futureBatch.push(it);
+                    }
+                }
+
+                if (ctxBatch.length > DVR_VOD_CHAT_CONTEXT_COUNT) {
+                    ctxBatch = ctxBatch.slice(ctxBatch.length - DVR_VOD_CHAT_CONTEXT_COUNT);
+                }
+                if (ctxBatch.length) {
+                    var sockNow = expVodGetActiveIrcSocket(ws);
+                    var ctxLines = [];
+                    for (var c = 0; c < ctxBatch.length; c++) {
+                        dvrVodChatMarkSeen(ctxBatch[c].id);
+                        ctxLines.push(ctxBatch[c].line);
+                    }
+                    dvrDispatchIrcLinesOnSocket(sockNow, ctxLines, true);
+                }
+
+                for (var u = 0; u < futureBatch.length; u++) {
+                    dvrVodChatQueue.push(futureBatch[u]);
+                }
+
+                var hasNext = Boolean(commentsObj.pageInfo && commentsObj.pageInfo.hasNextPage);
+                dvrVodChatNextCursor = parsed.lastCursor || '';
+                dvrVodChatHasNextPage = hasNext;
+                if (parsed.maxOffsetSec > dvrVodChatLastMaxOffsetSec) {
+                    dvrVodChatLastMaxOffsetSec = parsed.maxOffsetSec;
+                }
+
+                // Sur un gros tchat (> 3 msg/s), une page partie à T-20 s peut finir avant T :
+                // on saute directement à T en une seule requête plutôt que de paginer pas à pas.
+                if (!futureBatch.length && hasNext && parsed.maxOffsetSec >= 0 && parsed.maxOffsetSec < (nowCommentTarget - 1)) {
+                    var directOff = Math.max(reqUsed + 1, Math.floor(nowCommentTarget));
+                    dvrVodChatNextCursor = '';
+                    dvrVodChatLastReqOffsetSec = directOff;
+                    dvrVodChatLastMaxOffsetSec = directOff;
+                    dvrVodChatPrefetchNext(sessionToken, directOff);
+                }
+                expVodSyncChatLatencyBadge();
+            }
+        );
+    }
+
+    function dvrVodChatPrefetchNext(sessionToken, explicitOffsetSec) {
+        if (!dvrVodChatActive || dvrVodChatFetchInFlight || !dvrVodChatVideoId) return;
+        var vodZeroMs = dvrVodZeroUtcMs(Date.now());
+        if (
+            vodZeroMs > 0 &&
+            dvrVodChatLastMaxOffsetSec > 0 &&
+            expVodLiveIrcHistory.length > 0 &&
+            expVodLiveIrcChannel === dvrVodChatChannel &&
+            (vodZeroMs + dvrVodChatLastMaxOffsetSec * 1000) >= (expVodLiveIrcHistory[0].tmiSentTs + 2000)
+        ) {
+            // Jonction atteinte avec le tampon IRC live local : transfert fluide sans doublon.
+            dvrVodChatHasNextPage = false;
+            dvrVodChatNextCursor = '';
+            var handoffWallMs = vodZeroMs + dvrVodChatLastMaxOffsetSec * 1000;
+            var sock = expVodGetActiveIrcSocket(null);
+            if (sock) {
+                var existingIds = Object.create(null);
+                for (var q = 0; q < expVodChatQueue.length; q++) {
+                    if (expVodChatQueue[q].id) existingIds[expVodChatQueue[q].id] = 1;
+                }
+                for (var h = 0; h < expVodLiveIrcHistory.length; h++) {
+                    var hr = expVodLiveIrcHistory[h];
+                    if (hr.channel === dvrVodChatChannel && hr.tmiSentTs >= handoffWallMs - 2000) {
+                        if (hr.id && (dvrVodChatSeenIds[hr.id] || existingIds[hr.id])) continue;
+                        if (hr.id) existingIds[hr.id] = 1;
+                        expVodChatQueue.push({
+                            ws: sock,
+                            id: hr.id || '',
+                            channel: hr.channel,
+                            line: hr.line,
+                            tmiSentTs: hr.tmiSentTs,
+                            fallbackDueAt: Date.now() + 1000
+                        });
+                    }
+                }
+                expVodChatQueue.sort(function (a, b) { return (a.tmiSentTs || 0) - (b.tmiSentTs || 0); });
+            }
+            return;
+        }
+
+        dvrVodChatFetchInFlight = true;
+        var nextFallbackOff = typeof explicitOffsetSec === 'number'
+            ? explicitOffsetSec
+            : Math.max(dvrVodChatLastReqOffsetSec + 1, Math.floor(dvrVodChatLastMaxOffsetSec));
+        var reqOpts = (typeof explicitOffsetSec === 'number' || !dvrVodChatNextCursor || dvrVodChatDisableCursor)
+            ? { offsetSec: nextFallbackOff }
+            : { cursor: dvrVodChatNextCursor, offsetSec: nextFallbackOff };
+        dvrVodChatLastReqOffsetSec = nextFallbackOff;
+
+        dvrFetchVodCommentsPage(
+            dvrVodChatVideoId,
+            reqOpts,
+            sessionToken,
+            function (commentsObj) {
+                dvrVodChatFetchInFlight = false;
+                if (sessionToken !== dvrVodChatSessionToken || !dvrVodChatActive) return;
+                if (!commentsObj || !Array.isArray(commentsObj.edges)) {
+                    dvrVodChatHasNextPage = false;
+                    return;
+                }
+                var vodEntry = dvrVodCache[dvrVodChatChannel];
+                var roomId = (vodEntry && vodEntry.channelId) ? String(vodEntry.channelId) : '';
+                var zMs = dvrVodZeroUtcMs(Date.now());
+                var parsed = dvrConvertGqlEdgesToItems(commentsObj.edges, dvrVodChatChannel, roomId, zMs);
+
+                for (var i = 0; i < parsed.items.length; i++) {
+                    var it = parsed.items[i];
+                    if (it.id && dvrVodChatSeenIds[it.id]) continue;
+                    dvrVodChatMarkSeen(it.id);
+                    dvrVodChatQueue.push(it);
+                }
+                if (dvrVodChatQueue.length > DVR_VOD_CHAT_QUEUE_MAX) {
+                    dvrVodChatQueue.splice(0, dvrVodChatQueue.length - DVR_VOD_CHAT_QUEUE_MAX);
+                }
+                dvrVodChatNextCursor = parsed.lastCursor || '';
+                dvrVodChatHasNextPage = Boolean(commentsObj.pageInfo && commentsObj.pageInfo.hasNextPage);
+                if (parsed.maxOffsetSec > dvrVodChatLastMaxOffsetSec) {
+                    dvrVodChatLastMaxOffsetSec = parsed.maxOffsetSec;
+                }
+            }
+        );
+    }
+
+    function dvrVodChatFlushDue(now, curCh) {
+        if (!dvrVodChatActive || !dvrVideo || dvrVideo.paused) return;
+        if (curCh && dvrVodChatChannel && curCh !== dvrVodChatChannel) {
+            dvrVodChatReset();
+            return;
+        }
+        var ws = expVodGetActiveIrcSocket(null);
+        if (!ws) return;
+
+        var viewerOffsetSec = EXP_VOD_LIVE_VIEWER_LATENCY_MS / 1000;
+        var nowCommentSec = Math.max(0, (Number(dvrVideo.currentTime) || 0) + viewerOffsetSec);
+        if (dvrVodChatQueue.length) {
+            var dueLines = [];
+            var keep = [];
+            for (var i = 0; i < dvrVodChatQueue.length; i++) {
+                var item = dvrVodChatQueue[i];
+                if (item.smoothOffsetSec <= nowCommentSec + 0.04) {
+                    dueLines.push(item.line);
+                } else {
+                    keep.push(item);
+                }
+            }
+            dvrVodChatQueue = keep;
+            if (dueLines.length) {
+                dvrDispatchIrcLinesOnSocket(ws, dueLines, false);
+            }
+        }
+
+        if (!dvrVodChatFetchInFlight) {
+            var rate = (dvrVideo.playbackRate && dvrVideo.playbackRate > 1) ? dvrVideo.playbackRate : 1;
+            var runwaySec = dvrVodChatLastMaxOffsetSec - nowCommentSec;
+            if (dvrVodChatHasNextPage && (dvrVodChatQueue.length < 15 || runwaySec < (DVR_VOD_CHAT_PREFETCH_AHEAD_SEC * rate))) {
+                dvrVodChatPrefetchNext(dvrVodChatSessionToken);
+            } else if (
+                !dvrVodChatHasNextPage &&
+                !dvrStreamEnded() &&
+                runwaySec <= 2 &&
+                (now - dvrVodChatTailPollAt) >= 8000
+            ) {
+                var vodZeroMs = dvrVodZeroUtcMs(now);
+                var coveredByLive = Boolean(
+                    vodZeroMs > 0 &&
+                    expVodLiveIrcHistory.length > 0 &&
+                    expVodLiveIrcChannel === dvrVodChatChannel &&
+                    expVodLiveIrcHistory[0].tmiSentTs <= (vodZeroMs + nowCommentSec * 1000 + 2000)
+                );
+                if (!coveredByLive) {
+                    dvrVodChatTailPollAt = now;
+                    dvrVodChatPrefetchNext(
+                        dvrVodChatSessionToken,
+                        Math.max(0, Math.floor(dvrVodChatLastMaxOffsetSec))
+                    );
+                }
+            }
+        }
+    }
+
+    function dvrSyncReplayChatNow() {
+        if (dvrReplayChatDebounceTimer) {
+            clearTimeout(dvrReplayChatDebounceTimer);
+            dvrReplayChatDebounceTimer = null;
+        }
+        if (!dvrIsActiveReplay()) {
+            return;
+        }
+        if (dvrSwitching || (typeof dvrScrubbing !== 'undefined' && dvrScrubbing)) {
+            dvrScheduleReplayChatSync('wait');
+            return;
+        }
+        var curCh = (dvrChannelInUse || getTestChannel() || '').toLowerCase();
+        if (!curCh) return;
+        var curSec = Number(dvrVideo.currentTime) || 0;
+
+        // En mode Bloqueur de pub (Experimental) au bord normal de la VOD (~25-30 s),
+        // le flux IRC live différé gère déjà le tchat sans aucun besoin de vider ni de requêter GraphQL.
+        if (expVodAdblockOn() && !expVodIsRewoundFromVodEdge() && !dvrVodChatActive && !dvrReplayChatHasCustomView) {
+            dvrReplayChatWasActive = true;
+            dvrReplayChatLastChannel = curCh;
+            dvrReplayChatLastMediaSec = curSec;
+            return;
+        }
+
+        var prevSec = dvrReplayChatLastMediaSec;
+        var wasActive = dvrReplayChatWasActive && dvrReplayChatLastChannel === curCh;
+        var deltaSec = (wasActive && prevSec >= 0) ? (curSec - prevSec) : -999999;
+        if (wasActive && deltaSec >= -3.5 && deltaSec <= 14 && !dvrReplayChatPendingSocket) {
+            dvrReplayChatLastMediaSec = curSec;
+            return;
+        }
+
+        dvrReplayChatWasActive = true;
+        dvrReplayChatLastChannel = curCh;
+        dvrReplayChatLastMediaSec = curSec;
+        dvrReplayChatPendingSocket = false;
+
+        var ws = expVodGetActiveIrcSocket(null);
+        if (!ws) {
+            dvrReplayChatPendingSocket = true;
+            return;
+        }
+
+        var now = Date.now();
+        var targetWallMs = expVodEffectiveChatTargetWallMs(now);
+        var liveHistoryCoversTarget = Boolean(
+            targetWallMs > 0 &&
+            expVodLiveIrcHistory.length > 0 &&
+            expVodLiveIrcChannel === curCh &&
+            expVodLiveIrcHistory[0].tmiSentTs <= (targetWallMs + 4000)
+        );
+
+        dvrVodChatReset();
+        var sessionToken = dvrVodChatSessionToken;
+
+        if (liveHistoryCoversTarget) {
+            dvrSeedFromLiveIrcHistory(curCh, targetWallMs, true);
+            expVodSyncChatLatencyBadge();
+            return;
+        }
+
+        if (dvrSourceKind === 'vod') {
+            var vodId = dvrNumericVodIdFor(curCh);
+            if (vodId) {
+                dvrStartVodCommentsStream(curCh, vodId, curSec, sessionToken);
+                return;
+            }
+            var rawEntry = dvrVodCache[curCh];
+            if (rawEntry && rawEntry.id && /^cf_/.test(String(rawEntry.id))) {
+                dvrTryRefreshArchiveVodId(curCh, sessionToken, curSec);
+            }
+        }
+
+        if (expVodLiveIrcHistory.length > 0 && expVodLiveIrcChannel === curCh && deltaSec < -20) {
+            dvrSeedFromLiveIrcHistory(curCh, targetWallMs, true);
+        } else if (expVodShouldDelayChat()) {
+            expVodStartChatFlushTimer();
+        }
+        expVodSyncChatLatencyBadge();
+    }
+
+    function dvrScheduleReplayChatSync() {
+        if (dvrReplayChatDebounceTimer) {
+            clearTimeout(dvrReplayChatDebounceTimer);
+        }
+        dvrReplayChatDebounceTimer = setTimeout(dvrSyncReplayChatNow, 200);
+    }
+
+    function dvrOnSnapToVodEdgeChat(prevMediaSec, idealMediaSec) {
+        if (dvrReplayChatDebounceTimer) {
+            clearTimeout(dvrReplayChatDebounceTimer);
+            dvrReplayChatDebounceTimer = null;
+        }
+        var jumpedFar = (idealMediaSec - prevMediaSec) > 14;
+        var hadCustomReplay = dvrVodChatActive || dvrReplayChatHasCustomView;
+        dvrVodChatReset();
+        dvrReplayChatHasCustomView = false;
+        dvrReplayChatWasActive = true;
+        dvrReplayChatLastMediaSec = idealMediaSec;
+        if (hadCustomReplay || jumpedFar) {
+            var curCh = (dvrChannelInUse || getTestChannel() || '').toLowerCase();
+            var targetWallMs = expVodEffectiveChatTargetWallMs(Date.now());
+            dvrHideExistingChatRows();
+            if (expVodLiveIrcHistory.length > 0 && (!curCh || expVodLiveIrcChannel === curCh)) {
+                dvrSeedFromLiveIrcHistory(curCh, targetWallMs, false);
+                dvrReplayChatHasCustomView = false;
+            } else {
+                expVodChatQueue = [];
+            }
+        }
+        expVodSyncChatLatencyBadge();
+    }
+
+    function dvrOnReturnToLiveChat(isClosing) {
+        if (dvrReplayChatDebounceTimer) {
+            clearTimeout(dvrReplayChatDebounceTimer);
+            dvrReplayChatDebounceTimer = null;
+        }
+        var hadCustomReplay = dvrVodChatActive || dvrReplayChatHasCustomView;
+        var curCh = (dvrChannelInUse || getTestChannel() || '').toLowerCase();
+        dvrVodChatReset();
+        dvrReplayChatHasCustomView = false;
+        dvrReplayChatWasActive = false;
+        dvrReplayChatLastMediaSec = -1;
+        dvrReplayChatPendingSocket = false;
+        expVodRemoveChatLatencyBadge();
+
+        if (hadCustomReplay && !isClosing) {
+            dvrHideExistingChatRows();
+            expVodChatQueue = [];
+            expVodStopChatFlushTimer();
+            var ws = expVodGetActiveIrcSocket(null);
+            if (ws && expVodLiveIrcHistory.length > 0 && (!curCh || expVodLiveIrcChannel === curCh)) {
+                var recent = [];
+                for (var i = Math.max(0, expVodLiveIrcHistory.length - DVR_VOD_CHAT_CONTEXT_COUNT); i < expVodLiveIrcHistory.length; i++) {
+                    if (!curCh || expVodLiveIrcHistory[i].channel === curCh) {
+                        recent.push(expVodLiveIrcHistory[i].line);
+                    }
+                }
+                if (recent.length) {
+                    dvrDispatchIrcLinesOnSocket(ws, recent, true);
+                }
+            }
+        } else if (expVodChatQueue.length) {
+            expVodFlushChatTick();
+        } else {
+            expVodStopChatFlushTimer();
+        }
+    }
+
+    function dvrTickReplayChatSync() {
+        if (!dvrIsActiveReplay()) {
+            if (dvrReplayChatWasActive || dvrVodChatActive) {
+                dvrOnReturnToLiveChat(false);
+            }
+            return;
+        }
+        expVodSyncChatLatencyBadge();
+        if (dvrSwitching || (typeof dvrScrubbing !== 'undefined' && dvrScrubbing)) {
+            return;
+        }
+        if (dvrReplayChatPendingSocket && expVodGetActiveIrcSocket(null)) {
+            dvrScheduleReplayChatSync('socket');
+            return;
+        }
+        if (dvrReplayChatDebounceTimer) {
+            return;
+        }
+        var curCh = (dvrChannelInUse || getTestChannel() || '').toLowerCase();
+        var curSec = Number(dvrVideo.currentTime) || 0;
+        if (!dvrReplayChatWasActive || (curCh && dvrReplayChatLastChannel && curCh !== dvrReplayChatLastChannel)) {
+            if (!expVodAdblockOn() || expVodIsRewoundFromVodEdge()) {
+                dvrScheduleReplayChatSync('enter');
+            } else {
+                dvrReplayChatWasActive = true;
+                dvrReplayChatLastChannel = curCh;
+                dvrReplayChatLastMediaSec = curSec;
+            }
+            return;
+        }
+        if (dvrReplayChatLastMediaSec >= 0) {
+            var delta = curSec - dvrReplayChatLastMediaSec;
+            if (delta < -3.5 || delta > 14) {
+                dvrScheduleReplayChatSync('jump');
+                return;
+            }
+        }
+        dvrReplayChatLastMediaSec = curSec;
     }
 
     function expVodStartChatFlushTimer() {
+        if (!expVodChatVisBound && typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+            expVodChatVisBound = true;
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden && (expVodChatQueue.length || dvrVodChatActive)) {
+                    expVodFlushChatTick();
+                }
+            });
+        }
         if (expVodChatFlushTimer) return;
-        expVodChatFlushTimer = setInterval(expVodFlushChatTick, 100);
+        expVodChatFlushTimer = setInterval(expVodFlushChatTick, 80);
     }
 
     function expVodStopChatFlushTimer() {
@@ -43145,18 +44941,20 @@ dashboardButton.style.visibility = 'hidden';
 
     function expVodFilterIncomingIrc(ev, rawText) {
         if (typeof rawText !== 'string' || !rawText) return rawText;
-        var ws = (ev && (ev.__tp9Ws || (ev.target && typeof ev.target.dispatchEvent === 'function' ? ev.target : null))) ||
-            (bttvActiveIrcSockets.length ? bttvActiveIrcSockets[bttvActiveIrcSockets.length - 1] : null);
+        var ws = expVodGetActiveIrcSocket(
+            ev && (ev.__tp9Ws || (ev.target && typeof ev.target.dispatchEvent === 'function' ? ev.target : null))
+        );
         if (!ws || ws.readyState !== 1) {
             return rawText;
         }
+        expVodObserveIncomingIrcEvent(ws, ev, rawText);
         var lines = rawText.split('\r\n');
         var immediate = [];
         var queuedAny = false;
         var now = Date.now();
         var selfLogin = expVodGetSelfLogin();
-        var vodWallMs = expVodCurrentPlayheadWallMs(now);
-        var fallbackDelayMs = Math.max(1000, dvrCurrentOffset() * 1000);
+        var targetWallMs = expVodEffectiveChatTargetWallMs(now);
+        var fallbackDelayMs = expVodEffectiveChatDelayMs(now, targetWallMs);
 
         for (var i = 0; i < lines.length; i++) {
             var ln = lines[i];
@@ -43179,25 +44977,27 @@ dashboardButton.style.visibility = 'hidden';
             var tsMatch = ln.match(/(?:^@|;)tmi-sent-ts=(\d+)/);
             if (tsMatch && tsMatch[1]) {
                 ts = parseInt(tsMatch[1], 10) || 0;
-                if (ts > 0) {
-                    var measuredSkew = ts - now;
-                    if (!expVodHasServerClockOffset) {
-                        expVodServerClockOffsetMs = measuredSkew;
-                        expVodHasServerClockOffset = true;
-                    } else {
-                        expVodServerClockOffsetMs = expVodServerClockOffsetMs * 0.9 + measuredSkew * 0.1;
-                    }
-                    if (!(vodWallMs > 0)) {
-                        vodWallMs = expVodCurrentPlayheadWallMs(now);
+                if (ts > 0 && !/(?:^@|;)historical=1(?:;|\s)/.test(ln)) {
+                    var offsetChanged = expVodUpdateServerClockFromTs(ts, now);
+                    if (offsetChanged || !(targetWallMs > 0)) {
+                        targetWallMs = expVodEffectiveChatTargetWallMs(now);
+                        fallbackDelayMs = expVodEffectiveChatDelayMs(now, targetWallMs);
                     }
                 }
             }
-            if (!dvrVideo.paused && ts > 0 && vodWallMs > 0 && ts <= vodWallMs + 80) {
+            var msgId = expVodExtractIrcMsgId(ln);
+            if (!dvrVideo.paused && ts > 0 && targetWallMs > 0 && ts <= targetWallMs + 80) {
+                if (msgId && dvrVodChatSeenIds[msgId]) {
+                    queuedAny = true;
+                    continue;
+                }
+                if (msgId) dvrVodChatMarkSeen(msgId);
                 immediate.push(ln);
                 continue;
             }
             expVodChatQueue.push({
                 ws: ws,
+                id: msgId,
                 channel: msgCh,
                 line: ln,
                 tmiSentTs: ts,
@@ -43252,13 +45052,17 @@ dashboardButton.style.visibility = 'hidden';
     }
 
     function expVodFlushChatTick() {
+        var now = Date.now();
+        var curCh = (dvrChannelInUse || getTestChannel() || '').toLowerCase();
+        if (dvrVodChatActive) {
+            dvrVodChatFlushDue(now, curCh);
+        }
         if (!expVodChatQueue.length) {
-            if (!expVodShouldDelayChat()) {
+            if (!expVodShouldDelayChat() && !dvrVodChatActive) {
                 expVodStopChatFlushTimer();
             }
             return;
         }
-        var curCh = (getTestChannel() || '').toLowerCase();
         if (!expVodShouldDelayChat()) {
             var sameChTail = [];
             for (var k = 0; k < expVodChatQueue.length; k++) {
@@ -43267,7 +45071,9 @@ dashboardButton.style.visibility = 'hidden';
                 }
             }
             expVodChatQueue.length = 0;
-            expVodStopChatFlushTimer();
+            if (!dvrVodChatActive) {
+                expVodStopChatFlushTimer();
+            }
             if (sameChTail.length > 25) {
                 sameChTail = sameChTail.slice(sameChTail.length - 25);
             }
@@ -43277,8 +45083,7 @@ dashboardButton.style.visibility = 'hidden';
         if (dvrVideo && dvrVideo.paused) {
             return;
         }
-        var now = Date.now();
-        var vodWallMs = expVodCurrentPlayheadWallMs(now);
+        var targetWallMs = expVodEffectiveChatTargetWallMs(now);
         var due = [];
         var keep = [];
         for (var i = 0; i < expVodChatQueue.length; i++) {
@@ -43286,10 +45091,14 @@ dashboardButton.style.visibility = 'hidden';
             if (!item.ws || item.ws.readyState !== 1 || (curCh && item.channel && item.channel !== curCh)) {
                 continue;
             }
-            var isDue = (vodWallMs > 0 && item.tmiSentTs > 0)
-                ? (item.tmiSentTs <= vodWallMs)
+            var isDue = (targetWallMs > 0 && item.tmiSentTs > 0)
+                ? (item.tmiSentTs <= targetWallMs)
                 : (now >= item.fallbackDueAt);
             if (isDue) {
+                if (item.id && dvrVodChatSeenIds[item.id]) {
+                    continue;
+                }
+                if (item.id) dvrVodChatMarkSeen(item.id);
                 due.push(item);
             } else {
                 keep.push(item);
@@ -43415,7 +45224,13 @@ dashboardButton.style.visibility = 'hidden';
             var targetCh = m[1].toLowerCase();
             var originCh = getTestChannel();
             if (!originCh || targetCh === originCh) return false;
-            var delaySec = Math.max(4, Math.min(90, Math.round(dvrCurrentOffset())));
+            var nowRaid = Date.now();
+            var vodWallRaid = expVodCurrentPlayheadWallMs(nowRaid);
+            var serverNowRaid = expVodHasServerClockOffset ? (nowRaid + expVodServerClockOffsetMs) : nowRaid;
+            var rawRaidLagSec = vodWallRaid > 0
+                ? ((serverNowRaid - vodWallRaid) / 1000)
+                : (dvrCurrentOffset() || expVodCurrentEdgeOffset());
+            var delaySec = Math.max(4, Math.min(120, Math.round(rawRaidLagSec)));
             expVodStartDelayedRaid(originCh, targetCh, parsed.href, delaySec);
             return true;
         } catch (eRaid) {
@@ -43688,17 +45503,26 @@ dashboardButton.style.visibility = 'hidden';
         }
 
         var now = Date.now();
-        var vodWallMs = expVodCurrentPlayheadWallMs(now);
-        var serverNow = expVodHasServerClockOffset ? (now + expVodServerClockOffsetMs) : now;
-        var lagSec = vodWallMs > 0
-            ? Math.max(1, Math.round((serverNow - vodWallMs) / 1000))
-            : Math.max(1, Math.round(dvrCurrentOffset() || expVodCurrentEdgeOffset()));
+        var lagSec = Math.max(1, Math.round(expVodEffectiveChatDelayMs(now, 0) / 1000));
         var isPaused = Boolean(dvrVideo && dvrVideo.paused);
-        var queuedCount = expVodChatQueue.length;
+        var queuedCount = expVodChatQueue.length + dvrVodChatQueue.length;
+        var lagFormatted;
+        if (lagSec < 60) {
+            lagFormatted = '-' + lagSec + ' s';
+        } else if (lagSec < 3600) {
+            var lm = Math.floor(lagSec / 60);
+            var ls = lagSec % 60;
+            lagFormatted = '-' + lm + ':' + (ls < 10 ? '0' + ls : ls);
+        } else {
+            var lh = Math.floor(lagSec / 3600);
+            var lmm = Math.floor((lagSec % 3600) / 60);
+            var lss = lagSec % 60;
+            lagFormatted = '-' + lh + ':' + (lmm < 10 ? '0' + lmm : lmm) + ':' + (lss < 10 ? '0' + lss : lss);
+        }
         var labelStr = tt('Synchro tchat VOD', 'VOD chat sync');
         var valStr = isPaused
-            ? (tt('⏸ Pause · -', '⏸ Paused · -') + lagSec + ' s')
-            : ('-' + lagSec + ' s');
+            ? (tt('⏸ Pause · ', '⏸ Paused · ') + lagFormatted)
+            : lagFormatted;
         var sig = labelStr + '|' + valStr + '|' + (isPaused ? '1' : '0') + '|' + queuedCount;
         if (el.__tp9LastSig === sig) {
             return;
@@ -43721,8 +45545,8 @@ dashboardButton.style.visibility = 'hidden';
         el.setAttribute(
             'data-tp9-tip-sub',
             tt(
-                'Décalage exact du tchat : -' + lagSec + ' s · ' + queuedCount + (queuedCount > 1 ? ' messages en file' : ' message en file'),
-                'Exact chat delay: -' + lagSec + 's · ' + queuedCount + (queuedCount === 1 ? ' queued message' : ' queued messages')
+                'Décalage exact du tchat : ' + lagFormatted + ' · ' + queuedCount + (queuedCount > 1 ? ' messages en file' : ' message en file'),
+                'Exact chat delay: ' + lagFormatted + ' · ' + queuedCount + (queuedCount === 1 ? ' queued message' : ' queued messages')
             )
         );
     }
@@ -44134,10 +45958,27 @@ dashboardButton.style.visibility = 'hidden';
     // ---- Pilotage principal 1 Hz & Bascule automatique VOD / VAFT ----
     function expVodResetChannelState(newCh) {
         if (expVodActiveChannel && expVodActiveChannel !== newCh) {
+            if (dvrReplayChatDebounceTimer) {
+                clearTimeout(dvrReplayChatDebounceTimer);
+                dvrReplayChatDebounceTimer = null;
+            }
+            dvrVodChatReset();
+            dvrReplayChatHasCustomView = false;
+            dvrReplayChatWasActive = false;
+            dvrReplayChatLastMediaSec = -1;
+            dvrReplayChatPendingSocket = false;
             expVodChatQueue.length = 0;
             expVodStopChatFlushTimer();
             expVodCancelPendingRaid();
             expVodRemoveChatLatencyBadge();
+            if (!newCh || expVodLiveIrcChannel !== newCh) {
+                expVodLiveIrcHistory = [];
+                expVodLiveIrcSeenIds = Object.create(null);
+                expVodLiveIrcChannel = newCh || '';
+            }
+        }
+        if (!newCh || (expVodCommercialBreak && expVodCommercialBreak.channel !== newCh)) {
+            expVodCommercialBreak = null;
         }
         if (newCh && newCh !== expVodActiveChannel) {
             expVodLastSentMinuteWatchedAt = Date.now();
@@ -44148,6 +45989,9 @@ dashboardButton.style.visibility = 'hidden';
         expVodInitialSnapPending = false;
         expVodPlaylistHasEndlist = false;
         expVodPdtZeroMs = 0;
+        expVodLocalZeroMs = 0;
+        expVodPrevLevelPollAt = 0;
+        expVodAnchorSamples = 0;
         expVodLastVodEndSec = 0;
         expVodLastCushionSec = 24;
         expVodMeasuredEdgeLagSec = 0;
@@ -44163,6 +46007,15 @@ dashboardButton.style.visibility = 'hidden';
         expVodLiftStartupGate();
         expVodClearHudIdle();
         expVodRemoveChatLatencyBadge();
+        if (dvrReplayChatDebounceTimer) {
+            clearTimeout(dvrReplayChatDebounceTimer);
+            dvrReplayChatDebounceTimer = null;
+        }
+        dvrVodChatReset();
+        dvrReplayChatHasCustomView = false;
+        dvrReplayChatWasActive = false;
+        dvrReplayChatLastMediaSec = -1;
+        dvrReplayChatPendingSocket = false;
         expVodResetChannelState(null);
         expVodChatQueue.length = 0;
         expVodStopChatFlushTimer();
@@ -45212,6 +47065,7 @@ dashboardButton.style.visibility = 'hidden';
             uncensoredBody: parsed.cleanBody || parsed.msgBody || '',
             uncensoredRawBody: parsed.msgBody || '',
             ircFlags: parsed.flagsRaw || '',
+            sentTs: parsed.sentTs || 0,
             parts: null,
             tsText: '',
             createdAt: now,
@@ -45289,6 +47143,7 @@ dashboardButton.style.visibility = 'hidden';
         var replyParentMsgBody = '';
         var replyThreadParentMsgId = '';
         var flagsRaw = '';
+        var sentTs = 0;
 
         if (tagsStr) {
             var tagParts = tagsStr.split(';');
@@ -45317,6 +47172,8 @@ dashboardButton.style.visibility = 'hidden';
                     if (v) isHighlightedRedeem = true;
                 } else if (k === 'flags') {
                     flagsRaw = v;
+                } else if (k === 'tmi-sent-ts') {
+                    sentTs = parseInt(v, 10) || 0;
                 } else if (k === 'reply-parent-msg-id') {
                     replyParentMsgId = v;
                 } else if (k === 'reply-parent-user-login') {
@@ -45359,6 +47216,7 @@ dashboardButton.style.visibility = 'hidden';
             cleanBody: cleanBody,
             msgBodyLower: msgBody.toLowerCase(),
             flagsRaw: flagsRaw,
+            sentTs: sentTs,
             replyParentMsgId: replyParentMsgId,
             replyParentUserLogin: replyParentUserLogin,
             replyParentDisplayName: replyParentDisplayName,
@@ -45367,7 +47225,7 @@ dashboardButton.style.visibility = 'hidden';
         };
     }
 
-    function shouldKeepSingleIrcLine(line) {
+    function shouldKeepSingleIrcLine(line, bypassRate) {
         if (!line) return true;
         var parsed = parseSingleIrcLine(line);
         if (!parsed) return true;
@@ -45399,14 +47257,14 @@ dashboardButton.style.visibility = 'hidden';
             return false;
         }
 
-        if (consumeSlowChatSlot()) {
+        if (bypassRate || consumeSlowChatSlot()) {
             registerIrcPrivmsgMeta(parsed);
             return true;
         }
         return false;
     }
 
-    function filterIrcPayloadForSlowChat(rawText) {
+    function filterIrcPayloadForSlowChat(rawText, bypassRate) {
         if (typeof rawText !== 'string' || !rawText) return rawText;
         if (rawText.indexOf('PRIVMSG #') === -1 && rawText.indexOf('USERSTATE') === -1) {
             return rawText;
@@ -45415,7 +47273,7 @@ dashboardButton.style.visibility = 'hidden';
             var pLines = rawText.split('\r\n');
             for (var u = 0; u < pLines.length; u++) {
                 if (pLines[u] && (pLines[u].indexOf('PRIVMSG #') !== -1 || pLines[u].indexOf('USERSTATE') !== -1)) {
-                    shouldKeepSingleIrcLine(pLines[u]);
+                    shouldKeepSingleIrcLine(pLines[u], true);
                 }
             }
             return rawText;
@@ -45426,7 +47284,7 @@ dashboardButton.style.visibility = 'hidden';
         for (var i = 0; i < lines.length; i++) {
             var ln = lines[i];
             if (!ln) continue;
-            if (shouldKeepSingleIrcLine(ln)) {
+            if (shouldKeepSingleIrcLine(ln, bypassRate)) {
                 kept.push(ln);
             } else {
                 droppedAny = true;
@@ -45445,6 +47303,9 @@ dashboardButton.style.visibility = 'hidden';
         ev.__tp9IrcEvaluated = true;
         if (typeof rawVal !== 'string' || !rawVal) return rawVal;
         var currentRaw = rawVal;
+        if (!ev.__tp9SyntheticReplay && typeof expVodObserveIncomingIrcEvent === 'function') {
+            expVodObserveIncomingIrcEvent(ev.__tp9Ws || null, ev, currentRaw);
+        }
         if (
             !ev.__tp9SyntheticReplay &&
             typeof expVodShouldDelayChat === 'function' &&
@@ -45463,7 +47324,7 @@ dashboardButton.style.visibility = 'hidden';
             }
             return currentRaw;
         }
-        var filtered = filterIrcPayloadForSlowChat(currentRaw);
+        var filtered = filterIrcPayloadForSlowChat(currentRaw, Boolean(ev.__tp9BypassSlowRate));
         if (filtered !== rawVal) {
             ev.__tp9FilteredIrcData = filtered;
         }
@@ -45472,11 +47333,20 @@ dashboardButton.style.visibility = 'hidden';
 
     function shouldDropEntireIrcEvent(ws, ev) {
         try {
-            var delayChatOn = typeof expVodShouldDelayChat === 'function' && expVodShouldDelayChat();
-            if ((!pageConfig.slowChat && !delayChatOn) || scriptIsOff() || !ev) return false;
+            if (scriptIsOff() || !ev) return false;
             if (ws && ws.url && ws.url.indexOf('irc-ws') === -1) return false;
             if (ws) {
                 try { ev.__tp9Ws = ws; } catch (eWs) {}
+            }
+            var delayChatOn = typeof expVodShouldDelayChat === 'function' && expVodShouldDelayChat();
+            if (!pageConfig.slowChat && !delayChatOn) {
+                if (!ev.__tp9SyntheticReplay && typeof expVodObserveIncomingIrcEvent === 'function') {
+                    var obsRaw = bttvOrigMsgDataGet ? bttvOrigMsgDataGet.call(ev) : ev.data;
+                    if (typeof obsRaw === 'string' && (obsRaw.indexOf('PRIVMSG #') !== -1 || obsRaw.indexOf('USERNOTICE #') !== -1)) {
+                        expVodObserveIncomingIrcEvent(ws, ev, obsRaw);
+                    }
+                }
+                return false;
             }
             var raw = bttvOrigMsgDataGet ? bttvOrigMsgDataGet.call(ev) : ev.data;
             if (typeof raw !== 'string') return false;
@@ -45536,7 +47406,8 @@ dashboardButton.style.visibility = 'hidden';
                                         val.indexOf('claim-available') !== -1 ||
                                         val.indexOf('claim-claimed') !== -1 ||
                                         val.indexOf('points-earned') !== -1 ||
-                                        val.indexOf('community-points') !== -1
+                                        val.indexOf('community-points') !== -1 ||
+                                        val.indexOf('commercial') !== -1
                                     ) {
                                         if (typeof handleTwitchPubsubMessage === 'function') {
                                             handleTwitchPubsubMessage({ data: val });
@@ -45547,6 +47418,7 @@ dashboardButton.style.visibility = 'hidden';
                                         val.type === 'claim-available' ||
                                         val.type === 'claim-claimed' ||
                                         val.type === 'points-earned' ||
+                                        val.type === 'commercial' ||
                                         (val.data && (val.data.claim || val.data.point_gain))
                                     ) {
                                         handleTwitchPubsubMessage({ data: JSON.stringify(val) });
@@ -45558,6 +47430,7 @@ dashboardButton.style.visibility = 'hidden';
                                 typeof val === 'string' &&
                                 (
                                     val.indexOf('PRIVMSG #') !== -1 ||
+                                    val.indexOf('USERNOTICE #') !== -1 ||
                                     val.indexOf('USERSTATE') !== -1 ||
                                     (typeof expVodShouldDelayChat === 'function' && expVodShouldDelayChat() && (
                                         val.indexOf('USERNOTICE #') !== -1 ||
@@ -45856,7 +47729,7 @@ dashboardButton.style.visibility = 'hidden';
         ) {
             return false;
         }
-        if (msgEl.__tp9HiddenBySpam || msgEl.__tp9HiddenBySlow || msgEl.__tp9HiddenByBlacklist) return false;
+        if (msgEl.__tp9HiddenBySpam || msgEl.__tp9HiddenBySlow || msgEl.__tp9HiddenByBlacklist || msgEl.__tp9HiddenBySeek) return false;
         if (pageConfig.hideBots && msgEl.classList && msgEl.classList.contains('tp9-is-bot-msg')) return false;
         if (pageConfig.hideChatNotices) {
             if (msgEl.classList && (msgEl.classList.contains('chat-line__status') || msgEl.classList.contains('user-notice-line'))) {
@@ -47575,6 +49448,7 @@ dashboardButton.style.visibility = 'hidden';
             uncensoredBody: uncensoredBody,
             uncensoredRawBody: uncensoredRawBody,
             ircFlags: (ircRec && ircRec.ircFlags) || '',
+            sentTs: (ircRec && ircRec.sentTs) || 0,
             parentMsgId: parentMsgId,
             parentUserLogin: parentUserLogin,
             parentDisplayName: parentDisplayName,
@@ -48262,6 +50136,19 @@ dashboardButton.style.visibility = 'hidden';
         if (meta && meta.authorLogin && !authorLogin) {
             authorLogin = meta.authorLogin;
         }
+        if (meta && meta.sentTs > 0 && Math.abs(Date.now() - meta.sentTs) > 90000) {
+            var histTsEl = msgEl.querySelector('.tp9-chat-ts-tag');
+            if (histTsEl && !histTsEl.__tp9HistTsSet) {
+                var hd = new Date(meta.sentTs);
+                if (isFinite(hd.getTime())) {
+                    histTsEl.textContent =
+                        String(hd.getHours()).padStart(2, '0') + ':' +
+                        String(hd.getMinutes()).padStart(2, '0') + ':' +
+                        String(hd.getSeconds()).padStart(2, '0');
+                    histTsEl.__tp9HistTsSet = true;
+                }
+            }
+        }
 
         // 1. Blacklist (corps du message + codes d'émotes + pseudo)
         var isBlacklisted = false;
@@ -48280,7 +50167,7 @@ dashboardButton.style.visibility = 'hidden';
             return true;
         } else {
             msgEl.__tp9HiddenByBlacklist = false;
-            if (!msgEl.__tp9HiddenBySpam) {
+            if (!msgEl.__tp9HiddenBySpam && !msgEl.__tp9HiddenBySeek) {
                 if (!pageConfig.slowChat && msgEl.__tp9HiddenBySlow) {
                     msgEl.__tp9HiddenBySlow = false;
                 }
@@ -53092,10 +54979,15 @@ dashboardButton.style.visibility = 'hidden';
     function handleTwitchPubsubMessage(ev) {
         if (scriptIsOff() || !ev || typeof ev.data !== 'string') return;
         var raw = ev.data;
+        var firstCh = raw.charCodeAt(0);
+        if (firstCh !== 123 && raw.trim().charCodeAt(0) !== 123) {
+            return;
+        }
         if (
             raw.indexOf('claim-available') === -1 &&
             raw.indexOf('claim-claimed') === -1 &&
-            raw.indexOf('points-earned') === -1
+            raw.indexOf('points-earned') === -1 &&
+            raw.indexOf('commercial') === -1
         ) {
             return;
         }
@@ -53107,6 +54999,11 @@ dashboardButton.style.visibility = 'hidden';
         bttvLastPubsubAt = now;
         try {
             var outer = JSON.parse(raw);
+            var topicStr =
+                (outer && outer.data && typeof outer.data.topic === 'string' && outer.data.topic) ||
+                (outer && outer.notification && outer.notification.subscription && typeof outer.notification.subscription.pubsubTopic === 'string' && outer.notification.subscription.pubsubTopic) ||
+                (outer && outer.notification && typeof outer.notification.topic === 'string' && outer.notification.topic) ||
+                '';
             var innerStr =
                 (outer && outer.data && outer.data.message) ||
                 (outer && outer.notification && outer.notification.pubsub) ||
@@ -53139,6 +55036,12 @@ dashboardButton.style.visibility = 'hidden';
                     var isChestReason = (pg.reason_code === 'CLAIM');
                     creditChannelPointsGain(earnedPts, isChestReason, 'PubSub');
                 }
+            } else if (msg.type === 'commercial' && typeof expVodOnPubsubCommercial === 'function') {
+                var topicMatch = topicStr.match(/(?:video-playback-by-id|broadcast-settings-update|ad-break|commercial)[.:](\d+)/i);
+                var topicChannelId = (topicMatch && topicMatch[1]) || (msg.channel_id ? String(msg.channel_id) : '');
+                var commLen = msg.length !== undefined ? msg.length : (msg.data && msg.data.length);
+                var commSrv = msg.server_time !== undefined ? msg.server_time : (msg.data && msg.data.server_time);
+                expVodOnPubsubCommercial(commLen, commSrv, topicChannelId);
             }
         } catch (e) {}
     }
